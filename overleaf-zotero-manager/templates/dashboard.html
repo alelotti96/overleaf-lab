@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Overleaf-Zotero Manager{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2><i class="bi bi-speedometer2"></i> Dashboard</h2>
+        <hr>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card text-white bg-primary">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-people-fill"></i> Overleaf Users
+                </h5>
+                <h2 class="card-text">{{ stats.overleaf_users }}</h2>
+                <a href="{{ url_for('overleaf_page') }}" class="btn btn-light btn-sm">
+                    Manage Users <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card text-white bg-success">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-journal-bookmark-fill"></i> Zotero Users
+                </h5>
+                <h2 class="card-text">{{ stats.zotero_proxies }}</h2>
+                <a href="{{ url_for('zotero_page') }}" class="btn btn-light btn-sm">
+                    Manage Users <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- System Status -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-activity"></i> System Status
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="system-status">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-lightning-charge"></i> Quick Actions
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <button class="btn btn-outline-primary"
+                        onclick="window.location.href='{{ url_for('overleaf_page') }}'">
+                        <i class="bi bi-person-plus"></i> Add Overleaf User
+                    </button>
+                    <button class="btn btn-outline-success"
+                        onclick="window.location.href='{{ url_for('zotero_page') }}'">
+                        <i class="bi bi-plus-circle"></i> Add Zotero User
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-link-45deg"></i> External Links
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="{{ config.OVERLEAF_URL }}" target="_blank" class="btn btn-outline-primary">
+                        <i class="bi bi-box-arrow-up-right"></i> Open Overleaf
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function loadSystemStatus() {
+        fetch('/api/system/status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const status = data.status;
+                    let html = '<div class="row">';
+
+                    // MongoDB Status
+                    html += '<div class="col-md-6">';
+                    html += `<div class="alert ${status.mongodb ? 'alert-success' : 'alert-danger'}">`;
+                    html += `<i class="bi ${status.mongodb ? 'bi-check-circle' : 'bi-x-circle'}"></i> `;
+                    html += `MongoDB: ${status.mongodb ? 'Connected' : 'Disconnected'}`;
+                    html += '</div></div>';
+
+                    // Docker Status
+                    html += '<div class="col-md-6">';
+                    html += `<div class="alert ${status.docker ? 'alert-success' : 'alert-danger'}">`;
+                    html += `<i class="bi ${status.docker ? 'bi-check-circle' : 'bi-x-circle'}"></i> `;
+                    html += `Docker: ${status.docker ? 'Running' : 'Not Running'}`;
+                    html += '</div></div>';
+
+                    html += '</div>';
+                    html += `<small class="text-muted">Last updated: ${new Date(status.timestamp).toLocaleString()}</small>`;
+
+                    document.getElementById('system-status').innerHTML = html;
+                }
+            })
+            .catch(error => {
+                document.getElementById('system-status').innerHTML =
+                    '<div class="alert alert-danger">Failed to load system status</div>';
+            });
+    }
+
+    // Load status on page load
+    document.addEventListener('DOMContentLoaded', function () {
+        loadSystemStatus();
+    });
+
+    // Refresh every 30 seconds
+    setInterval(loadSystemStatus, 30000);
+</script>
+{% endblock %}

@@ -1,0 +1,28 @@
+# Core dependencies
+Flask==3.0.0
+flask-cors==4.0.0
+python-dotenv==1.0.0
+pymongo==4.5.0
+bcrypt==4.1.1
+PyYAML==6.0.1
+
+# Authentication and security
+werkzeug==3.0.1
+
+# Async support for Zotero proxy
+aiohttp==3.9.1
+asyncio==3.4.3
+
+# Logging
+python-json-logger==2.0.7
+
+# Development dependencies (optional)
+pytest==7.4.3
+pytest-cov==4.1.0
+black==23.12.0
+flake8==6.1.0
+
+# Production server
+gunicorn==21.2.0
+requests
+pytz

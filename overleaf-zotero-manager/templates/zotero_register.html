@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zotero Integration Setup - {{ lab_name }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            background-color: var(--gray-50);
+        }
+
+        .header-bar {
+            background-color: var(--overleaf-header);
+            color: white;
+            padding: 1rem 0;
+            margin-bottom: 2rem;
+        }
+
+        .header-bar h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .step-number {
+            background: var(--overleaf-green);
+            color: white;
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 12px;
+            font-size: 0.9rem;
+        }
+
+        .success-box {
+            background: #d1fae5;
+            border: 1px solid var(--success-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        code {
+            background: var(--gray-100);
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: var(--overleaf-green);
+            font-size: 0.9em;
+        }
+
+        pre code {
+            display: block;
+            padding: 1rem;
+            background: var(--gray-100);
+            border-radius: 6px;
+            color: var(--gray-900);
+            font-size: 0.875rem;
+        }
+
+        .form-card {
+            background: white;
+            border-radius: 8px;
+            padding: 2rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .icon-circle {
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, var(--overleaf-green) 0%, var(--overleaf-green-dark) 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 1rem;
+        }
+
+        .icon-circle i {
+            font-size: 2rem;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Header -->
+    <div class="header-bar">
+        <div class="container">
+            <h1>
+                <i class="bi bi-file-earmark-text me-2"></i>
+                {{ lab_name }} - Zotero Integration
+            </h1>
+        </div>
+    </div>
+
+    <div class="container mb-5">
+        <div class="row justify-content-center">
+            <div class="col-lg-10">
+                <div class="card">
+                    <div class="card-body p-4 p-md-5">
+                        <div class="icon-circle">
+                            <i class="bi bi-journal-bookmark"></i>
+                        </div>
+
+                        <h2 class="text-center mb-2">Connect Your Zotero Library</h2>
+                        <p class="text-center text-muted mb-5">
+                            Integrate your Zotero bibliography with {{ lab_name }} Overleaf in 5 easy steps
+                        </p>
+
+                        <div id="instructions">
+                            <!-- Step 1 -->
+                            <div class="mb-4">
+                                <h5 class="mb-3">
+                                    <span class="step-number">1</span>Get your Zotero credentials
+                                </h5>
+                                <div class="ms-5">
+                                    <p>Go to <a href="https://www.zotero.org/settings/keys/new" target="_blank"
+                                        class="text-decoration-none">
+                                        Zotero API Key Settings <i class="bi bi-box-arrow-up-right"></i>
+                                    </a></p>
+                                    <ul>
+                                        <li>Set <strong>Key Name</strong>: "Overleaf Integration"</li>
+                                        <li>Enable <strong>Personal Library: Read Only</strong></li>
+                                        <li>Click <strong>Save Key</strong></li>
+                                        <li>Copy both <strong>API Key</strong> and <strong>User ID</strong> (numeric)</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- Step 2 -->
+                            <div class="mb-4">
+                                <h5 class="mb-3">
+                                    <span class="step-number">2</span>Enter your information
+                                </h5>
+                                <div class="form-card ms-5">
+                                    <form id="registerForm">
+                                        <div class="mb-3">
+                                            <label for="email" class="form-label">Your Email</label>
+                                            <input type="email" class="form-control" id="email" required>
+                                            <small class="text-muted">We'll use the part before @ as your username</small>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="apiKey" class="form-label">Zotero API Key</label>
+                                            <input type="text" class="form-control" id="apiKey" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label for="userId" class="form-label">Zotero User ID</label>
+                                            <input type="text" class="form-control" id="userId" required pattern="[0-9]+">
+                                            <small class="text-muted">Numeric ID only</small>
+                                        </div>
+                                        <button type="submit" class="btn btn-primary btn-lg w-100">
+                                            <i class="bi bi-check-circle me-2"></i>Activate Integration
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Success Message (hidden initially) -->
+                        <div id="successMessage" class="success-box" style="display: none;">
+                            <h3 class="text-success mb-4">
+                                <i class="bi bi-check-circle-fill me-2"></i>Integration Activated!
+                            </h3>
+
+                            <!-- Step 3 -->
+                            <div class="mt-4">
+                                <h5 class="mb-3">
+                                    <span class="step-number">3</span>Add bibliography to your Overleaf project
+                                </h5>
+
+                                <p class="fw-bold mb-2">Option A: Entire Library</p>
+                                <div class="mb-3">
+                                    <label class="form-label small text-muted">URL to use:</label>
+                                    <div class="input-group">
+                                        <input type="text" class="form-control font-monospace" id="fullLibraryUrl" readonly>
+                                        <button class="btn btn-outline-secondary" onclick="copyToClipboard('fullLibraryUrl')">
+                                            <i class="bi bi-clipboard"></i> Copy
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <p class="fw-bold mb-2">Option B: Specific Collection</p>
+                                <div class="mb-3">
+                                    <label class="form-label small text-muted">URL format:</label>
+                                    <div class="input-group">
+                                        <input type="text" class="form-control font-monospace" id="collectionUrl" readonly>
+                                        <button class="btn btn-outline-secondary" onclick="copyToClipboard('collectionUrl')">
+                                            <i class="bi bi-clipboard"></i> Copy
+                                        </button>
+                                    </div>
+                                    <small class="text-muted">
+                                        Replace <code>collection_name</code> with your actual collection name
+                                    </small>
+                                </div>
+                            </div>
+
+                            <!-- Step 4 -->
+                            <div class="mt-4">
+                                <h5 class="mb-3">
+                                    <span class="step-number">4</span>Configure {{ lab_name }} Overleaf
+                                </h5>
+                                <ol>
+                                    <li>Open your project on <strong>{{ lab_name }} Overleaf</strong></li>
+                                    <li>Click <strong>"New File"</strong> → <strong>"From External URL"</strong></li>
+                                    <li>Paste one of the URLs above</li>
+                                    <li>Name the file: <code>references.bib</code></li>
+                                    <li>Click <strong>"Create"</strong></li>
+                                </ol>
+                            </div>
+
+                            <!-- Step 5 -->
+                            <div class="mt-4">
+                                <h5 class="mb-3">
+                                    <span class="step-number">5</span>Cite references in your document
+                                </h5>
+                                <p>Add to your LaTeX document:</p>
+                                <pre><code>\documentclass{article}
+\usepackage{biblatex}
+\addbibresource{references.bib}
+
+\begin{document}
+Your text here \cite{citation_key}
+
+\printbibliography
+\end{document}</code></pre>
+                                <p class="mt-2">
+                                    <small class="text-muted">
+                                        Or use <code>\bibliography{references}</code> with
+                                        <code>\bibliographystyle{plain}</code> for BibTeX
+                                    </small>
+                                </p>
+                            </div>
+
+                            <div class="alert alert-info mt-4">
+                                <i class="bi bi-info-circle me-2"></i>
+                                <strong>Tip:</strong> Refresh the <code>references.bib</code> file in
+                                {{ lab_name }} Overleaf to get the latest updates from your Zotero library!
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer mt-auto">
+        <div class="container text-center">
+            <span class="text-muted">{{ lab_name }} Admin Dashboard © 2025</span>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('registerForm').addEventListener('submit', async function (e) {
+            e.preventDefault();
+
+            const email = document.getElementById('email').value;
+            const apiKey = document.getElementById('apiKey').value;
+            const userId = document.getElementById('userId').value;
+
+            // Extract username from email (part before @)
+            const username = email.split('@')[0].toLowerCase().replace(/\./g, '-');
+
+            // Show loading state
+            const submitBtn = this.querySelector('button[type="submit"]');
+            const originalText = submitBtn.innerHTML;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Creating...';
+
+            try {
+                const response = await fetch('/api/zotero/proxies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: username,
+                        api_key: apiKey,
+                        user_id: userId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Wait 3 seconds for container to start
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    showSuccess(data.internal_url);
+                } else {
+                    // Show error
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = originalText;
+
+                    let errorMsg = data.error || 'Unknown error';
+                    if (errorMsg.includes('already exists')) {
+                        alert('❌ This username is already registered!\n\nPlease contact an administrator if you need to update your credentials.');
+                    } else {
+                        alert('❌ Error creating integration:\n\n' + errorMsg);
+                    }
+                }
+            } catch (error) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalText;
+                alert('❌ Connection error:\n\n' + error.message + '\n\nPlease check your internet connection and try again.');
+            }
+        });
+
+        function showSuccess(internalUrl) {
+            // Hide form, show success message
+            document.getElementById('instructions').style.display = 'none';
+            document.getElementById('successMessage').style.display = 'block';
+
+            // Populate URLs
+            document.getElementById('fullLibraryUrl').value = `${internalUrl}`;
+            document.getElementById('collectionUrl').value = `${internalUrl}/collection_name`;
+
+            // Scroll to success message
+            document.getElementById('successMessage').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            element.select();
+            document.execCommand('copy');
+
+            // Visual feedback
+            const button = event.target.closest('button');
+            const originalHTML = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-check"></i> Copied!';
+            setTimeout(() => {
+                button.innerHTML = originalHTML;
+            }, 2000);
+        }
+    </script>
+</body>
+
+</html>

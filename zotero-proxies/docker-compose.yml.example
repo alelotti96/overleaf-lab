@@ -1,0 +1,19 @@
+# =============================================================================
+# ZOTERO PROXIES - DOCKER COMPOSE
+# =============================================================================
+# This file is managed by the dashboard. User services are added automatically
+# when users configure their Zotero integration via the web UI.
+#
+# Each user gets a dedicated container named zotero-{username} accessible
+# via Docker network at http://zotero-{username}:5000
+#
+# DO NOT add user services manually here - use the dashboard instead!
+# =============================================================================
+
+services:
+  # Per-user Zotero proxy containers are added here automatically by the dashboard
+  # Each user gets a container named zotero-{username} accessible via Docker network
+
+networks:
+  overleaf_default:
+    external: true

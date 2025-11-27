@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+
+{% block title %}Overleaf Users - Overleaf-Zotero Manager{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2><i class="bi bi-people"></i> Overleaf Users Management</h2>
+        <hr>
+    </div>
+</div>
+
+<!-- Add User Button -->
+<div class="row mb-3">
+    <div class="col-12">
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal">
+            <i class="bi bi-person-plus"></i> Add New User
+        </button>
+        <button class="btn btn-secondary" onclick="refreshUserList()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+</div>
+
+<!-- Users Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover" id="usersTable">
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>Name</th>
+                                <th>Admin</th>
+                                <th>Last Compile</th>
+                                <th>Created</th>
+                                <th>Last Login</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                            <tr>
+                                <td colspan="6" class="text-center">
+                                    <div class="spinner-border" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add User Modal -->
+<div class="modal fade" id="addUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add New Overleaf User</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="addUserForm">
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        The user will receive an activation email with a link to set their password.
+                    </div>
+                    <div class="mb-3">
+                        <label for="userEmail" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="userEmail" required>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input" id="userIsAdmin">
+                        <label class="form-check-label" for="userIsAdmin">
+                            Grant Admin Privileges
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-person-plus"></i> Create User & Send Email
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Change Password Modal -->
+<div class="modal fade" id="changePasswordModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Change Password</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="changePasswordForm">
+                <div class="modal-body">
+                    <input type="hidden" id="changePasswordEmail">
+                    <div class="mb-3">
+                        <label class="form-label">User</label>
+                        <p id="changePasswordUser"></p>
+                    </div>
+                    <div class="mb-3">
+                        <label for="newPassword" class="form-label">New Password</label>
+                        <input type="password" class="form-control" id="newPassword" required minlength="8">
+                        <small class="text-muted">Minimum 8 characters</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-key"></i> Update Password
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Load users on page load
+    document.addEventListener('DOMContentLoaded', function () {
+        loadUsers();
+    });
+
+    // Add user form submission
+    document.getElementById('addUserForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+
+        const data = {
+            email: document.getElementById('userEmail').value,
+            is_admin: document.getElementById('userIsAdmin').checked
+            // No password field - user will receive activation email
+        };
+
+        fetch('/api/overleaf/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('User created! Activation email has been sent to ' + data.email);
+                    bootstrap.Modal.getInstance(document.getElementById('addUserModal')).hide();
+                    document.getElementById('addUserForm').reset();
+                    loadUsers();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            });
+    });
+
+    // Change password form submission
+    document.getElementById('changePasswordForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+
+        const email = document.getElementById('changePasswordEmail').value;
+        const newPassword = document.getElementById('newPassword').value;
+
+        fetch(`/api/overleaf/users/${email}/password`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: newPassword })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Password updated successfully!');
+                    bootstrap.Modal.getInstance(document.getElementById('changePasswordModal')).hide();
+                    document.getElementById('changePasswordForm').reset();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            });
+    });
+
+    function loadUsers() {
+        fetch('/api/overleaf/users')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    displayUsers(data.users);
+                } else {
+                    document.getElementById('usersTableBody').innerHTML =
+                        '<tr><td colspan="6" class="text-center text-danger">Failed to load users</td></tr>';
+                }
+            });
+    }
+
+    function displayUsers(users) {
+        const tbody = document.getElementById('usersTableBody');
+
+        if (users.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center">No users found</td></tr>';
+            return;
+        }
+
+        let html = '';
+        users.forEach(user => {
+            const createdDate = user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A';
+            const lastLogin = user.last_logged_in ? new Date(user.last_logged_in).toLocaleDateString() : 'Never';
+
+            html += `
+            <tr>
+                <td>${user.email}</td>
+                <td>${user.first_name} ${user.last_name}</td>
+                <td>
+                    ${user.is_admin ?
+                    '<span class="badge bg-success"><i class="bi bi-shield-check"></i> Admin</span>' :
+                    '<span class="badge bg-secondary">User</span>'}
+                </td>
+                <td>
+                    <small class="text-muted">${user.last_seen}</small>
+                </td>
+                <td>${createdDate}</td>
+                <td>${lastLogin}</td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-warning" onclick="toggleAdmin('${user.email}', ${!user.is_admin})"
+                                title="${user.is_admin ? 'Remove Admin' : 'Make Admin'}">
+                            <i class="bi bi-shield"></i>
+                        </button>
+                        <button class="btn btn-info" onclick="showChangePassword('${user.email}')" title="Change Password">
+                            <i class="bi bi-key"></i>
+                        </button>
+                        <button class="btn btn-danger" onclick="deleteUser('${user.email}')" title="Delete User">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+        });
+
+        tbody.innerHTML = html;
+    }
+
+    function toggleAdmin(email, makeAdmin) {
+        if (!confirm(`${makeAdmin ? 'Grant' : 'Remove'} admin privileges for ${email}?`)) return;
+
+        fetch(`/api/overleaf/users/${email}/admin`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_admin: makeAdmin })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadUsers();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            });
+    }
+
+    function deleteUser(email) {
+        if (!confirm(`Are you sure you want to delete user ${email}? This action cannot be undone.`)) return;
+
+        fetch(`/api/overleaf/users/${email}`, { method: 'DELETE' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('User deleted successfully');
+                    loadUsers();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            });
+    }
+
+    function showChangePassword(email) {
+        document.getElementById('changePasswordEmail').value = email;
+        document.getElementById('changePasswordUser').textContent = email;
+        const modal = new bootstrap.Modal(document.getElementById('changePasswordModal'));
+        modal.show();
+    }
+
+    function refreshUserList() {
+        loadUsers();
+    }
+</script>
+{% endblock %}

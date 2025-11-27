@@ -1,0 +1,39 @@
+services:
+  overleaf-zotero-manager:
+    build: .
+    container_name: overleaf-zotero-manager
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+      - ${OVERLEAF_TOOLKIT_PATH}:${OVERLEAF_TOOLKIT_PATH}:ro
+      - ${ZOTERO_PROXIES_PATH}:${ZOTERO_PROXIES_PATH}
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY}
+      - FLASK_DEBUG=${FLASK_DEBUG:-False}
+      - FLASK_HOST=${FLASK_HOST:-0.0.0.0}
+      - FLASK_PORT=${FLASK_PORT:-5000}
+      - LAB_NAME=${LAB_NAME:-Lab Name}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - MONGODB_URI=${MONGODB_URI}
+      - OVERLEAF_TOOLKIT_PATH=${OVERLEAF_TOOLKIT_PATH}
+      - ZOTERO_PROXIES_PATH=${ZOTERO_PROXIES_PATH}
+      - ZOTERO_PROXY_IMAGE=${ZOTERO_PROXY_IMAGE}
+      - OVERLEAF_URL=${OVERLEAF_URL}
+      - SIGNUP_SUBDOMAIN=${SIGNUP_SUBDOMAIN:-}
+      - BEHIND_PROXY=${BEHIND_PROXY:-false}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-True}
+      - SESSION_COOKIE_HTTPONLY=${SESSION_COOKIE_HTTPONLY:-True}
+      - SESSION_COOKIE_SAMESITE=${SESSION_COOKIE_SAMESITE:-Lax}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=${LOG_FILE:-logs/app.log}
+    networks:
+      - overleaf_default
+
+networks:
+  overleaf_default:
+    external: true
+    name: overleaf_default
