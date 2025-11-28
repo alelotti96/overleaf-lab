@@ -150,6 +150,13 @@ fi
 echo "[3/4] Configuring Overleaf Toolkit..."
 
 if [ -d "overleaf-toolkit" ]; then
+    # Build header extras conditionally (include Zotero link only if signup is enabled)
+    if [ "${ENABLE_PUBLIC_ZOTERO_SIGNUP}" = "true" ]; then
+        HEADER_EXTRAS='[{"text":"Admin Dashboard","url":"'"${DASHBOARD_URL}"'"},{"text":"LaTeX Tutorial","url":"https://www.overleaf.com/learn/latex/Learn_LaTeX_in_30_minutes","class":"subdued"},{"text":"Zotero","dropdown":[{"text":"Integration Setup","url":"'"${DASHBOARD_SIGNUP_URL}"'"}]}]'
+    else
+        HEADER_EXTRAS='[{"text":"Admin Dashboard","url":"'"${DASHBOARD_URL}"'"},{"text":"LaTeX Tutorial","url":"https://www.overleaf.com/learn/latex/Learn_LaTeX_in_30_minutes","class":"subdued"}]'
+    fi
+
     # Create overleaf.rc if it doesn't exist or update it
     cat > overleaf-toolkit/config/overleaf.rc <<EOF
 #### Overleaf RC ####
@@ -227,8 +234,8 @@ OVERLEAF_ADMIN_EMAIL=${ADMIN_EMAIL}
 OVERLEAF_BEHIND_PROXY=${BEHIND_PROXY}
 OVERLEAF_SECURE_COOKIE=${USE_SECURE_COOKIES}
 
-# Custom header menu
-OVERLEAF_HEADER_EXTRAS=[{"text":"Admin Dashboard","url":"${DASHBOARD_URL}"},{"text":"LaTeX Tutorial","url":"https://www.overleaf.com/learn/latex/Learn_LaTeX_in_30_minutes","class":"subdued"},{"text":"Zotero","dropdown":[{"text":"Integration Setup","url":"${DASHBOARD_SIGNUP_URL}"}]}]
+# Custom header menu (Zotero link only if signup is enabled)
+OVERLEAF_HEADER_EXTRAS=${HEADER_EXTRAS}
 
 # Security
 OVERLEAF_PASSWORD_VALIDATION_PATTERN=${PASSWORD_VALIDATION_PATTERN}
@@ -278,6 +285,8 @@ EOF
     _replace_var "USE_SECURE_COOKIES" "${USE_SECURE_COOKIES}"
     _replace_var "DASHBOARD_URL" "${DASHBOARD_URL}"
     _replace_var "DASHBOARD_SIGNUP_URL" "${DASHBOARD_SIGNUP_URL}"
+    # HEADER_EXTRAS contains JSON - use awk for safe replacement
+    awk -v val="$HEADER_EXTRAS" '{gsub(/\${HEADER_EXTRAS}/, val)}1' overleaf-toolkit/config/variables.env > overleaf-toolkit/config/variables.env.tmp && mv overleaf-toolkit/config/variables.env.tmp overleaf-toolkit/config/variables.env
     # PASSWORD_VALIDATION_PATTERN may contain $ like "aa11$8" - awk handles this correctly
     _replace_var "PASSWORD_VALIDATION_PATTERN" "${PASSWORD_VALIDATION_PATTERN}"
     _replace_var "MAX_UPLOAD_SIZE" "${MAX_UPLOAD_SIZE}"
