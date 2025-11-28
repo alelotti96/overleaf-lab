@@ -37,7 +37,7 @@ echo ""
 # -----------------------------------------------------------------------------
 # 1. Check prerequisites
 # -----------------------------------------------------------------------------
-echo "[1/8] Checking prerequisites..."
+echo "[1/7] Checking prerequisites..."
 
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then
@@ -98,7 +98,7 @@ fi
 # 2. Configuration setup
 # -----------------------------------------------------------------------------
 echo ""
-echo "[2/8] Configuration setup..."
+echo "[2/7] Configuration setup..."
 
 if [ ! -f config.env.local ]; then
     echo "Let's configure your installation..."
@@ -190,20 +190,6 @@ if [ ! -f config.env.local ]; then
         SMTP_FROM="noreply@example.com"
     fi
 
-    # Ask about LaTeX packages
-    echo ""
-    echo "==============================================================================="
-    echo "LaTeX PACKAGES INSTALLATION"
-    echo "==============================================================================="
-    echo ""
-    echo "Choose which LaTeX packages to install:"
-    echo "  1) Full TeX Live (~7GB) - ALL packages, fonts, and tools"
-    echo "  2) Essential packages only - Common packages for academic writing"
-    echo "  3) None - Use default minimal installation"
-    echo ""
-    read -p "Select option [1/2/3]: " LATEX_OPTION
-    LATEX_OPTION=${LATEX_OPTION:-3}
-
     # Create config.env.local
     cp config.env config.env.local
 
@@ -228,7 +214,7 @@ fi
 # 3. Clone repositories
 # -----------------------------------------------------------------------------
 echo ""
-echo "[3/8] Cloning Overleaf repositories..."
+echo "[3/7] Cloning Overleaf repositories..."
 
 if [ ! -d "overleaf-toolkit" ]; then
     echo "Cloning Overleaf Toolkit..."
@@ -254,7 +240,7 @@ fi
 # 4. Initialize Overleaf Toolkit
 # -----------------------------------------------------------------------------
 echo ""
-echo "[4/8] Initializing Overleaf Toolkit..."
+echo "[4/7] Initializing Overleaf Toolkit..."
 
 cd "$SCRIPT_DIR/overleaf-toolkit"
 
@@ -301,7 +287,7 @@ cd "$SCRIPT_DIR"
 # 5. Apply configuration
 # -----------------------------------------------------------------------------
 echo ""
-echo "[5/8] Applying configuration to all components..."
+echo "[5/7] Applying configuration to all components..."
 
 if [ -f "./scripts/configure.sh" ]; then
     chmod +x ./scripts/configure.sh
@@ -315,7 +301,7 @@ fi
 # 6. Start Overleaf
 # -----------------------------------------------------------------------------
 echo ""
-echo "[6/8] Starting Overleaf services..."
+echo "[6/7] Starting Overleaf services..."
 
 cd "$SCRIPT_DIR/overleaf-toolkit"
 bin/up -d
@@ -427,61 +413,10 @@ fi
 
 
 # -----------------------------------------------------------------------------
-# 7. Install LaTeX packages based on user choice
+# 7. Start Dashboard and Zotero Proxies
 # -----------------------------------------------------------------------------
 echo ""
-echo "[7/8] Installing LaTeX packages..."
-
-if [ "$LATEX_OPTION" = "1" ]; then
-    echo "Installing Full TeX Live (this will take 15-30 minutes)..."
-    if [ -f "./scripts/install-latex-packages-wrapper.sh" ]; then
-        chmod +x ./scripts/install-latex-packages-wrapper.sh
-        ./scripts/install-latex-packages-wrapper.sh
-
-        # Update config to use custom image
-        sed -i 's|^OVERLEAF_IMAGE=.*|OVERLEAF_IMAGE=local/sharelatex-texlive-full|' config.env.local
-        sed -i 's|^OVERLEAF_IMAGE_TAG=.*|OVERLEAF_IMAGE_TAG=latest|' config.env.local
-
-        # Re-run configure.sh to propagate image change
-        ./scripts/configure.sh > /dev/null
-
-        # Restart with new image
-        cd "$SCRIPT_DIR/overleaf-toolkit"
-        bin/stop
-        bin/up -d
-        cd "$SCRIPT_DIR"
-        echo -e "${GREEN}✓ Full TeX Live installed${NC}"
-    fi
-elif [ "$LATEX_OPTION" = "2" ]; then
-    echo "Installing essential LaTeX packages..."
-    chmod +x ./scripts/install-latex-essentials.sh
-    docker cp ./scripts/install-latex-essentials.sh sharelatex:/root/
-    docker exec sharelatex bash -c "chmod +x /root/install-latex-essentials.sh && /root/install-latex-essentials.sh"
-
-    # Commit as custom image
-    docker commit sharelatex local/sharelatex-texlive-full:latest
-
-    # Update config
-    sed -i 's|^OVERLEAF_IMAGE=.*|OVERLEAF_IMAGE=local/sharelatex-texlive-full|' config.env.local
-    sed -i 's|^OVERLEAF_IMAGE_TAG=.*|OVERLEAF_IMAGE_TAG=latest|' config.env.local
-    ./scripts/configure.sh > /dev/null
-
-    # Restart with new image
-    cd "$SCRIPT_DIR/overleaf-toolkit"
-    bin/stop
-    bin/up -d
-    cd "$SCRIPT_DIR"
-    echo -e "${GREEN}✓ Essential LaTeX packages installed${NC}"
-else
-    echo "Skipping LaTeX packages installation."
-    echo "You can install them later with: ./scripts/install-latex-packages-wrapper.sh"
-fi
-
-# -----------------------------------------------------------------------------
-# 8. Start Dashboard and Zotero Proxies
-# -----------------------------------------------------------------------------
-echo ""
-echo "[8/8] Starting Dashboard and Zotero Proxies..."
+echo "[7/7] Starting Dashboard and Zotero Proxies..."
 
 # Build the Zotero proxy image first (used by dashboard to create user containers)
 echo "Building Zotero proxy image..."

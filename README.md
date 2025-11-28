@@ -73,7 +73,6 @@ The script asks for:
 - Dashboard admin password
 - SMTP settings (optional)
 - Public Zotero signup (yes/no)
-- LaTeX packages (Full/Essential/None)
 
 ## After Installation
 
