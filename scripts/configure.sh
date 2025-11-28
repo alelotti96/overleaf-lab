@@ -157,7 +157,8 @@ PROJECT_NAME=overleaf
 
 # Sharelatex container
 OVERLEAF_DATA_PATH=data/overleaf
-SERVER_PRO=false
+# SERVER_PRO=true enables sibling containers in toolkit (required for overleaf-cep sandboxed compiles)
+SERVER_PRO=${SANDBOXED_COMPILES}
 
 # Docker image
 OVERLEAF_IMAGE=${OVERLEAF_IMAGE}
