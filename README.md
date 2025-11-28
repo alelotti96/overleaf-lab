@@ -7,9 +7,11 @@ Scripts have been tested on Ubuntu 24.
 ## Features
 
 **Overleaf Extended CE** (via [overleaf-cep](https://github.com/yu-i-i/overleaf-cep)):
+- Sandboxed Compiles (each project compiles in an isolated container)
 - Track Changes
 - Comments and review system
 - Template gallery
+- Project history with restore functionality
 
 **Custom Zotero Integration**:
 - Access full library or specific collections by name
@@ -77,7 +79,6 @@ The script asks for:
 - **Users**: View, create, delete Overleaf users, reset passwords, assign/remove admin rights
 - **Zotero**: Add/remove Zotero users, configure API keys per user
 - **Signup** (if enabled): page where users can self-register their Zotero credentials
-The Zotero signup page is currently being installed regardless of the user's answer. (bug)
 
 ## Zotero Integration
 

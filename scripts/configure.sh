@@ -90,6 +90,9 @@ OVERLEAF_URL=${OVERLEAF_URL}
 # Signup subdomain (for auto-redirect from signup hostname)
 SIGNUP_SUBDOMAIN=${SIGNUP_SUBDOMAIN:-}
 
+# Enable public Zotero signup page
+ENABLE_PUBLIC_ZOTERO_SIGNUP=${ENABLE_PUBLIC_ZOTERO_SIGNUP}
+
 # Proxy configuration
 BEHIND_PROXY=${BEHIND_PROXY}
 

@@ -37,6 +37,9 @@ class Config:
     # e.g., "zotero-signup" will redirect zotero-signup.domain.com to /zotero/signup
     SIGNUP_SUBDOMAIN = os.environ.get('SIGNUP_SUBDOMAIN', '')
 
+    # Enable public Zotero signup page (if False, /zotero/signup returns 404)
+    ENABLE_PUBLIC_ZOTERO_SIGNUP = os.environ.get('ENABLE_PUBLIC_ZOTERO_SIGNUP', 'false').lower() == 'true'
+
     # Proxy Configuration
     # When running behind Cloudflare Tunnel or reverse proxy, set to True
     BEHIND_PROXY = os.environ.get('BEHIND_PROXY', 'false').lower() == 'true'

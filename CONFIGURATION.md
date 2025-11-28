@@ -24,7 +24,7 @@ The install script reads `config.env.local` and edits the appropriate config fil
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `COMPILE_TIMEOUT` | "180" | Compile timeout in seconds (3 min) |
-| `SANDBOXED_COMPILES` | "false" | Enable sandboxed compiles |
+| `SANDBOXED_COMPILES` | "true" | Isolate each compile in a separate container for security |
 | `TRACK_CHANGES_ENABLED` | "true" | Enable track changes feature |
 | `OVERLEAF_PORT` | "80" | Overleaf HTTP port |
 | `PASSWORD_VALIDATION_PATTERN` | "aa11$8" | Password requirements (letters, numbers, special, min 8) |

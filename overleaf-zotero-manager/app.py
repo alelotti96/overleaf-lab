@@ -10,7 +10,7 @@ import secrets
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash, abort
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -270,6 +270,8 @@ def update_password(email):
 @app.route('/zotero/signup', methods=['GET'])
 def zotero_signup():
     """Public page for users to self-register Zotero integration."""
+    if not app.config.get('ENABLE_PUBLIC_ZOTERO_SIGNUP', False):
+        abort(404)
     return render_template('zotero_register.html')
 
 @app.errorhandler(404)
