@@ -209,6 +209,20 @@ if [ ! -f config.env.local ]; then
         SMTP_FROM="noreply@example.com"
     fi
 
+    # Experimental features
+    echo ""
+    echo "==============================================================================="
+    echo "EXPERIMENTAL FEATURES"
+    echo "==============================================================================="
+    read -p "Enable new editor UI? (experimental, may have bugs) (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        ENABLE_NEW_EDITOR_UI="true"
+        echo -e "${GREEN}New editor UI will be enabled${NC}"
+    else
+        ENABLE_NEW_EDITOR_UI="false"
+    fi
+
     # Create config.env.local
     cp config.env config.env.local
 
@@ -227,6 +241,9 @@ if [ ! -f config.env.local ]; then
     if [ -n "$MONGO_VERSION" ]; then
         sed -i "s|MONGO_VERSION=.*|MONGO_VERSION=\"${MONGO_VERSION}\"|" config.env.local
     fi
+
+    # Set experimental features
+    sed -i "s|ENABLE_NEW_EDITOR_UI=.*|ENABLE_NEW_EDITOR_UI=\"${ENABLE_NEW_EDITOR_UI}\"|" config.env.local
 
     echo ""
     echo -e "${GREEN}✓ Configuration created${NC}"
