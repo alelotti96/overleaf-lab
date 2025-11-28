@@ -7,6 +7,7 @@ Scripts have been tested on Ubuntu 24.
 ## Features
 
 **Overleaf Extended CE** (via [overleaf-cep](https://github.com/yu-i-i/overleaf-cep)):
+
 - Sandboxed Compiles (each project compiles in an isolated container)
 - Track Changes
 - Comments and review system
@@ -14,10 +15,12 @@ Scripts have been tested on Ubuntu 24.
 - Project history with restore functionality
 
 **Custom Zotero Integration**:
+
 - Access full library or specific collections by name
 - `.bib` files importable directly into Overleaf projects (refresh to sync)
 
 **Admin Dashboard**:
+
 - Manage Overleaf users (create, delete, reset passwords, assign/remove admin rights)
 - Configure Zotero integrations per user
 - Optional signup page for Zotero self-registration
@@ -36,9 +39,9 @@ Scripts have been tested on Ubuntu 24.
 
 ## Architecture
 
-| Service | Port | Description |
-|---------|------|-------------|
-| **Overleaf** | 80 | LaTeX editor |
+| Service       | Port | Description                      |
+| ------------- | ---- | -------------------------------- |
+| **Overleaf**  | 80   | LaTeX editor                     |
 | **Dashboard** | 5000 | Admin panel for users and Zotero |
 
 See [CONFIGURATION.md](CONFIGURATION.md) for all settings and customization options.
@@ -58,11 +61,14 @@ Email is required for password resets and notifications. For Gmail:
 ## Installation
 
 ```bash
+git clone https://github.com/alelotti96/overleaf-lab.git
+cd overleaf-lab
 chmod +x *.sh scripts/*.sh
 ./install.sh
 ```
 
 The script asks for:
+
 - Lab name and admin email
 - Dashboard admin password
 - SMTP settings (optional)
@@ -120,6 +126,7 @@ Note: Dashboard and Signup point to the same backend but may use different Acces
 MIT
 
 **Original code in this project:**
+
 - Installation and configuration scripts
 - Dashboard (overleaf-zotero-manager) for user and Zotero management
 - Zotero proxy containers orchestration
