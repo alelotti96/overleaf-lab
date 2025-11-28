@@ -39,6 +39,20 @@
             </div>
         </div>
     </div>
+
+    <div class="col-md-4">
+        <div class="card text-white bg-info">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-broadcast"></i> Live Projects
+                </h5>
+                <h2 class="card-text">{{ stats.active_sessions }}</h2>
+                <a href="{{ url_for('sessions_page') }}" class="btn btn-light btn-sm">
+                    View Activity <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- System Status -->

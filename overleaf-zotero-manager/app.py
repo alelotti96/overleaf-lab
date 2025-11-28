@@ -107,7 +107,8 @@ def dashboard():
     """Main dashboard."""
     stats = {
         'overleaf_users': overleaf_manager.get_user_count(),
-        'zotero_proxies': zotero_manager.get_proxy_count()
+        'zotero_proxies': zotero_manager.get_proxy_count(),
+        'active_sessions': overleaf_manager.get_session_count()
     }
     return render_template('dashboard.html', stats=stats)
 
@@ -248,6 +249,32 @@ def overleaf_page():
 def zotero_page():
     """Zotero management page."""
     return render_template('zotero.html')
+
+@app.route('/sessions')
+@login_required
+def sessions_page():
+    """Active sessions and projects page."""
+    return render_template('sessions.html')
+
+@app.route('/api/sessions', methods=['GET'])
+@login_required
+def get_sessions():
+    """Get active sessions."""
+    try:
+        sessions = overleaf_manager.get_active_sessions()
+        return jsonify({'success': True, 'sessions': sessions})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/projects/active', methods=['GET'])
+@login_required
+def get_active_projects():
+    """Get recently active projects."""
+    try:
+        projects = overleaf_manager.get_active_projects()
+        return jsonify({'success': True, 'projects': projects})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/overleaf/users/<email>/password', methods=['PUT'])
 @login_required

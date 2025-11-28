@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block title %}Activity - {{ lab_name }} Admin{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2><i class="bi bi-person-workspace"></i> Activity Monitor</h2>
+        <hr>
+    </div>
+</div>
+
+<!-- Live Activity (last 1h) -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-broadcast"></i> Live Activity (last 1h)
+                </h5>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadSessions()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="sessions-container">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Projects -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-folder-fill"></i> Recently Active Projects (24h)
+                </h5>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadProjects()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="projects-container">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function loadSessions() {
+        fetch('/api/sessions')
+            .then(response => response.json())
+            .then(data => {
+                const container = document.getElementById('sessions-container');
+                if (data.success && data.sessions.length > 0) {
+                    let html = '<div class="table-responsive"><table class="table table-hover">';
+                    html += '<thead><tr><th style="width:35%">Project</th><th style="width:25%">Owner</th><th style="width:25%">Collaborators</th><th style="width:15%; white-space:nowrap">Last Edit</th></tr></thead>';
+                    html += '<tbody>';
+                    data.sessions.forEach(proj => {
+                        const collabs = proj.collaborators && proj.collaborators.length > 0
+                            ? proj.collaborators.join(', ')
+                            : '<span class="text-muted">-</span>';
+                        html += `<tr>
+                            <td><i class="bi bi-circle-fill text-success" style="font-size: 0.5rem;"></i> ${proj.project_name}</td>
+                            <td>${proj.owner_email}</td>
+                            <td>${collabs}</td>
+                            <td>${proj.last_activity}</td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table></div>';
+                    container.innerHTML = html;
+                } else if (data.success) {
+                    container.innerHTML = '<div class="alert alert-secondary"><i class="bi bi-moon"></i> No editing activity in the last hour</div>';
+                } else {
+                    container.innerHTML = '<div class="alert alert-danger">Error loading activity</div>';
+                }
+            })
+            .catch(error => {
+                document.getElementById('sessions-container').innerHTML =
+                    '<div class="alert alert-danger">Failed to load activity</div>';
+            });
+    }
+
+    function loadProjects() {
+        fetch('/api/projects/active')
+            .then(response => response.json())
+            .then(data => {
+                const container = document.getElementById('projects-container');
+                if (data.success && data.projects.length > 0) {
+                    let html = '<div class="table-responsive"><table class="table table-hover">';
+                    html += '<thead><tr><th>Project</th><th>Owner</th><th>Last Updated</th></tr></thead>';
+                    html += '<tbody>';
+                    data.projects.forEach(project => {
+                        html += `<tr>
+                            <td><i class="bi bi-file-earmark-text"></i> ${project.name}</td>
+                            <td>${project.owner_email}</td>
+                            <td>${project.last_updated}</td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table></div>';
+                    container.innerHTML = html;
+                } else if (data.success) {
+                    container.innerHTML = '<div class="alert alert-info"><i class="bi bi-info-circle"></i> No recent project activity</div>';
+                } else {
+                    container.innerHTML = '<div class="alert alert-danger">Error loading projects</div>';
+                }
+            })
+            .catch(error => {
+                document.getElementById('projects-container').innerHTML =
+                    '<div class="alert alert-danger">Failed to load projects</div>';
+            });
+    }
+
+    // Load on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        loadSessions();
+        loadProjects();
+    });
+
+    // Auto-refresh every 10 seconds for real-time feel
+    setInterval(function() {
+        loadSessions();
+        loadProjects();
+    }, 10000);
+</script>
+{% endblock %}

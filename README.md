@@ -37,6 +37,10 @@ Scripts have been tested on Ubuntu 24.
   <img src=".github/screenshots/zotero-signup.png" alt="Zotero Signup Page" width="45%">
 </p>
 
+<p align="center">
+  <img src=".github/screenshots/overleaf-activity.png" alt="Activity Monitor" width="45%">
+</p>
+
 ## Architecture
 
 | Service       | Port | Description                      |
@@ -83,7 +87,8 @@ The script asks for:
 
 - **Users**: View, create, delete Overleaf users, reset passwords, assign/remove admin rights
 - **Zotero**: Add/remove Zotero users, configure API keys per user
-- **Signup** (if enabled): page where users can self-register their Zotero credentials
+- **Activity**: Live project activity tracking with owner and collaborators
+- **Signup** (if enabled): Page where users can self-register their Zotero credentials
 
 ## Zotero Integration
 
