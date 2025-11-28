@@ -336,6 +336,10 @@ services:
     volumes:
       # Mount script to enable project restore feature on container startup
       - ../../enable-restore-feature.sh:/restore-script/enable-restore-feature.sh:ro
+      # Mount entrypoint wrapper
+      - ../../scripts/docker-entrypoint.sh:/docker-entrypoint-wrapper.sh:ro
+
+    entrypoint: ["/bin/bash", "/docker-entrypoint-wrapper.sh"]
 YAML_EOF
 
     # Replace variables in docker-compose.override.yml
