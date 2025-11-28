@@ -181,7 +181,7 @@ ENABLE_CONVERSIONS=true
 
 # Track changes
 TRACK_CHANGES_ENABLED=${TRACK_CHANGES_ENABLED}
-TEX_LIVE_DOCKER_IMAGE=texlive/texlive:latest-full
+TEX_LIVE_DOCKER_IMAGE=local/texlive-fonts:latest
 
 # Template gallery
 OVERLEAF_TEMPLATES_USER_ID=system
@@ -247,8 +247,8 @@ MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE}
 COMPILE_TIMEOUT=${COMPILE_TIMEOUT}
 
 # Sandboxed compiles - TeXLive images (required when SIBLING_CONTAINERS_ENABLED=true)
-ALL_TEX_LIVE_DOCKER_IMAGES=texlive/texlive:latest-full
-TEX_LIVE_DOCKER_IMAGE=texlive/texlive:latest-full
+ALL_TEX_LIVE_DOCKER_IMAGES=local/texlive-fonts:latest
+TEX_LIVE_DOCKER_IMAGE=local/texlive-fonts:latest
 
 # Email settings
 OVERLEAF_EMAIL_FROM_ADDRESS=${EMAIL_FROM_ADDRESS}

@@ -297,6 +297,17 @@ else
     echo -e "${YELLOW}Warning: configure.sh not found, skipping configuration step${NC}"
 fi
 
+# Build custom TeX Live image with system fonts (for sandboxed compiles)
+echo ""
+echo "Building custom TeX Live image with system fonts..."
+echo "This may take a few minutes on first run..."
+if docker build -t local/texlive-fonts:latest "$SCRIPT_DIR/texlive-fonts"; then
+    echo -e "${GREEN}✓ TeX Live image with fonts built${NC}"
+else
+    echo -e "${YELLOW}Warning: Could not build custom TeX Live image${NC}"
+    echo "Sandboxed compiles will use default texlive image (some fonts may be missing)"
+fi
+
 # -----------------------------------------------------------------------------
 # 6. Start Overleaf
 # -----------------------------------------------------------------------------
