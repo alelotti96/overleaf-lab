@@ -311,7 +311,8 @@ services:
       - net.ipv6.conf.all.disable_ipv6=1
 
     environment:
-      SKIP_BINARY_FILES_MIGRATION_CHECK: "false"
+      SKIP_BINARY_FILES_MIGRATION_CHECK: "true"
+      OVERLEAF_FILESTORE_MIGRATION_LEVEL: "2"
 
       # Features
       ENABLE_CONVERSIONS: "true"
