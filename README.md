@@ -108,7 +108,7 @@ To expose your instance to the internet, use Cloudflare Tunnel (free, no port fo
 
 Requires a Cloudflare account and domain.
 
-### Securing with Cloudflare Access
+### Securing with Cloudflare Access (optional, for increased security)
 
 After setting up the tunnel, configure access policies in the Cloudflare Zero Trust dashboard:
 
