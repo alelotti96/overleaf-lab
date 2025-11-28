@@ -315,7 +315,8 @@ echo ""
 echo "[6/7] Starting Overleaf services..."
 
 cd "$SCRIPT_DIR/overleaf-toolkit"
-bin/up -d
+# Skip pulling texlive image (we use local/texlive-fonts:latest built above)
+SIBLING_CONTAINERS_PULL=false bin/up -d
 cd "$SCRIPT_DIR"
 
 echo "Waiting for Overleaf to start and stabilize (this may take a few minutes)..."
