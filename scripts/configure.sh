@@ -337,9 +337,12 @@ services:
       OVERLEAF_TEMPLATE_GALLERY: "true"
       OVERLEAF_NON_ADMIN_CAN_PUBLISH_TEMPLATES: "true"
 
+      # Experimental features (passed to enable-features.sh)
+      ENABLE_NEW_EDITOR_UI: "${ENABLE_NEW_EDITOR_UI}"
+
     volumes:
-      # Mount script to enable project restore feature on container startup
-      - ../../enable-restore-feature.sh:/restore-script/enable-restore-feature.sh:ro
+      # Mount script to enable features on container startup
+      - ../../scripts/enable-features.sh:/overleaf-lab/enable-features.sh:ro
       # Mount entrypoint wrapper
       - ../../scripts/docker-entrypoint.sh:/docker-entrypoint-wrapper.sh:ro
 
@@ -349,6 +352,7 @@ YAML_EOF
     # Replace variables in docker-compose.override.yml
     sed -i "s|\${OVERLEAF_IMAGE}|${OVERLEAF_IMAGE}|g" overleaf-toolkit/config/docker-compose.override.yml
     sed -i "s|\${OVERLEAF_IMAGE_TAG}|${OVERLEAF_IMAGE_TAG}|g" overleaf-toolkit/config/docker-compose.override.yml
+    sed -i "s|\${ENABLE_NEW_EDITOR_UI}|${ENABLE_NEW_EDITOR_UI:-false}|g" overleaf-toolkit/config/docker-compose.override.yml
 
     echo -e "${GREEN}✓ Overleaf Toolkit configured${NC}"
 else

@@ -1,10 +1,10 @@
 #!/bin/bash
 # Custom entrypoint wrapper for Overleaf
-# Enables restore feature before starting services
+# Enables features before starting services
 
-# Run restore feature script if it exists
-if [ -f /restore-script/enable-restore-feature.sh ]; then
-    bash /restore-script/enable-restore-feature.sh
+# Run features script if it exists
+if [ -f /overleaf-lab/enable-features.sh ]; then
+    bash /overleaf-lab/enable-features.sh
 fi
 
 # Execute the original entrypoint

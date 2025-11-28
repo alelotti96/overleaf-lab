@@ -27,10 +27,18 @@ The install script reads `config.env.local` and edits the appropriate config fil
 | `SANDBOXED_COMPILES` | "true" | Isolate each compile in a separate container for security |
 | `TRACK_CHANGES_ENABLED` | "true" | Enable track changes feature |
 | `OVERLEAF_PORT` | "80" | Overleaf HTTP port |
-| `PASSWORD_VALIDATION_PATTERN` | "aa11$8" | Password requirements (letters, numbers, special, min 8) |
+| `PASSWORD_VALIDATION_PATTERN` | "a1$" | Password requirements (passfield format) |
+| `PASSWORD_VALIDATION_MIN_LENGTH` | "8" | Minimum password length |
 | `MAX_UPLOAD_SIZE` | "524288000" | Max upload size in bytes (500MB) |
 | `ENABLED_LINKED_FILE_TYPES` | "project_file,project_output_file,url" | Allowed linked file types |
+| `MONGO_VERSION` | "8.0" | MongoDB version ("4.4" for older CPUs without AVX) |
 | `OVERLEAF_LINKED_URL_ALLOWED_RESOURCES` | "^http://zotero-[a-zA-Z0-9-]+:5000" | Regex whitelist for internal Zotero URLs (auto-configured, bypasses SSRF protection) |
+
+## Experimental Features
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_NEW_EDITOR_UI` | "false" | Enable the new redesigned Overleaf editor interface (experimental) |
 
 ## Email (SMTP) [optional]
 
