@@ -33,7 +33,9 @@ fi
 source config.env.local
 
 # Read PASSWORD_VALIDATION_PATTERN literally (without shell expansion)
-PASSWORD_VALIDATION_PATTERN=$(grep '^PASSWORD_VALIDATION_PATTERN=' config.env.local | sed 's/^PASSWORD_VALIDATION_PATTERN=//' | tr -d '"')
+# Escape $ as $$ for docker-compose
+PASSWORD_VALIDATION_PATTERN=$(grep '^PASSWORD_VALIDATION_PATTERN=' config.env.local | sed 's/^PASSWORD_VALIDATION_PATTERN=//' | tr -d '"' | sed 's/\$/\$\$/g')
+PASSWORD_VALIDATION_MIN_LENGTH=$(grep '^PASSWORD_VALIDATION_MIN_LENGTH=' config.env.local | sed 's/^PASSWORD_VALIDATION_MIN_LENGTH=//' | tr -d '"')
 
 # Read EMAIL_FROM_ADDRESS literally
 EMAIL_FROM_ADDRESS=$(grep '^EMAIL_FROM_ADDRESS=' config.env.local | sed 's/^EMAIL_FROM_ADDRESS=//' | tr -d '"')
@@ -194,7 +196,7 @@ OVERLEAF_PORT=${OVERLEAF_PORT}
 MONGO_ENABLED=true
 MONGO_DATA_PATH=data/mongo
 MONGO_IMAGE=mongo
-MONGO_VERSION=8.0
+MONGO_VERSION=${MONGO_VERSION:-8.0}
 
 # Redis configuration
 REDIS_ENABLED=true
@@ -239,6 +241,7 @@ OVERLEAF_HEADER_EXTRAS=${HEADER_EXTRAS}
 
 # Security
 OVERLEAF_PASSWORD_VALIDATION_PATTERN=${PASSWORD_VALIDATION_PATTERN}
+OVERLEAF_PASSWORD_VALIDATION_MIN_LENGTH=${PASSWORD_VALIDATION_MIN_LENGTH}
 
 # Upload limits
 MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE}
@@ -287,8 +290,9 @@ EOF
     _replace_var "DASHBOARD_SIGNUP_URL" "${DASHBOARD_SIGNUP_URL}"
     # HEADER_EXTRAS contains JSON - use awk for safe replacement
     awk -v val="$HEADER_EXTRAS" '{gsub(/\${HEADER_EXTRAS}/, val)}1' overleaf-toolkit/config/variables.env > overleaf-toolkit/config/variables.env.tmp && mv overleaf-toolkit/config/variables.env.tmp overleaf-toolkit/config/variables.env
-    # PASSWORD_VALIDATION_PATTERN may contain $ like "aa11$8" - awk handles this correctly
+    # PASSWORD_VALIDATION_PATTERN may contain $ like "a1$" - awk handles this correctly
     _replace_var "PASSWORD_VALIDATION_PATTERN" "${PASSWORD_VALIDATION_PATTERN}"
+    _replace_var "PASSWORD_VALIDATION_MIN_LENGTH" "${PASSWORD_VALIDATION_MIN_LENGTH}"
     _replace_var "MAX_UPLOAD_SIZE" "${MAX_UPLOAD_SIZE}"
     _replace_var "COMPILE_TIMEOUT" "${COMPILE_TIMEOUT}"
     _replace_var "EMAIL_FROM_ADDRESS" "${EMAIL_FROM_ADDRESS}"
