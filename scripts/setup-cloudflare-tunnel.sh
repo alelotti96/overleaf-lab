@@ -265,7 +265,7 @@ echo "Applying configuration to Overleaf..."
 
 echo ""
 echo "Restarting services..."
-cd overleaf-toolkit && bin/stop && bin/up -d && cd ..
+cd overleaf-toolkit && bin/stop && SIBLING_CONTAINERS_PULL=false bin/up -d && cd ..
 # Dashboard always installed, restart it to reload environment variables
 if [ -d "overleaf-zotero-manager" ]; then
     echo "Restarting dashboard to apply new configuration..."
