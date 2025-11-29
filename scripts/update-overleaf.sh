@@ -78,7 +78,8 @@ bin/docker-compose pull sharelatex
 echo ""
 echo "Restarting Overleaf..."
 bin/stop
-bin/up -d
+# Skip pulling local texlive image (it's built locally, not on Docker Hub)
+SIBLING_CONTAINERS_PULL=false bin/up -d
 
 echo ""
 echo "=================================="
