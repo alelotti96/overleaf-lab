@@ -14,6 +14,12 @@ Scripts have been tested on Ubuntu 24.
 - Template gallery
 - Project history with restore functionality
 
+**Full TeXLive + Microsoft Fonts**:
+
+- Complete TeXLive distribution (all packages included)
+- Microsoft core fonts (Arial, Times New Roman, Courier, etc.)
+- No "missing package" or "font not found" errors
+
 **Custom Zotero Integration**:
 
 - Access full library or specific collections by name
@@ -124,6 +130,21 @@ After setting up the tunnel, configure access policies in the Cloudflare Zero Tr
    - **Signup** (zotero-signup.your-domain.com): restrict to lab members (email list) or group/institution (email domain)
 
 Note: Dashboard and Signup point to the same backend but may use different Access policies. The Signup subdomain auto-redirects visitors to the registration page.
+
+## Updating Overleaf
+
+To update only the Overleaf image (without touching MongoDB, Redis, or your data):
+
+```bash
+./scripts/update-overleaf.sh
+```
+
+The script will:
+- Show current version
+- List available versions from Docker Hub
+- Update and restart only the Overleaf container
+
+Your projects, users, and settings are preserved. MongoDB and Redis remain untouched.
 
 ## License
 
