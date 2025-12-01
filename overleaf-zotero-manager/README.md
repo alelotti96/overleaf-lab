@@ -75,6 +75,12 @@ nano .env
 - ENABLE_PUBLIC_ZOTERO_SIGNUP: Set to true to enable the public registration page at /zotero/signup (default: false)
 - SIGNUP_SUBDOMAIN: If using a separate subdomain for signup (e.g., zotero-signup.domain.com), requests will be automatically redirected to /zotero/signup
 
+**Important:** Initialize the zotero-proxies directory before first run:
+
+```bash
+cp ~/overleaf-lab/zotero-proxies/docker-compose.yml.example \
+   ~/overleaf-lab/zotero-proxies/docker-compose.yml
+
 **Note:** The installation script (`install.sh` in parent directory) automatically configures these paths.
 
 ### 2. Install Python Dependencies
