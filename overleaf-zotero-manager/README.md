@@ -81,30 +81,16 @@ nano .env
 cp ~/overleaf-lab/zotero-proxies/docker-compose.yml.example \
    ~/overleaf-lab/zotero-proxies/docker-compose.yml
 
-**Note:** The installation script (`install.sh` in parent directory) automatically configures these paths.
-
-### 2. Install Python Dependencies
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
 ```
 
-### 3. Run the Application
+### 2. Build Zotero Proxy Image
 
-#### Development Mode
-
-```bash
-python3 app.py
-```
-
-#### Production Mode with Docker
-
-The dashboard is included in the main docker-compose setup. See parent directory for deployment instructions.
+Build the Docker image for individual Zotero proxy containers:
 
 ```bash
-docker-compose up -d overleaf-zotero-manager
+cd zotero-proxy
+docker build -t zotero-overleaf-proxy:local .
+cd ..
 
 ```
 
