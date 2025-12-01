@@ -67,7 +67,7 @@ nano .env
 - `ADMIN_USERNAME` and `ADMIN_PASSWORD`: Your admin credentials
 - `LAB_NAME`: Your lab/organization name (shown in UI)
 - `OVERLEAF_TOOLKIT_PATH`: Absolute path to overleaf-toolkit directory
-- `ZOTERO_PROXIES_PATH`: Absolute path to zotero-proxies directory
+- `ZOTERO_PROXIES_PATH`: Absolute path to zotero-proxies directory (ZOTERO_PROXIES_PATH=/home/<username>/overleaf-lab/zotero-proxies)
 - `OVERLEAF_URL`: Public URL where your Overleaf is accessible
 - `MONGODB_URI`: Connection string to Overleaf's MongoDB
 
