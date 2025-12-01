@@ -94,7 +94,8 @@ python3 app.py
 The dashboard is included in the main docker-compose setup. See parent directory for deployment instructions.
 
 ```bash
-docker-compose up -d dashboard
+docker-compose up -d overleaf-zotero-manager
+
 ```
 
 The dashboard will be available at `http://localhost:5000`
