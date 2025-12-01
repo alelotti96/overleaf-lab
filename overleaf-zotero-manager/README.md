@@ -71,6 +71,10 @@ nano .env
 - `OVERLEAF_URL`: Public URL where your Overleaf is accessible
 - `MONGODB_URI`: Connection string to Overleaf's MongoDB
 
+**Optional settings:**
+- ENABLE_PUBLIC_ZOTERO_SIGNUP: Set to true to enable the public registration page at /zotero/signup (default: false)
+- SIGNUP_SUBDOMAIN: If using a separate subdomain for signup (e.g., zotero-signup.domain.com), requests will be automatically redirected to /zotero/signup
+
 **Note:** The installation script (`install.sh` in parent directory) automatically configures these paths.
 
 ### 2. Install Python Dependencies
