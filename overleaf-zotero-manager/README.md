@@ -95,6 +95,7 @@ Build the Docker image for individual Zotero proxy containers:
 
 ```bash
 sudo docker build -t overleaf-zotero-manager:local .
+docker-compose up -d
 cd zotero-proxy
 docker build -t zotero-overleaf-proxy:local .
 cd ..
