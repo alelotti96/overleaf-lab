@@ -72,8 +72,8 @@ nano .env
 - `MONGODB_URI`: Connection string to Overleaf's MongoDB
 
 **Optional settings:**
-- ENABLE_PUBLIC_ZOTERO_SIGNUP: Set to true to enable the public registration page at /zotero/signup (default: false)
-- SIGNUP_SUBDOMAIN: If using a separate subdomain for signup (e.g., zotero-signup.domain.com), requests will be automatically redirected to /zotero/signup
+- `ENABLE_PUBLIC_ZOTERO_SIGNUP`: Set to true to enable the public registration page at /zotero/signup (default: false)
+- `SIGNUP_SUBDOMAIN`: If using a separate subdomain for signup (e.g., zotero-signup.domain.com), requests will be automatically redirected to /zotero/signup
 
 **Important:** Initialize the zotero-proxies directory before first run:
 
@@ -82,6 +82,10 @@ cp ~/overleaf-lab/zotero-proxies/docker-compose.yml.example \
    ~/overleaf-lab/zotero-proxies/docker-compose.yml
 
 ```
+
+In your overleaf env file (overleaf-toolkit/config/variables.env) set:
+
+-`ENABLED_LINKED_FILE_TYPES`=project_file,project_output_file,url
 
 ### 2. Build Zotero Proxy Image
 
