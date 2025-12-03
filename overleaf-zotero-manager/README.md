@@ -89,11 +89,12 @@ In your overleaf env file (overleaf-toolkit/config/variables.env) set:
 - `ENABLED_LINKED_FILE_TYPES`=project_file,project_output_file,url
 - Optionally set `OVERLEAF_HEADER_EXTRAS=[{"text":"Zotero Integration","url":"http://localhost:5000/signup","class":"subdued"},{"text":"Admin Dashboard","url":"http://localhost:5000","class":"subdued"}]` to add links to the Overleaf header
 
-### 2. Build Zotero Proxy Image
+### 2. Build Dashboard and Zotero Proxy Image
 
 Build the Docker image for individual Zotero proxy containers:
 
 ```bash
+sudo docker build -t overleaf-zotero-manager:local .
 cd zotero-proxy
 docker build -t zotero-overleaf-proxy:local .
 cd ..
