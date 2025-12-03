@@ -1,6 +1,7 @@
 # Overleaf-Zotero Manager
-
 A web dashboard for managing self-hosted Overleaf users and Zotero proxy integrations.
+
+The install.sh script handles all installation steps described in this readme when installing overleaf. If you already have an Overleaf instance running, follow this guide to install the dashboard alongside it.
 
 ## Features
 
@@ -86,6 +87,7 @@ cp ~/overleaf-lab/zotero-proxies/docker-compose.yml.example \
 In your overleaf env file (overleaf-toolkit/config/variables.env) set:
 
 -`ENABLED_LINKED_FILE_TYPES`=project_file,project_output_file,url
+- Optionally set `OVERLEAF_HEADER_EXTRAS=[{"text":"Zotero","dropdown":[{"text":"Integration Setup","url":"http://localhost:5000/signup"},{"text":"User Guide","url":"http://localhost:5000/guide"}],"class":"subdued"}]` to link the dashboard to the overleaf header
 
 ### 2. Build Zotero Proxy Image
 
