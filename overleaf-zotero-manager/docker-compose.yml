@@ -30,6 +30,7 @@ services:
       - SESSION_COOKIE_SAMESITE=${SESSION_COOKIE_SAMESITE:-Lax}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LOG_FILE=${LOG_FILE:-logs/app.log}
+      - ENABLE_PUBLIC_ZOTERO_SIGNUP=${ENABLE_PUBLIC_ZOTERO_SIGNUP:-false}
     networks:
       - overleaf_default
 
