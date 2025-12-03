@@ -86,8 +86,8 @@ cp ~/overleaf-lab/zotero-proxies/docker-compose.yml.example \
 
 In your overleaf env file (overleaf-toolkit/config/variables.env) set:
 
--`ENABLED_LINKED_FILE_TYPES`=project_file,project_output_file,url
-- Optionally set `OVERLEAF_HEADER_EXTRAS=[{"text":"Zotero","dropdown":[{"text":"Integration Setup","url":"http://localhost:5000/signup"},{"text":"User Guide","url":"http://localhost:5000/guide"}],"class":"subdued"}]` to link the dashboard to the overleaf header
+- `ENABLED_LINKED_FILE_TYPES`=project_file,project_output_file,url
+- Optionally set `OVERLEAF_HEADER_EXTRAS=[{"text":"Zotero Integration","url":"http://localhost:5000/signup","class":"subdued"},{"text":"Admin Dashboard","url":"http://localhost:5000","class":"subdued"}]` to add links to the Overleaf header
 
 ### 2. Build Zotero Proxy Image
 
