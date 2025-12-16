@@ -88,3 +88,33 @@ if [ -f "$STRATEGY_FILE" ]; then
 else
     echo "OIDC multi-issuer patch: passport-openidconnect not found, skipping"
 fi
+
+# =============================================================================
+# Hide Signup Link (keep login enabled)
+# =============================================================================
+# Injects custom CSS to hide signup/register links from the header
+
+if grep -q "HIDE_SIGNUP_CSS" "$SETTINGS_FILE"; then
+    echo "Hide signup CSS: already applied"
+else
+    echo "Applying hide signup CSS..."
+
+    # Inject custom CSS into settings.js to hide signup links
+    # This targets common signup link patterns while keeping login functional
+    sed -i '/^module.exports = settings$/i\
+\
+// HIDE_SIGNUP_CSS: Hide signup links from header\
+settings.customCss = `\
+  /* Hide register/signup links */\
+  a[href*="/register"],\
+  a[href*="/sign-up"],\
+  a[href*="register"],\
+  .nav-register,\
+  .signup-link {\
+    display: none !important;\
+  }\
+`\
+' "$SETTINGS_FILE"
+
+    echo "Hide signup CSS: applied successfully"
+fi

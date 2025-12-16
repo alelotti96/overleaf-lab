@@ -267,11 +267,13 @@ if [ ! -f config.env.local ]; then
                 OIDC_ISSUER="https://login.microsoftonline.com/organizations/v2.0"
                 OIDC_AUTHORIZATION_URL="https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
                 OIDC_TOKEN_URL="https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+                OIDC_END_SESSION_URL="https://login.microsoftonline.com/organizations/oauth2/v2.0/logout"
             else
                 # Single-tenant: use specific tenant ID
                 OIDC_ISSUER="https://login.microsoftonline.com/${OIDC_TENANT_ID}/v2.0"
                 OIDC_AUTHORIZATION_URL="https://login.microsoftonline.com/${OIDC_TENANT_ID}/oauth2/v2.0/authorize"
                 OIDC_TOKEN_URL="https://login.microsoftonline.com/${OIDC_TENANT_ID}/oauth2/v2.0/token"
+                OIDC_END_SESSION_URL="https://login.microsoftonline.com/${OIDC_TENANT_ID}/oauth2/v2.0/logout"
             fi
             OIDC_USER_INFO_URL="https://graph.microsoft.com/oidc/userinfo"
             OIDC_SCOPE="openid profile email"
@@ -281,6 +283,7 @@ if [ ! -f config.env.local ]; then
             OIDC_AUTHORIZATION_URL="https://accounts.google.com/o/oauth2/v2/auth"
             OIDC_TOKEN_URL="https://oauth2.googleapis.com/token"
             OIDC_USER_INFO_URL="https://openidconnect.googleapis.com/v1/userinfo"
+            OIDC_END_SESSION_URL="https://accounts.google.com/o/oauth2/revoke"
             OIDC_SCOPE="openid profile email"
         fi
 
@@ -335,6 +338,7 @@ if [ ! -f config.env.local ]; then
         sed -i "s|OIDC_AUTHORIZATION_URL=.*|OIDC_AUTHORIZATION_URL=\"${OIDC_AUTHORIZATION_URL}\"|" config.env.local
         sed -i "s|OIDC_TOKEN_URL=.*|OIDC_TOKEN_URL=\"${OIDC_TOKEN_URL}\"|" config.env.local
         sed -i "s|OIDC_USER_INFO_URL=.*|OIDC_USER_INFO_URL=\"${OIDC_USER_INFO_URL}\"|" config.env.local
+        sed -i "s|OIDC_END_SESSION_URL=.*|OIDC_END_SESSION_URL=\"${OIDC_END_SESSION_URL}\"|" config.env.local
         sed -i "s|OIDC_SCOPE=.*|OIDC_SCOPE=\"${OIDC_SCOPE}\"|" config.env.local
         sed -i "s|OIDC_ALLOWED_DOMAINS=.*|OIDC_ALLOWED_DOMAINS=\"${OIDC_ALLOWED_DOMAINS}\"|" config.env.local
         sed -i "s|OIDC_ADDITIONAL_TENANT_IDS=.*|OIDC_ADDITIONAL_TENANT_IDS=\"${OIDC_ADDITIONAL_TENANT_IDS}\"|" config.env.local
