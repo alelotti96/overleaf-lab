@@ -47,7 +47,7 @@ echo "Overleaf features configured"
 # =============================================================================
 # Patches passport-openidconnect to accept multiple Azure tenant issuers
 
-STRATEGY_FILE="/overleaf/services/web/node_modules/passport-openidconnect/lib/strategy.js"
+STRATEGY_FILE="/overleaf/node_modules/passport-openidconnect/lib/strategy.js"
 
 if [ -f "$STRATEGY_FILE" ]; then
     # Check if already patched
