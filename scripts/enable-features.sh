@@ -56,21 +56,34 @@ if [ -f "$STRATEGY_FILE" ]; then
     else
         echo "Applying OIDC multi-issuer patch..."
 
-        # Valid Azure tenant issuers (hardcoded for University of Bologna)
-        # unibo.it tenant: 5daeca35-64fd-43e7-b049-679b8fb3a805
-        # studio.unibo.it tenant: e99647dc-1b08-454a-bf8c-699181b389ab
-        ISSUER1="https://login.microsoftonline.com/5daeca35-64fd-43e7-b049-679b8fb3a805/v2.0"
-        ISSUER2="https://login.microsoftonline.com/e99647dc-1b08-454a-bf8c-699181b389ab/v2.0"
+        # Build allowed issuers array from environment variable
+        # OIDC_ADDITIONAL_TENANT_IDS should be comma-separated tenant IDs
+        if [ -n "$OIDC_ADDITIONAL_TENANT_IDS" ]; then
+            # Convert comma-separated tenant IDs to JavaScript array of issuer URLs
+            TENANT_IDS=$(echo "$OIDC_ADDITIONAL_TENANT_IDS" | tr ',' '\n')
+            ISSUERS_JS=""
+            for TENANT_ID in $TENANT_IDS; do
+                TENANT_ID=$(echo "$TENANT_ID" | xargs)  # Trim whitespace
+                if [ -n "$TENANT_ID" ]; then
+                    if [ -n "$ISSUERS_JS" ]; then
+                        ISSUERS_JS="$ISSUERS_JS, "
+                    fi
+                    ISSUERS_JS="${ISSUERS_JS}\\\"https://login.microsoftonline.com/${TENANT_ID}/v2.0\\\""
+                fi
+            done
 
-        # Create backup
-        cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
+            # Create backup
+            cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
 
-        # Find and replace the issuer validation line
-        # Original: if (claims.iss !== self._issuer) {
-        # New: Check if issuer is in our allowed list
-        sed -i "s|if (claims.iss !== self._issuer) {|// MULTI_ISSUER_PATCH: Allow multiple Azure tenant issuers\n  var allowedIssuers = ['${ISSUER1}', '${ISSUER2}'];\n  if (claims.iss !== self._issuer \&\& !allowedIssuers.includes(claims.iss)) {|" "$STRATEGY_FILE"
+            # Find and replace the issuer validation line
+            # Original: if (claims.iss !== self._issuer) {
+            # New: Check if issuer is in our allowed list
+            sed -i "s|if (claims.iss !== self._issuer) {|// MULTI_ISSUER_PATCH: Allow multiple Azure tenant issuers\\n  var allowedIssuers = [${ISSUERS_JS}];\\n  if (claims.iss !== self._issuer \&\& !allowedIssuers.includes(claims.iss)) {|" "$STRATEGY_FILE"
 
-        echo "OIDC multi-issuer patch: applied successfully"
+            echo "OIDC multi-issuer patch: applied successfully for tenant IDs: $OIDC_ADDITIONAL_TENANT_IDS"
+        else
+            echo "OIDC multi-issuer patch: skipped (no additional tenant IDs configured)"
+        fi
     fi
 else
     echo "OIDC multi-issuer patch: passport-openidconnect not found, skipping"
