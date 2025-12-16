@@ -7,8 +7,7 @@ SETTINGS_FILE="/etc/overleaf/settings.js"
 # Check if splitTestOverrides already exists
 if grep -q "splitTestOverrides" "$SETTINGS_FILE"; then
     echo "splitTestOverrides already configured"
-    exit 0
-fi
+else
 
 # Determine which features to enable
 if [ "$ENABLE_NEW_EDITOR_UI" = "true" ]; then
@@ -41,6 +40,7 @@ settings.splitTestOverrides = {\
 fi
 
 echo "Overleaf features configured"
+fi
 
 # =============================================================================
 # OIDC Multi-Issuer Patch for Azure AD Multi-Tenant
