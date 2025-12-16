@@ -41,3 +41,37 @@ settings.splitTestOverrides = {\
 fi
 
 echo "Overleaf features configured"
+
+# =============================================================================
+# OIDC Multi-Issuer Patch for Azure AD Multi-Tenant
+# =============================================================================
+# Patches passport-openidconnect to accept multiple Azure tenant issuers
+
+STRATEGY_FILE="/overleaf/services/web/node_modules/passport-openidconnect/lib/strategy.js"
+
+if [ -f "$STRATEGY_FILE" ]; then
+    # Check if already patched
+    if grep -q "MULTI_ISSUER_PATCH" "$STRATEGY_FILE"; then
+        echo "OIDC multi-issuer patch: already applied"
+    else
+        echo "Applying OIDC multi-issuer patch..."
+
+        # Valid Azure tenant issuers (hardcoded for University of Bologna)
+        # unibo.it tenant: 5daeca35-64fd-43e7-b049-679b8fb3a805
+        # studio.unibo.it tenant: e99647dc-1b08-454a-bf8c-699181b389ab
+        ISSUER1="https://login.microsoftonline.com/5daeca35-64fd-43e7-b049-679b8fb3a805/v2.0"
+        ISSUER2="https://login.microsoftonline.com/e99647dc-1b08-454a-bf8c-699181b389ab/v2.0"
+
+        # Create backup
+        cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
+
+        # Find and replace the issuer validation line
+        # Original: if (claims.iss !== self._issuer) {
+        # New: Check if issuer is in our allowed list
+        sed -i "s|if (claims.iss !== self._issuer) {|// MULTI_ISSUER_PATCH: Allow multiple Azure tenant issuers\n  var allowedIssuers = ['${ISSUER1}', '${ISSUER2}'];\n  if (claims.iss !== self._issuer \&\& !allowedIssuers.includes(claims.iss)) {|" "$STRATEGY_FILE"
+
+        echo "OIDC multi-issuer patch: applied successfully"
+    fi
+else
+    echo "OIDC multi-issuer patch: passport-openidconnect not found, skipping"
+fi

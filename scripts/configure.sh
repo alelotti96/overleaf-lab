@@ -48,6 +48,13 @@ OUTPUT_DIR="${INSTALL_DIR}/data/output"
 echo "Installation directory: $INSTALL_DIR"
 echo ""
 
+# Configure OIDC if enabled
+if [ "${ENABLE_OIDC:-false}" = "true" ]; then
+    EXTERNAL_AUTH="oidc"
+else
+    EXTERNAL_AUTH="none"
+fi
+
 # -----------------------------------------------------------------------------
 # 1. Configure Overleaf-Zotero-Manager
 # -----------------------------------------------------------------------------
@@ -264,8 +271,25 @@ OVERLEAF_EMAIL_SMTP_TLS_REJECT_UNAUTH=${SMTP_TLS_REJECT_UNAUTH}
 OVERLEAF_EMAIL_SMTP_IGNORE_TLS=${SMTP_IGNORE_TLS}
 
 # External auth
-EXTERNAL_AUTH=none
+EXTERNAL_AUTH=${EXTERNAL_AUTH}
 EOF
+
+    # Add OIDC configuration if enabled
+    if [ "${ENABLE_OIDC:-false}" = "true" ]; then
+        cat >> overleaf-toolkit/config/variables.env <<EOF
+
+# OIDC Authentication
+OVERLEAF_OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+OVERLEAF_OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+OVERLEAF_OIDC_ISSUER=${OIDC_ISSUER}
+OVERLEAF_OIDC_AUTHORIZATION_URL=${OIDC_AUTHORIZATION_URL}
+OVERLEAF_OIDC_TOKEN_URL=${OIDC_TOKEN_URL}
+OVERLEAF_OIDC_USER_INFO_URL=${OIDC_USER_INFO_URL}
+OVERLEAF_OIDC_SCOPE=${OIDC_SCOPE}
+OVERLEAF_OIDC_PROVIDER_NAME=${OIDC_PROVIDER_NAME}
+OVERLEAF_OIDC_ALLOWED_EMAIL_DOMAINS=${OIDC_ALLOWED_DOMAINS}
+EOF
+    fi
 
     # Replace variables in variables.env
     # Use sed with escaped pattern for literal ${VAR} replacement
@@ -303,6 +327,7 @@ EOF
     _replace_var "SMTP_PASS" "${SMTP_PASS}"
     _replace_var "SMTP_TLS_REJECT_UNAUTH" "${SMTP_TLS_REJECT_UNAUTH}"
     _replace_var "SMTP_IGNORE_TLS" "${SMTP_IGNORE_TLS}"
+    _replace_var "EXTERNAL_AUTH" "${EXTERNAL_AUTH}"
 
     # CRITICAL FIX: Remove OVERLEAF_SECURE_COOKIE if not using HTTPS
     # Node.js checks: secureCookie: process.env.OVERLEAF_SECURE_COOKIE != null

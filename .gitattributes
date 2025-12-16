@@ -1,0 +1,9 @@
+# Force LF line endings for shell scripts
+*.sh text eol=lf
+
+# Force LF for env files
+*.env text eol=lf
+*.env.local text eol=lf
+
+# Default behavior: convert to native line endings on checkout
+* text=auto

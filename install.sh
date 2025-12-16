@@ -209,6 +209,78 @@ if [ ! -f config.env.local ]; then
         SMTP_FROM="noreply@example.com"
     fi
 
+    # OIDC Authentication
+    echo ""
+    echo "==============================================================================="
+    echo "OIDC AUTHENTICATION (Single Sign-On)"
+    echo "==============================================================================="
+    echo "Enable Microsoft/Google login with automatic account creation"
+    echo "Requires Azure/Google app setup (see documentation)"
+    echo ""
+    read -p "Enable OIDC authentication? (y/N): " -n 1 -r
+    echo
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        ENABLE_OIDC="true"
+        echo ""
+
+        read -p "Provider name (e.g., 'University of Bologna'): " OIDC_PROVIDER_NAME
+        OIDC_PROVIDER_NAME=${OIDC_PROVIDER_NAME:-"SSO Provider"}
+
+        read -p "Client ID (from Azure/Google): " OIDC_CLIENT_ID
+
+        read -sp "Client Secret (from Azure/Google): " OIDC_CLIENT_SECRET
+        echo
+
+        read -p "Tenant ID (Azure only, leave empty for Google): " OIDC_TENANT_ID
+
+        # Ask about multi-tenant support if using Azure
+        AZURE_MULTI_TENANT="false"
+        if [ -n "$OIDC_TENANT_ID" ]; then
+            echo ""
+            echo "Is your Azure app configured for multi-tenant (multiple Azure organizations)?"
+            echo "Select 'yes' if users from different Azure tenants need to login"
+            echo "(e.g., both @unibo.it and @studio.unibo.it from different tenants)"
+            read -p "Multi-tenant Azure app? (y/N): " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                AZURE_MULTI_TENANT="true"
+            fi
+        fi
+
+        read -p "Allowed email domains (comma-separated, e.g., 'unibo.it,example.org'): " OIDC_ALLOWED_DOMAINS
+        OIDC_ALLOWED_DOMAINS=${OIDC_ALLOWED_DOMAINS:-""}
+
+        # Auto-detect provider type and generate OIDC URLs
+        if [ -n "$OIDC_TENANT_ID" ]; then
+            # Microsoft Azure
+            if [ "$AZURE_MULTI_TENANT" = "true" ]; then
+                # Multi-tenant: use "organizations" endpoint
+                OIDC_ISSUER="https://login.microsoftonline.com/organizations/v2.0"
+                OIDC_AUTHORIZATION_URL="https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+                OIDC_TOKEN_URL="https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+            else
+                # Single-tenant: use specific tenant ID
+                OIDC_ISSUER="https://login.microsoftonline.com/${OIDC_TENANT_ID}/v2.0"
+                OIDC_AUTHORIZATION_URL="https://login.microsoftonline.com/${OIDC_TENANT_ID}/oauth2/v2.0/authorize"
+                OIDC_TOKEN_URL="https://login.microsoftonline.com/${OIDC_TENANT_ID}/oauth2/v2.0/token"
+            fi
+            OIDC_USER_INFO_URL="https://graph.microsoft.com/oidc/userinfo"
+            OIDC_SCOPE="openid profile email"
+        else
+            # Google
+            OIDC_ISSUER="https://accounts.google.com"
+            OIDC_AUTHORIZATION_URL="https://accounts.google.com/o/oauth2/v2/auth"
+            OIDC_TOKEN_URL="https://oauth2.googleapis.com/token"
+            OIDC_USER_INFO_URL="https://openidconnect.googleapis.com/v1/userinfo"
+            OIDC_SCOPE="openid profile email"
+        fi
+
+        echo -e "${GREEN}OIDC will be enabled${NC}"
+    else
+        ENABLE_OIDC="false"
+    fi
+
     # Experimental features
     echo ""
     echo "==============================================================================="
@@ -244,6 +316,20 @@ if [ ! -f config.env.local ]; then
 
     # Set experimental features
     sed -i "s|ENABLE_NEW_EDITOR_UI=.*|ENABLE_NEW_EDITOR_UI=\"${ENABLE_NEW_EDITOR_UI}\"|" config.env.local
+
+    # Set OIDC configuration
+    sed -i "s|ENABLE_OIDC=.*|ENABLE_OIDC=\"${ENABLE_OIDC}\"|" config.env.local
+    if [ "$ENABLE_OIDC" = "true" ]; then
+        sed -i "s|OIDC_PROVIDER_NAME=.*|OIDC_PROVIDER_NAME=\"${OIDC_PROVIDER_NAME}\"|" config.env.local
+        sed -i "s|OIDC_CLIENT_ID=.*|OIDC_CLIENT_ID=\"${OIDC_CLIENT_ID}\"|" config.env.local
+        sed -i "s|OIDC_CLIENT_SECRET=.*|OIDC_CLIENT_SECRET=\"${OIDC_CLIENT_SECRET}\"|" config.env.local
+        sed -i "s|OIDC_ISSUER=.*|OIDC_ISSUER=\"${OIDC_ISSUER}\"|" config.env.local
+        sed -i "s|OIDC_AUTHORIZATION_URL=.*|OIDC_AUTHORIZATION_URL=\"${OIDC_AUTHORIZATION_URL}\"|" config.env.local
+        sed -i "s|OIDC_TOKEN_URL=.*|OIDC_TOKEN_URL=\"${OIDC_TOKEN_URL}\"|" config.env.local
+        sed -i "s|OIDC_USER_INFO_URL=.*|OIDC_USER_INFO_URL=\"${OIDC_USER_INFO_URL}\"|" config.env.local
+        sed -i "s|OIDC_SCOPE=.*|OIDC_SCOPE=\"${OIDC_SCOPE}\"|" config.env.local
+        sed -i "s|OIDC_ALLOWED_DOMAINS=.*|OIDC_ALLOWED_DOMAINS=\"${OIDC_ALLOWED_DOMAINS}\"|" config.env.local
+    fi
 
     echo ""
     echo -e "${GREEN}✓ Configuration created${NC}"
