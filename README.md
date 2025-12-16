@@ -131,6 +131,17 @@ After setting up the tunnel, configure access policies in the Cloudflare Zero Tr
 
 Note: Dashboard and Signup point to the same backend but may use different Access policies. The Signup subdomain auto-redirects visitors to the registration page.
 
+## Managing Services
+
+Start/stop Overleaf services:
+
+```bash
+./scripts/start.sh   # Start Overleaf, MongoDB, Redis
+./scripts/stop.sh    # Stop all services
+```
+
+These scripts use the local TexLive image with fonts. Don't use `bin/up` directly.
+
 ## Updating Overleaf
 
 To update only the Overleaf image (without touching MongoDB, Redis, or your data):
