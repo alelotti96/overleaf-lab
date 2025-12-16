@@ -166,12 +166,15 @@ settings.customHeadContent = (settings.customHeadContent || "") + `\
   <script>\
     window.addEventListener("load", function() {\
       function hideSignup() {\
-        document.querySelectorAll("a").forEach(function(link) {\
-          var text = link.textContent.toLowerCase();\
-          var href = link.getAttribute("href") || "";\
-          if (text.includes("sign up") || text.includes("signup") || \
-              text.includes("register") || href.includes("/register")) {\
-            link.style.display = "none";\
+        document.querySelectorAll("a, button, [role=button]").forEach(function(el) {\
+          var text = el.textContent.toLowerCase().trim();\
+          var href = el.getAttribute("href") || "";\
+          if (text === "sign up" || text === "signup" || \
+              text === "register" || href.includes("/register")) {\
+            el.style.display = "none";\
+            el.style.visibility = "hidden";\
+            el.style.opacity = "0";\
+            el.remove();\
           }\
         });\
       }\
