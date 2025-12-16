@@ -118,3 +118,48 @@ settings.customCss = `\
 
     echo "Hide signup CSS: applied successfully"
 fi
+
+# =============================================================================
+# Fix OIDC Logout Undefined Redirect
+# =============================================================================
+# Prevents /undefined error on logout by redirecting to home instead
+
+if grep -q "OIDC_LOGOUT_FIX" "$SETTINGS_FILE"; then
+    echo "OIDC logout fix: already applied"
+else
+    echo "Applying OIDC logout fix..."
+
+    # Inject JavaScript to fix logout redirect
+    sed -i '/^module.exports = settings$/i\
+\
+// OIDC_LOGOUT_FIX: Fix undefined logout redirect\
+settings.customHeadContent = (settings.customHeadContent || "") + `\
+  <script>\
+    // Fix OIDC logout redirect from /undefined to home\
+    (function() {\
+      if (window.location.pathname === "/undefined") {\
+        window.location.replace("/");\
+      }\
+    })();\
+  </script>\
+`\
+' "$SETTINGS_FILE"
+
+    echo "OIDC logout fix: applied successfully"
+fi
+
+# =============================================================================
+# Enhanced Hide Signup (JavaScript fallback)
+# =============================================================================
+# Aggressively hides signup links using both CSS and JavaScript
+
+if grep -q "SIGNUP_JS_HIDE" "$SETTINGS_FILE"; then
+    echo "Signup JavaScript hide: already applied"
+else
+    echo "Applying signup JavaScript hide..."
+
+    # Add JavaScript to aggressively hide signup links
+    sed -i "/OIDC_LOGOUT_FIX/,/customHeadContent/ s|</script>|    // Hide signup links\\n    document.addEventListener(\"DOMContentLoaded\", function() {\\n      const hideSignup = () => {\\n        document.querySelectorAll(\"a\").forEach(a => {\\n          if (a.textContent.match(/sign\\\\s*up/i) || a.href.includes(\"/register\")) {\\n            a.style.display = \"none\";\\n          }\\n        });\\n      };\\n      hideSignup();\\n      setTimeout(hideSignup, 1000); // SIGNUP_JS_HIDE\\n    });\\n  </script>|" "$SETTINGS_FILE"
+
+    echo "Signup JavaScript hide: applied successfully"
+fi
