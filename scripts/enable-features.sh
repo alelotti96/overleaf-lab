@@ -151,15 +151,37 @@ fi
 # =============================================================================
 # Enhanced Hide Signup (JavaScript fallback)
 # =============================================================================
-# Aggressively hides signup links using both CSS and JavaScript
+# Aggressively hides signup links using JavaScript
 
 if grep -q "SIGNUP_JS_HIDE" "$SETTINGS_FILE"; then
     echo "Signup JavaScript hide: already applied"
 else
     echo "Applying signup JavaScript hide..."
 
-    # Add JavaScript to aggressively hide signup links
-    sed -i "/OIDC_LOGOUT_FIX/,/customHeadContent/ s|</script>|    // Hide signup links\\n    document.addEventListener(\"DOMContentLoaded\", function() {\\n      const hideSignup = () => {\\n        document.querySelectorAll(\"a\").forEach(a => {\\n          if (a.textContent.match(/sign\\\\s*up/i) || a.href.includes(\"/register\")) {\\n            a.style.display = \"none\";\\n          }\\n        });\\n      };\\n      hideSignup();\\n      setTimeout(hideSignup, 1000); // SIGNUP_JS_HIDE\\n    });\\n  </script>|" "$SETTINGS_FILE"
+    # Separate script tag for signup hiding
+    sed -i '/^module.exports = settings$/i\
+\
+// SIGNUP_JS_HIDE: Aggressive signup link hiding\
+settings.customHeadContent = (settings.customHeadContent || "") + `\
+  <script>\
+    window.addEventListener("load", function() {\
+      function hideSignup() {\
+        document.querySelectorAll("a").forEach(function(link) {\
+          var text = link.textContent.toLowerCase();\
+          var href = link.getAttribute("href") || "";\
+          if (text.includes("sign up") || text.includes("signup") || \
+              text.includes("register") || href.includes("/register")) {\
+            link.style.display = "none";\
+          }\
+        });\
+      }\
+      hideSignup();\
+      setTimeout(hideSignup, 500);\
+      setTimeout(hideSignup, 2000);\
+    });\
+  </script>\
+`\
+' "$SETTINGS_FILE"
 
     echo "Signup JavaScript hide: applied successfully"
 fi
