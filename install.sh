@@ -240,15 +240,23 @@ if [ ! -f config.env.local ]; then
             echo ""
             echo "Is your Azure app configured for multi-tenant (multiple Azure organizations)?"
             echo "Select 'yes' if users from different Azure tenants need to login"
-            echo "(e.g., both @unibo.it and @studio.unibo.it from different tenants)"
             read -p "Multi-tenant Azure app? (y/N): " -n 1 -r
             echo
             if [[ $REPLY =~ ^[Yy]$ ]]; then
                 AZURE_MULTI_TENANT="true"
+                echo ""
+                echo "Enter all Azure tenant IDs where your users are located (comma-separated)."
+                echo "You can find tenant IDs in Azure Portal > Azure Active Directory > Overview"
+                echo "Example: tenant-id-1,tenant-id-2"
+                read -p "Additional tenant IDs: " OIDC_ADDITIONAL_TENANT_IDS
+            else
+                OIDC_ADDITIONAL_TENANT_IDS=""
             fi
+        else
+            OIDC_ADDITIONAL_TENANT_IDS=""
         fi
 
-        read -p "Allowed email domains (comma-separated, e.g., 'unibo.it,example.org'): " OIDC_ALLOWED_DOMAINS
+        read -p "Allowed email domains (comma-separated, e.g., 'company.com,university.edu'): " OIDC_ALLOWED_DOMAINS
         OIDC_ALLOWED_DOMAINS=${OIDC_ALLOWED_DOMAINS:-""}
 
         # Auto-detect provider type and generate OIDC URLs
@@ -329,6 +337,7 @@ if [ ! -f config.env.local ]; then
         sed -i "s|OIDC_USER_INFO_URL=.*|OIDC_USER_INFO_URL=\"${OIDC_USER_INFO_URL}\"|" config.env.local
         sed -i "s|OIDC_SCOPE=.*|OIDC_SCOPE=\"${OIDC_SCOPE}\"|" config.env.local
         sed -i "s|OIDC_ALLOWED_DOMAINS=.*|OIDC_ALLOWED_DOMAINS=\"${OIDC_ALLOWED_DOMAINS}\"|" config.env.local
+        sed -i "s|OIDC_ADDITIONAL_TENANT_IDS=.*|OIDC_ADDITIONAL_TENANT_IDS=\"${OIDC_ADDITIONAL_TENANT_IDS}\"|" config.env.local
     fi
 
     echo ""
@@ -532,15 +541,7 @@ fi
 echo -e "${GREEN}✓ Overleaf started${NC}"
 
 # -----------------------------------------------------------------------------
-# Enable project restore feature
-# -----------------------------------------------------------------------------
-echo ""
-echo "Enabling project restore feature..."
-if docker exec sharelatex bash /restore-script/enable-restore-feature.sh; then
-    echo -e "${GREEN}✓ Project restore feature enabled${NC}"
-else
-    echo -e "${YELLOW}⚠ Failed to enable project restore feature (non-critical)${NC}"
-fi
+# Note: Project restore feature is now automatically enabled via enable-features.sh
 
 # -----------------------------------------------------------------------------
 # Configure upload limit in settings.defaults.js
