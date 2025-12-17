@@ -10,12 +10,25 @@ if [ -f "$NGINX_CONF" ]; then
     else
         echo "Applying nginx customizations (hide signup + fix logout redirect)..."
 
-        # Single sub_filter with both CSS and JavaScript
+        # Add sub_filter to hide signup button
         sed -i '/location \/ {/a\
-        # OVERLEAF_LAB_NGINX_PATCH: Hide signup + fix /undefined logout redirect\
-        sub_filter "</head>" "<style>a[href=\\"/register\\"]{display:none!important;}</style><script>if(window.location.pathname===\"/undefined\"||window.location.href.includes(\"/undefined?\"))window.location.replace(\"/\");</script></head>";\
+        # OVERLEAF_LAB_NGINX_PATCH\
+        sub_filter "</head>" "<style>a[href=\\"/register\\"]{display:none!important;}</style></head>";\
         sub_filter_once on;\
         sub_filter_types text/html;' "$NGINX_CONF"
+
+        # Add location blocks to fix OIDC undefined redirects
+        sed -i '/location \/ {/i\
+        # OVERLEAF_LAB_NGINX_PATCH: Fix /undefined logout redirect\
+        location = /undefined {\
+                return 302 /;\
+        }\
+\
+        # OVERLEAF_LAB_NGINX_PATCH: Fix /oidc/login/undefined\
+        location = /oidc/login/undefined {\
+                return 302 /oidc/login$is_args$args;\
+        }\
+' "$NGINX_CONF"
 
         nginx -s reload 2>/dev/null || true
 
