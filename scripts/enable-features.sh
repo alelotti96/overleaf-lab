@@ -90,101 +90,29 @@ else
 fi
 
 # =============================================================================
-# Hide Signup Link (keep login enabled)
+# Hide Signup Link + Fix OIDC Logout Redirect via Nginx
 # =============================================================================
-# Injects custom CSS to hide signup/register links from the header
+# Uses nginx sub_filter to inject CSS (hide signup) and JavaScript (fix /undefined)
 
-if grep -q "HIDE_SIGNUP_CSS" "$SETTINGS_FILE"; then
-    echo "Hide signup CSS: already applied"
+NGINX_CONF="/etc/nginx/sites-enabled/sharelatex.conf"
+
+if [ -f "$NGINX_CONF" ]; then
+    if grep -q "OVERLEAF_LAB_NGINX_PATCH" "$NGINX_CONF"; then
+        echo "Nginx customizations: already applied"
+    else
+        echo "Applying nginx customizations (hide signup + fix logout redirect)..."
+
+        # Single sub_filter with both CSS and JavaScript
+        sed -i '/location \/ {/a\
+        # OVERLEAF_LAB_NGINX_PATCH: Hide signup + fix /undefined logout redirect\
+        sub_filter "</head>" "<style>a[href=\\"/register\\"]{display:none!important;}</style><script>if(window.location.pathname===\"/undefined\"||window.location.href.includes(\"/undefined?\"))window.location.replace(\"/\");</script></head>";\
+        sub_filter_once on;\
+        sub_filter_types text/html;' "$NGINX_CONF"
+
+        nginx -s reload 2>/dev/null || true
+
+        echo "Nginx customizations: applied successfully"
+    fi
 else
-    echo "Applying hide signup CSS..."
-
-    # Inject custom CSS into settings.js to hide signup links
-    # This targets common signup link patterns while keeping login functional
-    sed -i '/^module.exports = settings$/i\
-\
-// HIDE_SIGNUP_CSS: Hide signup links from header\
-settings.customCss = `\
-  /* Hide register/signup links */\
-  a[href*="/register"],\
-  a[href*="/sign-up"],\
-  a[href*="register"],\
-  .nav-register,\
-  .signup-link {\
-    display: none !important;\
-  }\
-`\
-' "$SETTINGS_FILE"
-
-    echo "Hide signup CSS: applied successfully"
-fi
-
-# =============================================================================
-# Fix OIDC Logout Undefined Redirect
-# =============================================================================
-# Prevents /undefined error on logout by redirecting to home instead
-
-if grep -q "OIDC_LOGOUT_FIX" "$SETTINGS_FILE"; then
-    echo "OIDC logout fix: already applied"
-else
-    echo "Applying OIDC logout fix..."
-
-    # Inject JavaScript to fix logout redirect
-    sed -i '/^module.exports = settings$/i\
-\
-// OIDC_LOGOUT_FIX: Fix undefined logout redirect\
-settings.customHeadContent = (settings.customHeadContent || "") + `\
-  <script>\
-    // Fix OIDC logout redirect from /undefined to home\
-    (function() {\
-      if (window.location.pathname === "/undefined") {\
-        window.location.replace("/");\
-      }\
-    })();\
-  </script>\
-`\
-' "$SETTINGS_FILE"
-
-    echo "OIDC logout fix: applied successfully"
-fi
-
-# =============================================================================
-# Enhanced Hide Signup (JavaScript fallback)
-# =============================================================================
-# Aggressively hides signup links using JavaScript
-
-if grep -q "SIGNUP_JS_HIDE" "$SETTINGS_FILE"; then
-    echo "Signup JavaScript hide: already applied"
-else
-    echo "Applying signup JavaScript hide..."
-
-    # Separate script tag for signup hiding
-    sed -i '/^module.exports = settings$/i\
-\
-// SIGNUP_JS_HIDE: Aggressive signup link hiding\
-settings.customHeadContent = (settings.customHeadContent || "") + `\
-  <script>\
-    window.addEventListener("load", function() {\
-      function hideSignup() {\
-        document.querySelectorAll("a, button, [role=button]").forEach(function(el) {\
-          var text = el.textContent.toLowerCase().trim();\
-          var href = el.getAttribute("href") || "";\
-          if (text === "sign up" || text === "signup" || \
-              text === "register" || href.includes("/register")) {\
-            el.style.display = "none";\
-            el.style.visibility = "hidden";\
-            el.style.opacity = "0";\
-            el.remove();\
-          }\
-        });\
-      }\
-      hideSignup();\
-      setTimeout(hideSignup, 500);\
-      setTimeout(hideSignup, 2000);\
-    });\
-  </script>\
-`\
-' "$SETTINGS_FILE"
-
-    echo "Signup JavaScript hide: applied successfully"
+    echo "Nginx customizations: nginx config not found, skipping"
 fi
