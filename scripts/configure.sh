@@ -368,8 +368,9 @@ services:
       ENABLE_NEW_EDITOR_UI: "${ENABLE_NEW_EDITOR_UI}"
 
     volumes:
-      # Mount script to enable features on container startup
+      # Mount scripts to enable features on container startup
       - ../../scripts/enable-features.sh:/overleaf-lab/enable-features.sh:ro
+      - ../../scripts/nginx-customizations.sh:/overleaf-lab/nginx-customizations.sh:ro
       # Mount entrypoint wrapper
       - ../../scripts/docker-entrypoint.sh:/docker-entrypoint-wrapper.sh:ro
 
