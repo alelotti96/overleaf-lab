@@ -75,10 +75,10 @@ if [ -f "$STRATEGY_FILE" ]; then
             # Create backup
             cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
 
-            # Find and replace the issuer validation line
-            # Original: if (claims.iss !== self._issuer) {
-            # New: Check if issuer is in our allowed list
-            sed -i "s|if (claims.iss !== self._issuer) {|// MULTI_ISSUER_PATCH: Allow multiple Azure tenant issuers\\n  var allowedIssuers = [${ISSUERS_JS}];\\n  if (claims.iss !== self._issuer \&\& !allowedIssuers.includes(claims.iss)) {|" "$STRATEGY_FILE"
+            # Find and replace the issuer validation line AND error message in one operation
+            # Original: if (claims.iss !== self._issuer) { return self.fail({ message: 'ID token not issued by expected OpenID provider.' }, 403);
+            # New: Check if issuer is in our allowed list with custom error message
+            sed -i "s|if (claims.iss !== self._issuer) { return self.fail({ message: 'ID token not issued by expected OpenID provider.' }, 403);|// MULTI_ISSUER_PATCH: Allow multiple Azure tenant issuers\\n  var allowedIssuers = [${ISSUERS_JS}];\\n  if (claims.iss !== self._issuer \&\& !allowedIssuers.includes(claims.iss)) { return self.fail({ message: 'Your account is not authorized to access this Overleaf instance. Please contact your lab administrator if you believe this is an error.' }, 403);|" "$STRATEGY_FILE"
 
             echo "OIDC multi-issuer patch: applied successfully for tenant IDs: $OIDC_ADDITIONAL_TENANT_IDS"
         else
