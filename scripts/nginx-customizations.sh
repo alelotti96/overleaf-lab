@@ -2,7 +2,7 @@
 # Nginx customizations for Overleaf
 # This script runs AFTER nginx is configured (via /etc/my_init.d/)
 
-NGINX_CONF="/etc/nginx/sites-enabled/sharelatex.conf"
+NGINX_CONF="/etc/nginx/sites-enabled/overleaf.conf"
 
 if [ -f "$NGINX_CONF" ]; then
     if grep -q "OVERLEAF_LAB_NGINX_PATCH" "$NGINX_CONF"; then
