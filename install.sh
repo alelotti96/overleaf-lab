@@ -259,6 +259,22 @@ if [ ! -f config.env.local ]; then
         read -p "Allowed email domains (comma-separated, e.g., 'company.com,university.edu'): " OIDC_ALLOWED_DOMAINS
         OIDC_ALLOWED_DOMAINS=${OIDC_ALLOWED_DOMAINS:-""}
 
+        # Group-based access control
+        echo ""
+        read -p "Enable group-based access control (restrict to specific Azure AD groups)? (y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            OIDC_GROUP_FILTERING_ENABLED="true"
+            echo ""
+            echo "Enter allowed Azure AD group Object IDs (comma-separated)."
+            echo "You can find group IDs in Azure Portal > Azure Active Directory > Groups > [Group] > Object ID"
+            echo "Example: abc12345-1234-1234-1234-123456789abc,def67890-5678-5678-5678-567890123def"
+            read -p "Allowed group IDs: " OIDC_ALLOWED_GROUPS
+        else
+            OIDC_GROUP_FILTERING_ENABLED="false"
+            OIDC_ALLOWED_GROUPS=""
+        fi
+
         # Auto-detect provider type and generate OIDC URLs
         if [ -n "$OIDC_TENANT_ID" ]; then
             # Microsoft Azure
@@ -342,6 +358,8 @@ if [ ! -f config.env.local ]; then
         sed -i "s|OIDC_SCOPE=.*|OIDC_SCOPE=\"${OIDC_SCOPE}\"|" config.env.local
         sed -i "s|OIDC_ALLOWED_DOMAINS=.*|OIDC_ALLOWED_DOMAINS=\"${OIDC_ALLOWED_DOMAINS}\"|" config.env.local
         sed -i "s|OIDC_ADDITIONAL_TENANT_IDS=.*|OIDC_ADDITIONAL_TENANT_IDS=\"${OIDC_ADDITIONAL_TENANT_IDS}\"|" config.env.local
+        sed -i "s|OIDC_GROUP_FILTERING_ENABLED=.*|OIDC_GROUP_FILTERING_ENABLED=\"${OIDC_GROUP_FILTERING_ENABLED}\"|" config.env.local
+        sed -i "s|OIDC_ALLOWED_GROUPS=.*|OIDC_ALLOWED_GROUPS=\"${OIDC_ALLOWED_GROUPS}\"|" config.env.local
     fi
 
     echo ""
