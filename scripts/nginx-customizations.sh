@@ -10,12 +10,16 @@ if [ -f "$NGINX_CONF" ]; then
     else
         echo "Applying nginx customizations (hide signup + fix logout redirect)..."
 
-        # Add sub_filter to hide signup button
+        # Add sub_filter to hide signup button and increase proxy buffers for OIDC
         sed -i '/location \/ {/a\
         # OVERLEAF_LAB_NGINX_PATCH\
         sub_filter "</head>" "<style>a[href=\\"/register\\"]{display:none!important;}</style></head>";\
         sub_filter_once on;\
-        sub_filter_types text/html;' "$NGINX_CONF"
+        sub_filter_types text/html;\
+        # OVERLEAF_LAB_NGINX_PATCH: Increase proxy buffers for large OIDC headers\
+        proxy_buffer_size 128k;\
+        proxy_buffers 4 256k;\
+        proxy_busy_buffers_size 256k;' "$NGINX_CONF"
 
         # Add location blocks to fix OIDC undefined redirects
         sed -i '/location \/ {/i\
