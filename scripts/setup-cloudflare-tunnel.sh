@@ -167,6 +167,7 @@ ingress:
     service: http://localhost:80
     originRequest:
       noTLSVerify: true
+      connectTimeout: 120s
 
   # Dashboard (admin panel - protect with Access policy!)
   - hostname: $DASHBOARD_HOSTNAME
