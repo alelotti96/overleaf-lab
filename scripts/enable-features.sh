@@ -90,14 +90,17 @@ else
 fi
 
 # =============================================================================
-# OIDC Group-Based Access Control
+# OIDC Group-Based Access Control with Email Whitelist
 # =============================================================================
 # Patches passport-openidconnect to verify Azure AD group membership
+# Users in whitelist bypass group check (useful for users with 150+ groups)
+# Whitelist is read at runtime - changes take effect immediately without restart
+
+WHITELIST_FILE="/overleaf-lab/whitelisted_emails.txt"
 
 if [ -f "$STRATEGY_FILE" ]; then
     if [ "$OIDC_GROUP_FILTERING_ENABLED" = "true" ] && [ -n "$OIDC_ALLOWED_GROUPS" ]; then
-        # Check if already patched
-        if grep -q "GROUP_FILTERING_PATCH" "$STRATEGY_FILE"; then
+        if grep -q "GROUP_FILTER_PATCH" "$STRATEGY_FILE"; then
             echo "OIDC group filtering patch: already applied"
         else
             echo "Applying OIDC group filtering patch..."
@@ -115,16 +118,17 @@ if [ -f "$STRATEGY_FILE" ]; then
                 fi
             done
 
-            # Insert group verification after issuer check
-            # This checks if user is member of at least one allowed group
-            sed -i "/GROUP_FILTERING_PATCH/! s|var profile = {|// GROUP_FILTERING_PATCH: Verify user is in allowed groups\\n      var allowedGroups = [${GROUPS_JS}];\\n      if (claims.groups \&\& Array.isArray(claims.groups)) {\\n        var userInAllowedGroup = claims.groups.some(function(g) { return allowedGroups.includes(g); });\\n        if (!userInAllowedGroup) {\\n          return self.fail({ message: 'Your account is not authorized to access this Overleaf instance (not in allowed group). Please contact your lab administrator.' }, 403);\\n        }\\n      } else {\\n        return self.fail({ message: 'Your account does not have group information. Please contact your administrator to configure Azure AD groups claim.' }, 403);\\n      }\\n      var profile = {|" "$STRATEGY_FILE"
+            # Add fs require at the top of the file if not present
+            if ! grep -q "var groupFilterFs = require('fs');" "$STRATEGY_FILE"; then
+                sed -i "1s/^/var groupFilterFs = require('fs');\\n/" "$STRATEGY_FILE"
+            fi
 
-            echo "OIDC group filtering patch: applied successfully for group IDs: $OIDC_ALLOWED_GROUPS"
-            echo ""
-            echo "IMPORTANT: Configure Azure AD to include groups claim:"
-            echo "  1. App Registration → Token configuration → + Add groups claim"
-            echo "  2. Select 'Security groups'"
-            echo "  3. Save"
+            # Insert group verification that reads whitelist at runtime
+            sed -i "/GROUP_FILTER_PATCH/! s|var profile = {|// GROUP_FILTER_PATCH: Verify user is in allowed groups or whitelist\\n      var allowedGroups = [${GROUPS_JS}];\\n      var userEmail = claims.email ? claims.email.toLowerCase() : '';\\n      // Read whitelist at runtime (changes take effect immediately)\\n      var whitelistedEmails = [];\\n      try {\\n        var whitelistContent = groupFilterFs.readFileSync('/overleaf-lab/whitelisted_emails.txt', 'utf8');\\n        whitelistedEmails = whitelistContent.split('\\\\n').map(function(e) { return e.trim().toLowerCase(); }).filter(function(e) { return e \\&\\& !e.startsWith('#'); });\\n      } catch (e) { /* whitelist file not found, continue without it */ }\\n      var isWhitelisted = whitelistedEmails.includes(userEmail);\\n      if (isWhitelisted) {\\n        console.log('[Group Filter] User whitelisted: ' + userEmail);\\n      } else if (claims.groups \\&\\& Array.isArray(claims.groups)) {\\n        var userInAllowedGroup = claims.groups.some(function(g) { return allowedGroups.includes(g); });\\n        if (!userInAllowedGroup) {\\n          console.log('[Group Filter] User not in allowed group: ' + userEmail);\\n          return self.fail({ message: 'Your account is not authorized to access this Overleaf instance (not in allowed group). Please contact your lab administrator.' }, 403);\\n        }\\n      } else {\\n        console.log('[Group Filter] No groups in token for: ' + userEmail);\\n        return self.fail({ message: 'Your account does not have group information. Please contact your administrator to configure Azure AD groups claim or request whitelist access.' }, 403);\\n      }\\n      var profile = {|" "$STRATEGY_FILE"
+
+            echo "OIDC group filtering patch: applied successfully"
+            echo "  Allowed groups: $OIDC_ALLOWED_GROUPS"
+            echo "  Whitelist file: $WHITELIST_FILE (read at runtime)"
         fi
     else
         echo "OIDC group filtering: disabled or no groups configured"

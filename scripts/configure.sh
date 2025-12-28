@@ -344,6 +344,17 @@ EOF
         sed -i '/^OVERLEAF_SECURE_COOKIE=/d' overleaf-toolkit/config/variables.env
     fi
 
+    # Ensure whitelist file exists (for docker mount)
+    if [ ! -f "scripts/whitelisted_emails.txt" ]; then
+        if [ -f "scripts/whitelisted_emails.txt.sample" ]; then
+            cp scripts/whitelisted_emails.txt.sample scripts/whitelisted_emails.txt
+            echo "Created scripts/whitelisted_emails.txt from sample"
+        else
+            touch scripts/whitelisted_emails.txt
+            echo "Created empty scripts/whitelisted_emails.txt"
+        fi
+    fi
+
     # Create docker-compose.override.yml
     cat > overleaf-toolkit/config/docker-compose.override.yml <<'YAML_EOF'
 services:
@@ -377,6 +388,8 @@ services:
       # Mount scripts to enable features on container startup
       - ../../scripts/enable-features.sh:/overleaf-lab/enable-features.sh:ro
       - ../../scripts/nginx-customizations.sh:/overleaf-lab/nginx-customizations.sh:ro
+      # Mount email whitelist for group filtering bypass (optional)
+      - ../../scripts/whitelisted_emails.txt:/overleaf-lab/whitelisted_emails.txt:ro
       # Mount entrypoint wrapper
       - ../../scripts/docker-entrypoint.sh:/docker-entrypoint-wrapper.sh:ro
 

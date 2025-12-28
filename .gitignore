@@ -1,0 +1,17 @@
+# Local configuration (contains secrets)
+config.env.local
+
+# Email whitelist (site-specific)
+scripts/whitelisted_emails.txt
+
+# Generated files
+overleaf-toolkit/
+data/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/../overleaf-toolkit"
+# Stop and remove Overleaf containers directly
+docker stop sharelatex redis mongo 2>/dev/null || true
+docker rm sharelatex redis mongo 2>/dev/null || true
 
-bin/stop
+echo "Overleaf containers stopped and removed"

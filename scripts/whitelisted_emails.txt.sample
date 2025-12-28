@@ -1,0 +1,10 @@
+# Email Whitelist for OIDC Group Filtering
+# Users listed here bypass the group membership check
+# (useful for users with 150+ Azure AD groups who trigger overage)
+#
+# Format: one email per line
+# Lines starting with # are comments
+#
+# Example:
+# user@example.com
+# admin@company.org
