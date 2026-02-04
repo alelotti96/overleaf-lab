@@ -152,6 +152,26 @@ if [ ! -f config.env.local ]; then
 
         if [ "$DASHBOARD_PASSWORD" = "$DASHBOARD_PASSWORD_CONFIRM" ]; then
             DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-"changeme"}
+
+            # Hash password immediately (never store plaintext)
+            echo "  Generating secure password hash..."
+            DASHBOARD_PASSWORD_HASH=$(python3 -c "
+import hashlib, secrets, sys
+password = sys.stdin.read().strip()  # strip newline from heredoc
+salt = secrets.token_hex(16)
+iterations = 600000
+dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), iterations)
+print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
+" <<< "$DASHBOARD_PASSWORD" 2>/dev/null)
+
+            if [ -z "$DASHBOARD_PASSWORD_HASH" ]; then
+                echo -e "${RED}Error: Failed to hash password. Python3 is required.${NC}"
+                exit 1
+            fi
+            export DASHBOARD_PASSWORD_HASH
+
+            # Clear plaintext from memory (not strictly necessary but good practice)
+            DASHBOARD_PASSWORD=""
             break
         else
             echo -e "${RED}Passwords do not match. Please try again.${NC}"
@@ -329,7 +349,8 @@ if [ ! -f config.env.local ]; then
     sed -i "s|LAB_NAME=.*|LAB_NAME=\"${LAB_NAME}\"|" config.env.local
     sed -i "s|ADMIN_EMAIL=.*|ADMIN_EMAIL=\"${ADMIN_EMAIL}\"|" config.env.local
     sed -i "s|ENABLE_PUBLIC_ZOTERO_SIGNUP=.*|ENABLE_PUBLIC_ZOTERO_SIGNUP=\"${ENABLE_PUBLIC_ZOTERO_SIGNUP}\"|" config.env.local
-    sed -i "s|DASHBOARD_ADMIN_PASSWORD=.*|DASHBOARD_ADMIN_PASSWORD=\"${DASHBOARD_PASSWORD}\"|" config.env.local
+    # Password is hashed - write empty placeholder (hash is passed via environment to configure.sh)
+    sed -i "s|DASHBOARD_ADMIN_PASSWORD=.*|DASHBOARD_ADMIN_PASSWORD=\"\"  # Hashed at install time|" config.env.local
     sed -i "s|SMTP_HOST=.*|SMTP_HOST=\"${SMTP_HOST}\"|" config.env.local
     sed -i "s|SMTP_PORT=.*|SMTP_PORT=\"${SMTP_PORT}\"|" config.env.local
     sed -i "s|SMTP_USER=.*|SMTP_USER=\"${SMTP_USER}\"|" config.env.local
@@ -458,7 +479,8 @@ echo "[5/7] Applying configuration to all components..."
 
 if [ -f "./scripts/configure.sh" ]; then
     chmod +x ./scripts/configure.sh
-    ./scripts/configure.sh
+    # Pass password hash via environment variable to configure.sh
+    DASHBOARD_PASSWORD_HASH="$DASHBOARD_PASSWORD_HASH" ./scripts/configure.sh
     echo -e "${GREEN}✓ Configuration applied${NC}"
 else
     echo -e "${YELLOW}Warning: configure.sh not found, skipping configuration step${NC}"

@@ -28,7 +28,8 @@ Scripts have been tested on Ubuntu 24.
 **Admin Dashboard**:
 
 - Manage Overleaf users (create, delete, reset passwords, assign/remove admin rights)
-- Configure Zotero integrations per user
+- Super Admin role for granular Overleaf admin access control
+- Configure Zotero integrations per user (personal and group libraries)
 - Optional signup page for Zotero self-registration
 
 ## Screenshots
@@ -92,9 +93,20 @@ The script asks for:
 ### Dashboard Functions
 
 - **Users**: View, create, delete Overleaf users, reset passwords, assign/remove admin rights
-- **Zotero**: Add/remove Zotero users, configure API keys per user
+- **Zotero**: Add/remove Zotero users, configure API keys per user (supports both personal and group libraries)
 - **Activity**: Live project activity tracking with owner and collaborators
 - **Signup** (if enabled): Page where users can self-register their Zotero credentials
+
+### Admin Roles
+
+Overleaf Lab distinguishes between two admin levels:
+
+| Role | Overleaf Access | Dashboard |
+|------|----------------|-----------|
+| **Admin** (`isAdmin: true`) | Manage Users (`/admin/user`) | Full access |
+| **Super Admin** (`isAdmin: true` + `adminRoles: ["super_admin"]`) | Manage Users + Manage Site (`/admin`) + Manage Projects (`/admin/project`) | Full access |
+
+The user set as `ADMIN_EMAIL` during installation is automatically promoted to Super Admin at each container startup. Additional Super Admins can be assigned from the dashboard via the lock-shield button next to admin users.
 
 ## Zotero Integration
 

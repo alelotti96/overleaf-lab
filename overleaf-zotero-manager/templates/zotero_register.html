@@ -128,9 +128,10 @@
                                     </a></p>
                                     <ul>
                                         <li>Set <strong>Key Name</strong>: "Overleaf Integration"</li>
-                                        <li>Enable <strong>Personal Library: Read Only</strong></li>
+                                        <li>Enable <strong>Personal Library: Read Only</strong> (for personal libraries)</li>
+                                        <li>For group libraries, also enable <strong>Read Only</strong> access to the specific group</li>
                                         <li>Click <strong>Save Key</strong></li>
-                                        <li>Copy both <strong>API Key</strong> and <strong>User ID</strong> (numeric)</li>
+                                        <li>Copy both <strong>API Key</strong> and <strong>User ID</strong> (or <strong>Group ID</strong>)</li>
                                     </ul>
                                 </div>
                             </div>
@@ -143,18 +144,38 @@
                                 <div class="form-card ms-5">
                                     <form id="registerForm">
                                         <div class="mb-3">
+                                            <label class="form-label">Library Type</label>
+                                            <div class="d-flex gap-3">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="radio" name="entityType" id="entityTypeUser" value="user" checked>
+                                                    <label class="form-check-label" for="entityTypeUser">User Library (Personal)</label>
+                                                </div>
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="radio" name="entityType" id="entityTypeGroup" value="group">
+                                                    <label class="form-check-label" for="entityTypeGroup">Group Library</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!-- Email field for personal library -->
+                                        <div class="mb-3" id="emailField">
                                             <label for="email" class="form-label">Your Email</label>
-                                            <input type="email" class="form-control" id="email" required>
+                                            <input type="email" class="form-control" id="email">
                                             <small class="text-muted">We'll use the part before @ as your username</small>
+                                        </div>
+                                        <!-- Group name field for group library -->
+                                        <div class="mb-3" id="groupNameField" style="display: none;">
+                                            <label for="groupName" class="form-label">Group Name (Identifier)</label>
+                                            <input type="text" class="form-control" id="groupName" pattern="[a-z0-9\-]+" placeholder="e.g., lab-papers">
+                                            <small class="text-muted">Lowercase letters, numbers, and hyphens only. This will be part of your URL.</small>
                                         </div>
                                         <div class="mb-3">
                                             <label for="apiKey" class="form-label">Zotero API Key</label>
                                             <input type="text" class="form-control" id="apiKey" required>
                                         </div>
-                                        <div class="mb-3">
-                                            <label for="userId" class="form-label">Zotero User ID</label>
-                                            <input type="text" class="form-control" id="userId" required pattern="[0-9]+">
-                                            <small class="text-muted">Numeric ID only</small>
+                                        <div class="mb-3" id="userIdField">
+                                            <label for="userId" class="form-label" id="userIdLabel">Zotero Group ID</label>
+                                            <input type="text" class="form-control" id="userId" pattern="[0-9]+">
+                                            <small class="text-muted" id="userIdHelp">Auto-detected from API key for personal libraries</small>
                                         </div>
                                         <button type="submit" class="btn btn-primary btn-lg w-100">
                                             <i class="bi bi-check-circle me-2"></i>Activate Integration
@@ -260,15 +281,71 @@ Your text here \cite{citation_key}
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Update fields when entity type changes
+        document.querySelectorAll('input[name="entityType"]').forEach(radio => {
+            radio.addEventListener('change', function () {
+                const isGroup = this.value === 'group';
+
+                // Toggle email/groupName field visibility
+                const emailField = document.getElementById('emailField');
+                const groupNameField = document.getElementById('groupNameField');
+                const userIdField = document.getElementById('userIdField');
+                const emailInput = document.getElementById('email');
+                const groupNameInput = document.getElementById('groupName');
+                const userIdInput = document.getElementById('userId');
+
+                if (isGroup) {
+                    emailField.style.display = 'none';
+                    groupNameField.style.display = 'block';
+                    userIdField.style.display = 'block';
+                    emailInput.removeAttribute('required');
+                    groupNameInput.setAttribute('required', 'required');
+                    userIdInput.setAttribute('required', 'required');
+                    document.getElementById('userIdLabel').textContent = 'Zotero Group ID';
+                    document.getElementById('userIdHelp').textContent = 'Required - Numeric Group ID from your Zotero group settings';
+                } else {
+                    emailField.style.display = 'block';
+                    groupNameField.style.display = 'none';
+                    userIdField.style.display = 'none';  // Hide for personal - auto-detected
+                    emailInput.setAttribute('required', 'required');
+                    groupNameInput.removeAttribute('required');
+                    userIdInput.removeAttribute('required');
+                    userIdInput.value = '';  // Clear any previous value
+                }
+            });
+        });
+
+        // Set initial state (personal library selected by default)
+        document.getElementById('email').setAttribute('required', 'required');
+        document.getElementById('userIdField').style.display = 'none';
+
         document.getElementById('registerForm').addEventListener('submit', async function (e) {
             e.preventDefault();
 
-            const email = document.getElementById('email').value;
             const apiKey = document.getElementById('apiKey').value;
             const userId = document.getElementById('userId').value;
+            const entityType = document.querySelector('input[name="entityType"]:checked').value;
 
-            // Extract username from email (part before @)
-            const username = email.split('@')[0].toLowerCase().replace(/\./g, '-');
+            // For groups, user_id is required
+            if (entityType === 'group' && !userId) {
+                alert('Please enter the Group ID');
+                return;
+            }
+
+            // Determine username based on entity type
+            let username;
+            if (entityType === 'group') {
+                // Use group name directly as username
+                username = document.getElementById('groupName').value.toLowerCase().trim();
+                if (!username) {
+                    alert('Please enter a group name');
+                    return;
+                }
+            } else {
+                // Extract username from email (part before @)
+                const email = document.getElementById('email').value;
+                username = email.split('@')[0].toLowerCase().replace(/\./g, '-');
+            }
 
             // Show loading state
             const submitBtn = this.querySelector('button[type="submit"]');
@@ -283,7 +360,8 @@ Your text here \cite{citation_key}
                     body: JSON.stringify({
                         username: username,
                         api_key: apiKey,
-                        user_id: userId
+                        user_id: userId || '',  // Empty for personal (auto-detected)
+                        entity_type: entityType
                     })
                 });
 

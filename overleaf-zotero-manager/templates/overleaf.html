@@ -215,7 +215,9 @@
                 <td>${user.email}</td>
                 <td>${user.first_name} ${user.last_name}</td>
                 <td>
-                    ${user.is_admin ?
+                    ${user.is_admin && user.admin_roles && user.admin_roles.includes('super_admin') ?
+                    '<span class="badge bg-danger"><i class="bi bi-shield-lock"></i> Super Admin</span>' :
+                    user.is_admin ?
                     '<span class="badge bg-success"><i class="bi bi-shield-check"></i> Admin</span>' :
                     '<span class="badge bg-secondary">User</span>'}
                 </td>
@@ -230,6 +232,12 @@
                                 title="${user.is_admin ? 'Remove Admin' : 'Make Admin'}">
                             <i class="bi bi-shield"></i>
                         </button>
+                        ${user.is_admin ? `
+                        <button class="btn ${user.admin_roles && user.admin_roles.includes('super_admin') ? 'btn-danger' : 'btn-outline-danger'}"
+                                onclick="toggleSuperAdmin('${user.email}', ${!(user.admin_roles && user.admin_roles.includes('super_admin'))})"
+                                title="${user.admin_roles && user.admin_roles.includes('super_admin') ? 'Remove Super Admin' : 'Make Super Admin'}">
+                            <i class="bi bi-shield-lock"></i>
+                        </button>` : ''}
                         <button class="btn btn-info" onclick="showChangePassword('${user.email}')" title="Change Password">
                             <i class="bi bi-key"></i>
                         </button>
@@ -252,6 +260,25 @@
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ is_admin: makeAdmin })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadUsers();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            });
+    }
+
+    function toggleSuperAdmin(email, makeSuperAdmin) {
+        const action = makeSuperAdmin ? 'Grant' : 'Remove';
+        if (!confirm(`${action} Super Admin privileges for ${email}?\n\nSuper Admins can access Manage Site and Manage Projects in Overleaf.`)) return;
+
+        fetch(`/api/overleaf/users/${email}/super-admin`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_super_admin: makeSuperAdmin })
         })
             .then(response => response.json())
             .then(data => {

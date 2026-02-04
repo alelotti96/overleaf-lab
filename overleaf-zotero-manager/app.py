@@ -84,7 +84,11 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        if username == app.config['ADMIN_USERNAME'] and password == app.config['ADMIN_PASSWORD']:
+        password_hash = app.config.get('ADMIN_PASSWORD_HASH', '')
+        if username == app.config['ADMIN_USERNAME'] and (
+            (password_hash and check_password_hash(password_hash, password)) or
+            (not password_hash and password == app.config['ADMIN_PASSWORD'])
+        ):
             session['logged_in'] = True
             session['username'] = username
             flash('Logged in successfully!', 'success')
@@ -163,6 +167,18 @@ def toggle_admin_status(email):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/overleaf/users/<email>/super-admin', methods=['PUT'])
+@login_required
+def toggle_super_admin_status(email):
+    """Toggle super_admin role for an Overleaf user."""
+    try:
+        data = request.json
+        is_super_admin = data.get('is_super_admin', False)
+        result = overleaf_manager.set_super_admin_status(email, is_super_admin)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # Zotero API endpoints
 @app.route('/api/zotero/proxies', methods=['GET'])
 @login_required
@@ -179,19 +195,33 @@ def create_zotero_proxy():
     """Create a new Zotero proxy."""
     try:
         data = request.json
+
+        # DEBUG: Log received data
+        import logging
+        logging.getLogger(__name__).info(f"Received proxy creation request: {data}")
+
         username = data.get('username')
         api_key = data.get('api_key')
-        user_id = data.get('user_id')
-        
-        if not all([username, api_key, user_id]):
-            return jsonify({'success': False, 'error': 'All fields are required'}), 400
-        
+        user_id = data.get('user_id', '')
+        entity_type = data.get('entity_type', 'user')
+
+        # For personal libraries, user_id is optional (auto-detected from API key)
+        # For groups, user_id is required
+        if not username or not api_key:
+            return jsonify({'success': False, 'error': 'Username and API key are required'}), 400
+
+        if entity_type == 'group' and not user_id:
+            return jsonify({'success': False, 'error': 'Group ID is required for group libraries'}), 400
+
+        # DEBUG: Log entity_type
+        logging.getLogger(__name__).info(f"Entity type received: '{entity_type}'")
+
         # Validate username (lowercase, no spaces)
         username = username.lower().strip()
         if ' ' in username or not username.isalnum() and '-' not in username:
             return jsonify({'success': False, 'error': 'Username must be lowercase with no spaces'}), 400
-        
-        result = zotero_manager.add_proxy(username, api_key, user_id)
+
+        result = zotero_manager.add_proxy(username, api_key, user_id, entity_type)
         return jsonify(result)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -204,11 +234,12 @@ def update_zotero_proxy(username):
         data = request.json
         api_key = data.get('api_key')
         user_id = data.get('user_id')
-        
+        entity_type = data.get('entity_type')  # Optional, will preserve existing if not provided
+
         if not api_key or not user_id:
             return jsonify({'success': False, 'error': 'API key and User ID are required'}), 400
-        
-        result = zotero_manager.update_proxy(username, api_key, user_id)
+
+        result = zotero_manager.update_proxy(username, api_key, user_id, entity_type)
         return jsonify(result)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -314,6 +345,14 @@ def internal_error(e):
 if __name__ == '__main__':
     # Create necessary directories
     os.makedirs('logs', exist_ok=True)
+
+    # Warn if password hash is not configured (plaintext fallback)
+    import logging
+    if not app.config.get('ADMIN_PASSWORD_HASH'):
+        logging.getLogger(__name__).warning(
+            'ADMIN_PASSWORD_HASH not set - using plaintext password comparison. '
+            'Run configure.sh to generate a secure password hash.'
+        )
 
     # Run the app
     app.run(

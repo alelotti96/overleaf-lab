@@ -138,6 +138,61 @@ else
 fi
 
 # =============================================================================
+# Super Admin Role Patch
+# =============================================================================
+# Patches AdminToolsRouter.mjs and router.mjs to restrict sensitive admin
+# routes (/admin, /admin/project/*) to users with super_admin role.
+# Normal admins can still access /admin/user (Manage Users).
+#
+# Also sets adminRoles: ["super_admin"] for the SUPER_ADMIN_EMAIL user in MongoDB.
+# Falls back to OVERLEAF_ADMIN_EMAIL (= ADMIN_EMAIL from config.env) if SUPER_ADMIN_EMAIL is not set.
+
+ADMIN_TOOLS_ROUTER="/overleaf/services/web/modules/admin-tools/app/src/AdminToolsRouter.mjs"
+MAIN_ROUTER="/overleaf/services/web/app/src/router.mjs"
+PATCH_SCRIPT="/overleaf-lab/patch-super-admin.js"
+
+# Fallback: use OVERLEAF_ADMIN_EMAIL if SUPER_ADMIN_EMAIL is not explicitly set
+SUPER_ADMIN_EMAIL="${SUPER_ADMIN_EMAIL:-$OVERLEAF_ADMIN_EMAIL}"
+
+if [ -f "$PATCH_SCRIPT" ]; then
+    # Always run the patch script - it handles re-patching from backup internally
+    echo "Applying super admin route patches..."
+    cd /overleaf/services/web && node "$PATCH_SCRIPT"
+    echo "Super admin route patches: done"
+
+    # Set adminRoles for the super_admin user in MongoDB
+    if [ -n "$SUPER_ADMIN_EMAIL" ]; then
+        echo "Setting super_admin role for: $SUPER_ADMIN_EMAIL"
+        node -e "
+const { MongoClient } = require('mongodb');
+async function main() {
+  const client = new MongoClient(process.env.MONGO_CONNECTION_STRING || 'mongodb://mongo:27017');
+  try {
+    await client.connect();
+    const db = client.db('sharelatex');
+    const result = await db.collection('users').updateOne(
+      { email: '$SUPER_ADMIN_EMAIL' },
+      { \$set: { adminRoles: ['super_admin'] } }
+    );
+    if (result.matchedCount > 0) {
+      console.log('[Super Admin] adminRoles set for $SUPER_ADMIN_EMAIL');
+    } else {
+      console.log('[Super Admin] User $SUPER_ADMIN_EMAIL not found in DB (will be set when user exists)');
+    }
+  } finally {
+    await client.close();
+  }
+}
+main().catch(err => console.error('[Super Admin] MongoDB error:', err));
+" 2>&1 || echo "Super admin MongoDB setup: failed (non-critical, can be set via dashboard)"
+    else
+        echo "Super admin: SUPER_ADMIN_EMAIL not set, skipping MongoDB role setup"
+    fi
+else
+    echo "Super admin patch: patch-super-admin.js not found, skipping"
+fi
+
+# =============================================================================
 # Nginx customizations are handled by nginx-customizations.sh
 # which is copied to /etc/my_init.d/ to run after nginx is configured
 # =============================================================================

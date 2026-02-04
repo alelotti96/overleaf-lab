@@ -42,8 +42,8 @@ EMAIL_FROM_ADDRESS=$(grep '^EMAIL_FROM_ADDRESS=' config.env.local | sed 's/^EMAI
 
 # Get absolute paths
 INSTALL_DIR="$PROJECT_ROOT"
-COMPILES_DIR="${INSTALL_DIR}/data/compiles"
-OUTPUT_DIR="${INSTALL_DIR}/data/output"
+COMPILES_DIR="${INSTALL_DIR}/overleaf-toolkit/data/compiles"
+OUTPUT_DIR="${INSTALL_DIR}/overleaf-toolkit/data/output"
 
 echo "Installation directory: $INSTALL_DIR"
 echo ""
@@ -71,6 +71,51 @@ if [ -d "overleaf-zotero-manager" ]; then
         fi
     fi
 
+    # Get password hash for dashboard admin
+    # Priority: 1) Environment variable (from install.sh), 2) Hash from config, 3) Existing .env
+
+    # Check if hash was passed from install.sh via environment
+    if [ -n "$DASHBOARD_PASSWORD_HASH" ]; then
+        ADMIN_PASSWORD_HASH="$DASHBOARD_PASSWORD_HASH"
+        echo "  Using password hash from installation"
+    elif [ -n "$DASHBOARD_ADMIN_PASSWORD" ]; then
+        # Password provided in config - generate hash (for manual config changes)
+        echo "  Generating password hash..."
+        ADMIN_PASSWORD_HASH=$(python3 -c "
+import hashlib, secrets, sys
+password = sys.stdin.read().strip()  # strip newline from heredoc
+salt = secrets.token_hex(16)
+iterations = 600000
+dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), iterations)
+print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
+" <<< "$DASHBOARD_ADMIN_PASSWORD" 2>/dev/null)
+
+        if [ -z "$ADMIN_PASSWORD_HASH" ]; then
+            echo -e "${YELLOW}Error: Failed to hash password. Python3 is required.${NC}"
+            exit 1
+        fi
+        echo "  Password hash generated successfully"
+
+        # Remove plaintext password from config.env.local
+        sed -i 's/^DASHBOARD_ADMIN_PASSWORD=.*/DASHBOARD_ADMIN_PASSWORD=""  # Hashed - set new password here to change it/' config.env.local
+        echo "  Plaintext password removed from config.env.local"
+    else
+        # No password - check if hash already exists in .env
+        if [ -f "overleaf-zotero-manager/.env" ]; then
+            ADMIN_PASSWORD_HASH=$(grep '^ADMIN_PASSWORD_HASH=' overleaf-zotero-manager/.env | cut -d'=' -f2-)
+        fi
+
+        if [ -z "$ADMIN_PASSWORD_HASH" ]; then
+            echo -e "${YELLOW}Error: No password configured${NC}"
+            echo "  Set DASHBOARD_ADMIN_PASSWORD in config.env.local and re-run configure.sh"
+            exit 1
+        fi
+        echo "  Using existing password hash"
+    fi
+
+    # Escape $ characters in hash for Docker Compose ($ -> $$)
+    ADMIN_PASSWORD_HASH_ESCAPED=$(echo "$ADMIN_PASSWORD_HASH" | sed 's/\$/\$\$/g')
+
     cat > overleaf-zotero-manager/.env <<EOF
 # Flask
 FLASK_SECRET_KEY=${FLASK_SECRET_KEY}
@@ -81,9 +126,9 @@ FLASK_PORT=${FLASK_PORT}
 # Branding
 LAB_NAME=${LAB_NAME}
 
-# Admin
+# Admin credentials (password is securely hashed)
 ADMIN_USERNAME=${ADMIN_EMAIL}
-ADMIN_PASSWORD=${DASHBOARD_ADMIN_PASSWORD}
+ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH_ESCAPED}
 
 # MongoDB
 MONGODB_URI=${MONGODB_URI}
@@ -384,12 +429,17 @@ services:
       # Experimental features (passed to enable-features.sh)
       ENABLE_NEW_EDITOR_UI: "${ENABLE_NEW_EDITOR_UI}"
 
+      # Super Admin role (passed to enable-features.sh)
+      SUPER_ADMIN_EMAIL: "${SUPER_ADMIN_EMAIL}"
+
     volumes:
       # Mount scripts to enable features on container startup
       - ../../scripts/enable-features.sh:/overleaf-lab/enable-features.sh:ro
       - ../../scripts/nginx-customizations.sh:/overleaf-lab/nginx-customizations.sh:ro
       # Mount email whitelist for group filtering bypass (optional)
       - ../../scripts/whitelisted_emails.txt:/overleaf-lab/whitelisted_emails.txt:ro
+      # Mount super_admin patch script
+      - ../../scripts/patch-super-admin.js:/overleaf-lab/patch-super-admin.js:ro
       # Mount entrypoint wrapper
       - ../../scripts/docker-entrypoint.sh:/docker-entrypoint-wrapper.sh:ro
 
@@ -400,6 +450,7 @@ YAML_EOF
     sed -i "s|\${OVERLEAF_IMAGE}|${OVERLEAF_IMAGE}|g" overleaf-toolkit/config/docker-compose.override.yml
     sed -i "s|\${OVERLEAF_IMAGE_TAG}|${OVERLEAF_IMAGE_TAG}|g" overleaf-toolkit/config/docker-compose.override.yml
     sed -i "s|\${ENABLE_NEW_EDITOR_UI}|${ENABLE_NEW_EDITOR_UI:-false}|g" overleaf-toolkit/config/docker-compose.override.yml
+    sed -i "s|\${SUPER_ADMIN_EMAIL}|${SUPER_ADMIN_EMAIL:-}|g" overleaf-toolkit/config/docker-compose.override.yml
 
     echo -e "${GREEN}✓ Overleaf Toolkit configured${NC}"
 else
@@ -411,11 +462,11 @@ fi
 # -----------------------------------------------------------------------------
 echo "[4/4] Creating data directories..."
 
-mkdir -p data/overleaf
-mkdir -p data/mongo
-mkdir -p data/redis
-mkdir -p data/compiles
-mkdir -p data/output
+mkdir -p overleaf-toolkit/data/overleaf
+mkdir -p overleaf-toolkit/data/mongo
+mkdir -p overleaf-toolkit/data/redis
+mkdir -p overleaf-toolkit/data/compiles
+mkdir -p overleaf-toolkit/data/output
 
 echo -e "${GREEN}✓ Data directories created${NC}"
 

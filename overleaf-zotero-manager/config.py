@@ -21,6 +21,7 @@ class Config:
     # Admin Credentials
     ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
     ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'changeme')
+    ADMIN_PASSWORD_HASH = os.environ.get('ADMIN_PASSWORD_HASH', '')
     
     # MongoDB Configuration (Overleaf)
     MONGODB_URI = os.environ.get('MONGODB_URI', 'mongodb://localhost:27017/sharelatex')

@@ -49,18 +49,19 @@
                         <thead>
                             <tr>
                                 <th>Username</th>
+                                <th>Type</th>
                                 <th>Container</th>
                                 <th>Status</th>
                                 <th>Internal URL</th>
                                 <th style="min-width: 200px;">API Key</th>
-                                <th>User ID</th>
+                                <th>ID</th>
                                 <th>Port</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody id="usersTableBody">
                             <tr>
-                                <td colspan="8" class="text-center">
+                                <td colspan="9" class="text-center">
                                     <div class="spinner-border" role="status">
                                         <span class="visually-hidden">Loading...</span>
                                     </div>
@@ -85,19 +86,33 @@
             <form id="addUserForm">
                 <div class="modal-body">
                     <div class="mb-3">
-                        <label for="userUsername" class="form-label">Username</label>
-                        <input type="text" class="form-control" id="userUsername" required pattern="[a-z0-9-]+"
-                            placeholder="lowercase-only">
-                        <small class="text-muted">Lowercase letters, numbers, and hyphens only</small>
+                        <label for="userEntityType" class="form-label">Library Type</label>
+                        <select class="form-select" id="userEntityType">
+                            <option value="user" selected>User Library (Personal)</option>
+                            <option value="group">Group Library</option>
+                        </select>
+                    </div>
+                    <!-- Email field for personal library -->
+                    <div class="mb-3" id="userEmailField">
+                        <label for="userEmail" class="form-label">User Email</label>
+                        <input type="email" class="form-control" id="userEmail" required>
+                        <small class="text-muted">We'll use the part before @ as the username</small>
+                    </div>
+                    <!-- Group name field for group library -->
+                    <div class="mb-3" id="userGroupNameField" style="display: none;">
+                        <label for="userGroupName" class="form-label">Group Name (Identifier)</label>
+                        <input type="text" class="form-control" id="userGroupName" pattern="[a-z0-9\-]+"
+                            placeholder="e.g., lab-papers">
+                        <small class="text-muted">Lowercase letters, numbers, and hyphens only. This will be part of the URL.</small>
                     </div>
                     <div class="mb-3">
                         <label for="userApiKey" class="form-label">Zotero API Key</label>
                         <input type="text" class="form-control" id="userApiKey" required>
                     </div>
-                    <div class="mb-3">
-                        <label for="userUserId" class="form-label">Zotero User ID</label>
-                        <input type="text" class="form-control" id="userUserId" required>
-                        <small class="text-muted">Numeric ID from Zotero settings page</small>
+                    <div class="mb-3" id="userIdField">
+                        <label for="userUserId" class="form-label" id="userUserIdLabel">Zotero Group ID</label>
+                        <input type="text" class="form-control" id="userUserId">
+                        <small class="text-muted" id="userUserIdHelp">Auto-detected from API key for personal libraries</small>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -116,29 +131,34 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Update Zotero User</h5>
+                <h5 class="modal-title" id="updateModalTitle">Update Zotero User</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form id="updateUserForm">
                 <div class="modal-body">
                     <input type="hidden" id="updateUserUsername">
+                    <input type="hidden" id="updateEntityType">
                     <div class="mb-3">
                         <label class="form-label">Username</label>
                         <p id="updateUserName"></p>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Type</label>
+                        <p id="updateUserType"></p>
                     </div>
                     <div class="mb-3">
                         <label for="updateApiKey" class="form-label">New API Key</label>
                         <input type="text" class="form-control" id="updateApiKey" required>
                     </div>
                     <div class="mb-3">
-                        <label for="updateUserId" class="form-label">New User ID</label>
+                        <label for="updateUserId" class="form-label" id="updateUserIdLabel">New User ID</label>
                         <input type="text" class="form-control" id="updateUserId" required>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" class="btn btn-primary">
-                        <i class="bi bi-save"></i> Update User
+                        <i class="bi bi-save"></i> Update
                     </button>
                 </div>
             </form>
@@ -152,16 +172,77 @@
     // Load users on page load
     document.addEventListener('DOMContentLoaded', function () {
         loadUsers();
+
+        // Update fields when entity type changes in Add modal
+        document.getElementById('userEntityType').addEventListener('change', function () {
+            const isGroup = this.value === 'group';
+
+            // Toggle email/groupName field visibility
+            const emailField = document.getElementById('userEmailField');
+            const groupNameField = document.getElementById('userGroupNameField');
+            const userIdField = document.getElementById('userIdField');
+            const emailInput = document.getElementById('userEmail');
+            const groupNameInput = document.getElementById('userGroupName');
+            const userIdInput = document.getElementById('userUserId');
+
+            if (isGroup) {
+                emailField.style.display = 'none';
+                groupNameField.style.display = 'block';
+                userIdField.style.display = 'block';
+                emailInput.removeAttribute('required');
+                groupNameInput.setAttribute('required', 'required');
+                userIdInput.setAttribute('required', 'required');
+                document.getElementById('userUserIdLabel').textContent = 'Zotero Group ID';
+                document.getElementById('userUserIdHelp').textContent = 'Required - Numeric Group ID from your Zotero group settings';
+            } else {
+                emailField.style.display = 'block';
+                groupNameField.style.display = 'none';
+                userIdField.style.display = 'none';  // Hide for personal - auto-detected
+                emailInput.setAttribute('required', 'required');
+                groupNameInput.removeAttribute('required');
+                userIdInput.removeAttribute('required');
+                userIdInput.value = '';  // Clear any previous value
+            }
+        });
+
+        // Trigger change event to set initial state
+        document.getElementById('userEntityType').dispatchEvent(new Event('change'));
     });
 
     // Add user form submission
     document.getElementById('addUserForm').addEventListener('submit', function (e) {
         e.preventDefault();
 
+        const entityType = document.getElementById('userEntityType').value;
+
+        // Determine username based on entity type
+        let username;
+        if (entityType === 'group') {
+            // Use group name directly as username
+            username = document.getElementById('userGroupName').value.toLowerCase().trim();
+            if (!username) {
+                alert('Please enter a group name');
+                return;
+            }
+        } else {
+            // Extract username from email (part before @)
+            const email = document.getElementById('userEmail').value;
+            username = email.split('@')[0].toLowerCase().replace(/\./g, '-');
+        }
+
+        const userId = document.getElementById('userUserId').value;
+
+        // For groups, user_id is required
+        if (entityType === 'group' && !userId) {
+            alert('Please enter the Group ID');
+            return;
+        }
+
         const data = {
-            username: document.getElementById('userUsername').value.toLowerCase(),
+            username: username,
             api_key: document.getElementById('userApiKey').value,
-            user_id: document.getElementById('userUserId').value
+            user_id: userId || '',  // Empty for personal (auto-detected)
+            entity_type: entityType
         };
 
         fetch('/api/zotero/proxies', {
@@ -189,7 +270,8 @@
         const username = document.getElementById('updateUserUsername').value;
         const data = {
             api_key: document.getElementById('updateApiKey').value,
-            user_id: document.getElementById('updateUserId').value
+            user_id: document.getElementById('updateUserId').value,
+            entity_type: document.getElementById('updateEntityType').value
         };
 
         fetch(`/api/zotero/proxies/${username}`, {
@@ -217,7 +299,7 @@
                     displayUsers(data.proxies);
                 } else {
                     document.getElementById('usersTableBody').innerHTML =
-                        '<tr><td colspan="8" class="text-center text-danger">Failed to load users</td></tr>';
+                        '<tr><td colspan="9" class="text-center text-danger">Failed to load users</td></tr>';
                 }
             });
     }
@@ -226,7 +308,7 @@
         const tbody = document.getElementById('usersTableBody');
 
         if (users.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center">No users configured</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center">No users configured</td></tr>';
             return;
         }
 
@@ -236,9 +318,14 @@
                 '<span class="badge bg-success">Running</span>' :
                 '<span class="badge bg-danger">Stopped</span>';
 
+            const typeBadge = user.entity_type === 'group' ?
+                '<span class="badge bg-info">Group</span>' :
+                '<span class="badge bg-secondary">User</span>';
+
             html += `
             <tr>
                 <td>${user.username}</td>
+                <td>${typeBadge}</td>
                 <td>${user.container_name}</td>
                 <td>${statusBadge}</td>
                 <td>
@@ -256,7 +343,7 @@
                         <button class="btn btn-info" onclick="copyUrl('${user.internal_url}')" title="Copy URL">
                             <i class="bi bi-clipboard"></i>
                         </button>
-                        <button class="btn btn-warning" onclick="showUpdateUser('${user.username}')" title="Update Credentials">
+                        <button class="btn btn-warning" onclick="showUpdateUser('${user.username}', '${user.entity_type}')" title="Update Credentials">
                             <i class="bi bi-pencil"></i>
                         </button>
                         <button class="btn btn-danger" onclick="deleteUser('${user.username}')" title="Delete User">
@@ -277,9 +364,20 @@
         });
     }
 
-    function showUpdateUser(username) {
+    function showUpdateUser(username, entityType) {
+        const isGroup = entityType === 'group';
         document.getElementById('updateUserUsername').value = username;
+        document.getElementById('updateEntityType').value = entityType;
         document.getElementById('updateUserName').textContent = username;
+        document.getElementById('updateUserType').innerHTML = isGroup
+            ? '<span class="badge bg-info">Group Library</span>'
+            : '<span class="badge bg-secondary">User Library</span>';
+        document.getElementById('updateModalTitle').textContent = isGroup
+            ? 'Update Zotero Group'
+            : 'Update Zotero User';
+        document.getElementById('updateUserIdLabel').textContent = isGroup
+            ? 'New Group ID'
+            : 'New User ID';
         const modal = new bootstrap.Modal(document.getElementById('updateUserModal'));
         modal.show();
     }

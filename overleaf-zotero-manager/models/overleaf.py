@@ -79,6 +79,7 @@ class OverleafManager:
                     'first_name': user.get('first_name', ''),
                     'last_name': user.get('last_name', ''),
                     'is_admin': user.get('isAdmin', False),
+                    'admin_roles': user.get('adminRoles', []),
                     'created_at': created_at or '',
                     'last_logged_in': last_logged_in or '',
                     'last_seen': last_seen,
@@ -186,7 +187,7 @@ class OverleafManager:
                 {'email': email},
                 {'$set': {'isAdmin': is_admin}}
             )
-            
+
             if result.modified_count:
                 logger.info(f"Updated admin status for {email}: {is_admin}")
                 return {'success': True, 'email': email, 'is_admin': is_admin}
@@ -194,9 +195,38 @@ class OverleafManager:
                 return {'success': True, 'message': 'User already has this status'}
             else:
                 return {'success': False, 'error': 'User not found'}
-                
+
         except Exception as e:
             logger.error(f"Failed to update admin status for {email}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def set_super_admin_status(self, email: str, is_super_admin: bool) -> Dict[str, Any]:
+        """Set or remove super_admin role for a user."""
+        try:
+            if is_super_admin:
+                # Add super_admin to adminRoles and ensure isAdmin is true
+                result = self.users_collection.update_one(
+                    {'email': email},
+                    {
+                        '$set': {'isAdmin': True},
+                        '$addToSet': {'adminRoles': 'super_admin'}
+                    }
+                )
+            else:
+                # Remove super_admin from adminRoles
+                result = self.users_collection.update_one(
+                    {'email': email},
+                    {'$pull': {'adminRoles': 'super_admin'}}
+                )
+
+            if result.matched_count:
+                logger.info(f"Updated super_admin status for {email}: {is_super_admin}")
+                return {'success': True, 'email': email, 'is_super_admin': is_super_admin}
+            else:
+                return {'success': False, 'error': 'User not found'}
+
+        except Exception as e:
+            logger.error(f"Failed to update super_admin status for {email}: {e}")
             return {'success': False, 'error': str(e)}
     
     def get_user_by_email(self, email: str) -> Dict[str, Any]:
@@ -210,6 +240,7 @@ class OverleafManager:
                     'first_name': user.get('first_name', ''),
                     'last_name': user.get('last_name', ''),
                     'is_admin': user.get('isAdmin', False),
+                    'admin_roles': user.get('adminRoles', []),
                     'created_at': user.get('signUpDate', ''),
                     'last_logged_in': user.get('lastLoggedIn', ''),
                     'confirmed': user.get('confirmed', False)
