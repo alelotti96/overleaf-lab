@@ -42,8 +42,6 @@ EMAIL_FROM_ADDRESS=$(grep '^EMAIL_FROM_ADDRESS=' config.env.local | sed 's/^EMAI
 
 # Get absolute paths
 INSTALL_DIR="$PROJECT_ROOT"
-COMPILES_DIR="${INSTALL_DIR}/overleaf-toolkit/data/compiles"
-OUTPUT_DIR="${INSTALL_DIR}/overleaf-toolkit/data/output"
 
 echo "Installation directory: $INSTALL_DIR"
 echo ""
@@ -230,7 +228,6 @@ SIBLING_CONTAINERS_ENABLED=${SANDBOXED_COMPILES}
 
 # Sandboxed compiles
 SANDBOXED_COMPILES_ENABLED=${SANDBOXED_COMPILES}
-SANDBOXED_COMPILES_HOST_DIR=${COMPILES_DIR}
 ENABLE_CONVERSIONS=true
 
 # Track changes
@@ -465,8 +462,6 @@ echo "[4/4] Creating data directories..."
 mkdir -p overleaf-toolkit/data/overleaf
 mkdir -p overleaf-toolkit/data/mongo
 mkdir -p overleaf-toolkit/data/redis
-mkdir -p overleaf-toolkit/data/compiles
-mkdir -p overleaf-toolkit/data/output
 
 echo -e "${GREEN}✓ Data directories created${NC}"
 
