@@ -509,7 +509,7 @@ SIBLING_CONTAINERS_PULL=false bin/up -d
 cd "$SCRIPT_DIR"
 
 echo "Waiting for Overleaf to start and stabilize (this may take a few minutes)..."
-MAX_WAIT=120
+MAX_WAIT=300
 WAITED=0
 STABLE_COUNT=0
 RESTART_COUNT=0

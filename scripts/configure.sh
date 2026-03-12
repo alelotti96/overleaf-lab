@@ -100,7 +100,8 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
     else
         # No password - check if hash already exists in .env
         if [ -f "overleaf-zotero-manager/.env" ]; then
-            ADMIN_PASSWORD_HASH=$(grep '^ADMIN_PASSWORD_HASH=' overleaf-zotero-manager/.env | cut -d'=' -f2-)
+            # Read existing hash and undo Docker Compose escaping ($$ -> $)
+            ADMIN_PASSWORD_HASH=$(grep '^ADMIN_PASSWORD_HASH=' overleaf-zotero-manager/.env | cut -d'=' -f2- | sed 's/\$\$/\$/g')
         fi
 
         if [ -z "$ADMIN_PASSWORD_HASH" ]; then
