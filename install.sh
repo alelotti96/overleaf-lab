@@ -94,21 +94,18 @@ else
     echo -e "${GREEN}✓ Internet connection available${NC}"
 fi
 
-# Check CPU AVX support (required for MongoDB 5.0+)
+# Check CPU AVX support (required for MongoDB 5.0+, which is required by Overleaf 6.x)
 if ! grep -q avx /proc/cpuinfo 2>/dev/null; then
-    echo -e "${YELLOW}⚠ Your CPU does not support AVX (older CPU detected)${NC}"
-    echo "  MongoDB 5.0+ requires AVX. Using MongoDB 4.4 instead."
-
-    # Auto-set MONGO_VERSION=4.4 in config.env.local if exists, or remember for later
-    if [ -f config.env.local ]; then
-        if grep -q "^MONGO_VERSION=" config.env.local; then
-            sed -i 's/^MONGO_VERSION=.*/MONGO_VERSION="4.4"/' config.env.local
-        else
-            echo 'MONGO_VERSION="4.4"' >> config.env.local
-        fi
-    fi
-    export MONGO_VERSION="4.4"
-    echo -e "${GREEN}✓ MongoDB 4.4 will be used (compatible with your CPU)${NC}"
+    echo -e "${RED}ERROR: Your CPU does not support AVX instructions${NC}"
+    echo ""
+    echo "  Overleaf 6.x requires MongoDB 8.0+, which needs AVX support."
+    echo "  CPUs without AVX (pre-2011 Intel, pre-2012 AMD) are not compatible."
+    echo ""
+    echo "  Options:"
+    echo "    1. Use a machine with a newer CPU that supports AVX"
+    echo "    2. Run in a VM on a host with AVX support (ensure AVX is passed through)"
+    echo ""
+    exit 1
 else
     echo -e "${GREEN}✓ CPU supports AVX (MongoDB 8.0 compatible)${NC}"
 fi
@@ -388,14 +385,6 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
 else
     echo -e "${GREEN}✓ Configuration file found${NC}"
 
-    # Update MONGO_VERSION if AVX not supported and not already set to 4.4
-    if [ "$MONGO_VERSION" = "4.4" ]; then
-        if grep -q "^MONGO_VERSION=" config.env.local; then
-            sed -i 's/^MONGO_VERSION=.*/MONGO_VERSION="4.4"/' config.env.local
-        else
-            echo 'MONGO_VERSION="4.4"' >> config.env.local
-        fi
-    fi
 fi
 
 # -----------------------------------------------------------------------------
