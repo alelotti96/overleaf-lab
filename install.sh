@@ -383,8 +383,51 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
     echo ""
     echo -e "${GREEN}✓ Configuration created${NC}"
 else
-    echo -e "${GREEN}✓ Configuration file found${NC}"
+    echo -e "${GREEN}✓ Configuration file found, skipping wizard${NC}"
 
+    # Check if dashboard password hash is needed
+    # (config.env.local exists but no hash available yet)
+    source config.env.local
+    EXISTING_HASH=""
+    if [ -f "overleaf-zotero-manager/.env" ]; then
+        EXISTING_HASH=$(grep '^ADMIN_PASSWORD_HASH=' overleaf-zotero-manager/.env 2>/dev/null | cut -d'=' -f2-)
+    fi
+
+    if [ -z "$EXISTING_HASH" ] && [ -z "$DASHBOARD_ADMIN_PASSWORD" ]; then
+        echo ""
+        echo "Dashboard password not found. Please set one:"
+        while true; do
+            read -sp "Dashboard admin password: " DASHBOARD_PASSWORD
+            echo
+            read -sp "Confirm password: " DASHBOARD_PASSWORD_CONFIRM
+            echo
+
+            if [ "$DASHBOARD_PASSWORD" = "$DASHBOARD_PASSWORD_CONFIRM" ]; then
+                DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-"changeme"}
+
+                echo "  Generating secure password hash..."
+                DASHBOARD_PASSWORD_HASH=$(python3 -c "
+import hashlib, secrets, sys
+password = sys.stdin.read().strip()
+salt = secrets.token_hex(16)
+iterations = 600000
+dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), iterations)
+print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
+" <<< "$DASHBOARD_PASSWORD" 2>/dev/null)
+
+                if [ -z "$DASHBOARD_PASSWORD_HASH" ]; then
+                    echo -e "${RED}Error: Failed to hash password. Python3 is required.${NC}"
+                    exit 1
+                fi
+                export DASHBOARD_PASSWORD_HASH
+                DASHBOARD_PASSWORD=""
+                break
+            else
+                echo -e "${RED}Passwords do not match. Please try again.${NC}"
+                echo ""
+            fi
+        done
+    fi
 fi
 
 # -----------------------------------------------------------------------------
