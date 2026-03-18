@@ -254,8 +254,8 @@ REDIS_DATA_PATH=data/redis
 REDIS_IMAGE=redis:6.2
 REDIS_AOF_PERSISTENCE=true
 
-# Git-bridge configuration (Server Pro only)
-GIT_BRIDGE_ENABLED=false
+# Git-bridge configuration
+GIT_BRIDGE_ENABLED=true
 
 # TLS proxy configuration (optional)
 NGINX_ENABLED=false
