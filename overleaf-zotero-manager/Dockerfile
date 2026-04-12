@@ -31,12 +31,13 @@ RUN mkdir -p logs
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_APP=app.py
 
-# Expose port
-EXPOSE 5000
+# Default port (can be overridden via FLASK_PORT env variable)
+ENV FLASK_PORT=5000
+EXPOSE ${FLASK_PORT}
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5000/api/system/status || exit 1
+    CMD curl -f http://localhost:${FLASK_PORT}/api/system/status || exit 1
 
 # Run the application
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "--access-logfile", "logs/access.log", "--error-logfile", "logs/error.log", "app:app"]
+CMD sh -c "gunicorn -w 4 -b 0.0.0.0:${FLASK_PORT} --access-logfile logs/access.log --error-logfile logs/error.log app:app"

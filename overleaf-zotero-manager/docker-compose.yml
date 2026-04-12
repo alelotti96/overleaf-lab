@@ -4,7 +4,7 @@ services:
     container_name: overleaf-zotero-manager
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "${FLASK_PORT:-5000}:${FLASK_PORT:-5000}"
     volumes:
       - ./logs:/app/logs
       - ${OVERLEAF_TOOLKIT_PATH}:${OVERLEAF_TOOLKIT_PATH}:ro
