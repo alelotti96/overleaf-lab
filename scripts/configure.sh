@@ -40,6 +40,34 @@ PASSWORD_VALIDATION_MIN_LENGTH=$(grep '^PASSWORD_VALIDATION_MIN_LENGTH=' config.
 # Read EMAIL_FROM_ADDRESS literally
 EMAIL_FROM_ADDRESS=$(grep '^EMAIL_FROM_ADDRESS=' config.env.local | sed 's/^EMAIL_FROM_ADDRESS=//' | tr -d '"')
 
+# Generate OVERLEAF_INVITE_TOKEN_SECRET if missing (required by Overleaf CE >= 6.2.0,
+# the container refuses to start without it)
+if [ -z "$OVERLEAF_INVITE_TOKEN_SECRET" ]; then
+    echo "Generating OVERLEAF_INVITE_TOKEN_SECRET..."
+    OVERLEAF_INVITE_TOKEN_SECRET=$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null || openssl rand -hex 32)
+    if grep -q '^OVERLEAF_INVITE_TOKEN_SECRET=' config.env.local; then
+        sed -i "s|^OVERLEAF_INVITE_TOKEN_SECRET=.*|OVERLEAF_INVITE_TOKEN_SECRET=\"${OVERLEAF_INVITE_TOKEN_SECRET}\"|" config.env.local
+    else
+        printf '\n# Invite token secret (required by Overleaf CE >= 6.2.0, auto-generated)\nOVERLEAF_INVITE_TOKEN_SECRET="%s"\n' "$OVERLEAF_INVITE_TOKEN_SECRET" >> config.env.local
+    fi
+fi
+
+# Upload limit is expressed in MB since Overleaf CE 6.2.0 (drives nginx
+# client_max_body_size and web maxUploadSize). Convert legacy byte values.
+if [ -n "$MAX_UPLOAD_SIZE_MB" ]; then
+    MAX_UPLOAD_MB="$MAX_UPLOAD_SIZE_MB"
+elif [ -n "$MAX_UPLOAD_SIZE" ] && [ "$MAX_UPLOAD_SIZE" -gt 10240 ] 2>/dev/null; then
+    MAX_UPLOAD_MB=$((MAX_UPLOAD_SIZE / 1024 / 1024))
+elif [ -n "$MAX_UPLOAD_SIZE" ]; then
+    MAX_UPLOAD_MB="$MAX_UPLOAD_SIZE"
+else
+    MAX_UPLOAD_MB=500
+fi
+
+# Pandoc conversions (Word/Markdown import-export): enabled by default
+ENABLE_PANDOC_CONVERSIONS="${ENABLE_PANDOC_CONVERSIONS:-true}"
+PANDOC_IMAGE="${PANDOC_IMAGE:-overleafcep/pandoc-ol:3.10.0.0}"
+
 # Get absolute paths
 INSTALL_DIR="$PROJECT_ROOT"
 
@@ -293,11 +321,26 @@ OVERLEAF_HEADER_EXTRAS=${HEADER_EXTRAS}
 OVERLEAF_PASSWORD_VALIDATION_PATTERN=${PASSWORD_VALIDATION_PATTERN}
 OVERLEAF_PASSWORD_VALIDATION_MIN_LENGTH=${PASSWORD_VALIDATION_MIN_LENGTH}
 
-# Upload limits
-MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE}
+# Upload limit in MB (applied to nginx client_max_body_size and web maxUploadSize)
+MAX_UPLOAD_SIZE=${MAX_UPLOAD_MB}
 
 # Compile settings
 COMPILE_TIMEOUT=${COMPILE_TIMEOUT}
+
+# Invite token secret (required since Overleaf CE 6.2.0)
+OVERLEAF_INVITE_TOKEN_SECRET=${OVERLEAF_INVITE_TOKEN_SECRET}
+
+# Public registration page (/register, native since CEP ext-v5.0).
+# Must be set explicitly: when unset, CEP auto-enables the page if no
+# external auth (OIDC/LDAP/SAML) is configured.
+OVERLEAF_ENABLE_REGISTRATION_PAGE=${ENABLE_OVERLEAF_PUBLIC_REGISTRATION}
+
+# Project history restore features (native env var since CEP ext-v5.0)
+OVERLEAF_HISTORY_RESTORE=true
+
+# Pandoc conversions: import Word/Markdown documents, export docx/Markdown/HTML
+ENABLE_PANDOC_CONVERSIONS=${ENABLE_PANDOC_CONVERSIONS}
+PANDOC_IMAGE=${PANDOC_IMAGE}
 
 # Sandboxed compiles - TeXLive images (required when SIBLING_CONTAINERS_ENABLED=true)
 ALL_TEX_LIVE_DOCKER_IMAGES=local/texlive-fonts:latest
@@ -316,8 +359,10 @@ OVERLEAF_EMAIL_SMTP_IGNORE_TLS=${SMTP_IGNORE_TLS}
 # External auth
 EXTERNAL_AUTH=${EXTERNAL_AUTH}
 
-# Disable public link sharing (require login to access projects)
-OVERLEAF_LINK_SHARING_ENABLED=false
+# Disable link sharing entirely: hides "Share by link" and blocks token URLs
+# (/read/<token> and read-write links), including for anonymous visitors.
+# NOTE: the previously used OVERLEAF_LINK_SHARING_ENABLED never existed upstream.
+OVERLEAF_DISABLE_LINK_SHARING=true
 EOF
 
     # Add OIDC configuration if enabled
@@ -339,6 +384,17 @@ OVERLEAF_OIDC_UPDATE_USER_DETAILS_ON_LOGIN=true
 OIDC_ADDITIONAL_TENANT_IDS=${OIDC_ADDITIONAL_TENANT_IDS}
 OIDC_GROUP_FILTERING_ENABLED=${OIDC_GROUP_FILTERING_ENABLED}
 OIDC_ALLOWED_GROUPS=${OIDC_ALLOWED_GROUPS}
+EOF
+    fi
+
+    # Add GitHub synchronization configuration if enabled
+    if [ "${ENABLE_GITHUB_SYNC:-false}" = "true" ]; then
+        cat >> overleaf-toolkit/config/variables.env <<EOF
+
+# GitHub Synchronization (two-way sync with GitHub repositories)
+GITHUB_SYNC_ENABLED=true
+GITHUB_SYNC_CLIENT_ID=${GITHUB_SYNC_CLIENT_ID}
+GITHUB_SYNC_CLIENT_SECRET=${GITHUB_SYNC_CLIENT_SECRET}
 EOF
     fi
 
@@ -368,8 +424,12 @@ EOF
     # PASSWORD_VALIDATION_PATTERN may contain $ like "a1$" - awk handles this correctly
     _replace_var "PASSWORD_VALIDATION_PATTERN" "${PASSWORD_VALIDATION_PATTERN}"
     _replace_var "PASSWORD_VALIDATION_MIN_LENGTH" "${PASSWORD_VALIDATION_MIN_LENGTH}"
-    _replace_var "MAX_UPLOAD_SIZE" "${MAX_UPLOAD_SIZE}"
+    _replace_var "MAX_UPLOAD_MB" "${MAX_UPLOAD_MB}"
     _replace_var "COMPILE_TIMEOUT" "${COMPILE_TIMEOUT}"
+    _replace_var "OVERLEAF_INVITE_TOKEN_SECRET" "${OVERLEAF_INVITE_TOKEN_SECRET}"
+    _replace_var "ENABLE_OVERLEAF_PUBLIC_REGISTRATION" "${ENABLE_OVERLEAF_PUBLIC_REGISTRATION:-false}"
+    _replace_var "ENABLE_PANDOC_CONVERSIONS" "${ENABLE_PANDOC_CONVERSIONS}"
+    _replace_var "PANDOC_IMAGE" "${PANDOC_IMAGE}"
     _replace_var "EMAIL_FROM_ADDRESS" "${EMAIL_FROM_ADDRESS}"
     _replace_var "SMTP_HOST" "${SMTP_HOST}"
     _replace_var "SMTP_PORT" "${SMTP_PORT}"
@@ -424,9 +484,6 @@ services:
       OVERLEAF_TEMPLATE_GALLERY: "true"
       OVERLEAF_NON_ADMIN_CAN_PUBLISH_TEMPLATES: "true"
 
-      # Experimental features (passed to enable-features.sh)
-      ENABLE_NEW_EDITOR_UI: "${ENABLE_NEW_EDITOR_UI}"
-
       # Super Admin role (passed to enable-features.sh)
       SUPER_ADMIN_EMAIL: "${SUPER_ADMIN_EMAIL}"
 
@@ -447,7 +504,6 @@ YAML_EOF
     # Replace variables in docker-compose.override.yml
     sed -i "s|\${OVERLEAF_IMAGE}|${OVERLEAF_IMAGE}|g" overleaf-toolkit/config/docker-compose.override.yml
     sed -i "s|\${OVERLEAF_IMAGE_TAG}|${OVERLEAF_IMAGE_TAG}|g" overleaf-toolkit/config/docker-compose.override.yml
-    sed -i "s|\${ENABLE_NEW_EDITOR_UI}|${ENABLE_NEW_EDITOR_UI:-false}|g" overleaf-toolkit/config/docker-compose.override.yml
     sed -i "s|\${SUPER_ADMIN_EMAIL}|${SUPER_ADMIN_EMAIL:-}|g" overleaf-toolkit/config/docker-compose.override.yml
 
     echo -e "${GREEN}✓ Overleaf Toolkit configured${NC}"

@@ -29,16 +29,29 @@ The install script reads `config.env.local` and edits the appropriate config fil
 | `OVERLEAF_PORT` | "80" | Overleaf HTTP port |
 | `PASSWORD_VALIDATION_PATTERN` | "a1$" | Password requirements (passfield format) |
 | `PASSWORD_VALIDATION_MIN_LENGTH` | "8" | Minimum password length |
-| `MAX_UPLOAD_SIZE` | "524288000" | Max upload size in bytes (500MB) |
+| `MAX_UPLOAD_SIZE_MB` | "500" | Max upload size in MB (nginx + web app) |
+| `OVERLEAF_INVITE_TOKEN_SECRET` | auto-generated | Required by Overleaf CE >= 6.2.0; generated at install time |
+| `ENABLE_OVERLEAF_PUBLIC_REGISTRATION` | "false" | Public registration page at /register (native since CEP ext-v5.0). If the underlying env var is unset, CEP auto-enables the page when no external auth is configured, so it is always written explicitly |
 | `ENABLED_LINKED_FILE_TYPES` | "project_file,project_output_file,url" | Allowed linked file types |
 | `MONGO_VERSION` | "8.0" | MongoDB version ("4.4" for older CPUs without AVX) |
 | `OVERLEAF_LINKED_URL_ALLOWED_RESOURCES` | "^http://zotero-[a-zA-Z0-9-]+:5000" | Regex whitelist for internal Zotero URLs (auto-configured, bypasses SSRF protection) |
 
-## Experimental Features
+## Document Conversion (Pandoc)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENABLE_NEW_EDITOR_UI` | "false" | Enable the new redesigned Overleaf editor interface (experimental) |
+| `ENABLE_PANDOC_CONVERSIONS` | "true" | Import Word/Markdown documents, export projects as docx/Markdown/HTML (experimental upstream feature) |
+| `PANDOC_IMAGE` | "overleafcep/pandoc-ol:3.10.0.0" | Conversion image (must include zip and an empty entrypoint; the official pandoc image does not work) |
+
+## GitHub Synchronization [optional]
+
+Two-way sync between Overleaf projects and GitHub repositories. Requires a [GitHub OAuth App](https://github.com/yu-i-i/overleaf-cep/wiki/Extended-CE:-GitHub-Synchronization) with callback URL `<OVERLEAF_URL>/user/github-sync/oauth2/callback`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_GITHUB_SYNC` | "false" | Enable GitHub synchronization |
+| `GITHUB_SYNC_CLIENT_ID` | - | GitHub OAuth App client ID |
+| `GITHUB_SYNC_CLIENT_SECRET` | - | GitHub OAuth App client secret |
 
 ## Email (SMTP) [optional]
 

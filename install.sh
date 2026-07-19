@@ -193,6 +193,21 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         ENABLE_PUBLIC_ZOTERO_SIGNUP="false"
     fi
 
+    # Ask about Overleaf public registration page (native since CEP ext-v5.0)
+    echo ""
+    echo "Enable Overleaf public registration page?"
+    echo "If enabled, ANYONE reaching your Overleaf URL can create an account at /register."
+    echo "If disabled, only admins can create/invite users (recommended for private labs)."
+    echo ""
+    read -p "Enable Overleaf public registration? (y/N): " -n 1 -r
+    echo
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        ENABLE_OVERLEAF_PUBLIC_REGISTRATION="true"
+    else
+        ENABLE_OVERLEAF_PUBLIC_REGISTRATION="false"
+    fi
+
     echo ""
     read -p "Configure SMTP for user activation emails? (y/n): " -n 1 -r
     echo
@@ -325,18 +340,29 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         ENABLE_OIDC="false"
     fi
 
-    # Experimental features
+    # GitHub Synchronization
     echo ""
     echo "==============================================================================="
-    echo "EXPERIMENTAL FEATURES"
+    echo "GITHUB SYNCHRONIZATION (optional)"
     echo "==============================================================================="
-    read -p "Enable new editor UI? (experimental, may have bugs) (y/N): " -n 1 -r
+    echo "Let users link their Overleaf projects to GitHub repositories (two-way sync)."
+    echo "Requires a GitHub OAuth App: GitHub > Settings > Developer settings > OAuth Apps"
+    echo "  - Authorization callback URL must be:"
+    echo "      <your Overleaf URL>/user/github-sync/oauth2/callback"
+    echo "Docs: https://github.com/yu-i-i/overleaf-cep/wiki/Extended-CE:-GitHub-Synchronization"
+    echo ""
+    read -p "Enable GitHub synchronization? (y/N): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        ENABLE_NEW_EDITOR_UI="true"
-        echo -e "${GREEN}New editor UI will be enabled${NC}"
+        ENABLE_GITHUB_SYNC="true"
+        read -p "GitHub OAuth App Client ID: " GITHUB_SYNC_CLIENT_ID
+        read -sp "GitHub OAuth App Client Secret: " GITHUB_SYNC_CLIENT_SECRET
+        echo
+        echo -e "${GREEN}GitHub synchronization will be enabled${NC}"
     else
-        ENABLE_NEW_EDITOR_UI="false"
+        ENABLE_GITHUB_SYNC="false"
+        GITHUB_SYNC_CLIENT_ID=""
+        GITHUB_SYNC_CLIENT_SECRET=""
     fi
 
     # Create config.env.local
@@ -346,6 +372,7 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
     sed -i "s|LAB_NAME=.*|LAB_NAME=\"${LAB_NAME}\"|" config.env.local
     sed -i "s|ADMIN_EMAIL=.*|ADMIN_EMAIL=\"${ADMIN_EMAIL}\"|" config.env.local
     sed -i "s|ENABLE_PUBLIC_ZOTERO_SIGNUP=.*|ENABLE_PUBLIC_ZOTERO_SIGNUP=\"${ENABLE_PUBLIC_ZOTERO_SIGNUP}\"|" config.env.local
+    sed -i "s|ENABLE_OVERLEAF_PUBLIC_REGISTRATION=.*|ENABLE_OVERLEAF_PUBLIC_REGISTRATION=\"${ENABLE_OVERLEAF_PUBLIC_REGISTRATION}\"|" config.env.local
     # Password is hashed - write empty placeholder (hash is passed via environment to configure.sh)
     sed -i "s|DASHBOARD_ADMIN_PASSWORD=.*|DASHBOARD_ADMIN_PASSWORD=\"\"  # Hashed at install time|" config.env.local
     sed -i "s|SMTP_HOST=.*|SMTP_HOST=\"${SMTP_HOST}\"|" config.env.local
@@ -359,8 +386,12 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         sed -i "s|MONGO_VERSION=.*|MONGO_VERSION=\"${MONGO_VERSION}\"|" config.env.local
     fi
 
-    # Set experimental features
-    sed -i "s|ENABLE_NEW_EDITOR_UI=.*|ENABLE_NEW_EDITOR_UI=\"${ENABLE_NEW_EDITOR_UI}\"|" config.env.local
+    # Set GitHub synchronization
+    sed -i "s|ENABLE_GITHUB_SYNC=.*|ENABLE_GITHUB_SYNC=\"${ENABLE_GITHUB_SYNC}\"|" config.env.local
+    if [ "$ENABLE_GITHUB_SYNC" = "true" ]; then
+        sed -i "s|GITHUB_SYNC_CLIENT_ID=.*|GITHUB_SYNC_CLIENT_ID=\"${GITHUB_SYNC_CLIENT_ID}\"|" config.env.local
+        sed -i "s|GITHUB_SYNC_CLIENT_SECRET=.*|GITHUB_SYNC_CLIENT_SECRET=\"${GITHUB_SYNC_CLIENT_SECRET}\"|" config.env.local
+    fi
 
     # Set OIDC configuration
     sed -i "s|ENABLE_OIDC=.*|ENABLE_OIDC=\"${ENABLE_OIDC}\"|" config.env.local
@@ -529,6 +560,21 @@ else
     echo "Sandboxed compiles will use default texlive image (some fonts may be missing)"
 fi
 
+# Pull the Pandoc conversion image (Word/Markdown import-export runs in a
+# sibling container from this image when sandboxed compiles are enabled)
+source "$SCRIPT_DIR/config.env.local"
+if [ "${ENABLE_PANDOC_CONVERSIONS:-true}" = "true" ]; then
+    echo ""
+    echo "Pulling Pandoc conversion image..."
+    if docker pull "${PANDOC_IMAGE:-overleafcep/pandoc-ol:3.10.0.0}"; then
+        echo -e "${GREEN}✓ Pandoc conversion image ready${NC}"
+    else
+        echo -e "${YELLOW}Warning: Could not pull Pandoc image${NC}"
+        echo "Word/Markdown import-export will not work until you pull it manually:"
+        echo "  docker pull ${PANDOC_IMAGE:-overleafcep/pandoc-ol:3.10.0.0}"
+    fi
+fi
+
 # -----------------------------------------------------------------------------
 # 6. Start Overleaf
 # -----------------------------------------------------------------------------
@@ -619,22 +665,8 @@ echo -e "${GREEN}✓ Overleaf started${NC}"
 # -----------------------------------------------------------------------------
 # Note: Project restore feature is now automatically enabled via enable-features.sh
 
-# -----------------------------------------------------------------------------
-# Configure upload limit in settings.defaults.js
-# -----------------------------------------------------------------------------
-# Note: NGINX client_max_body_size is handled by overleafcep image via env vars
-echo ""
-echo "Configuring upload size limit..."
-source "$SCRIPT_DIR/config.env.local"
-MAX_UPLOAD_MB=$((${MAX_UPLOAD_SIZE:-524288000} / 1024 / 1024))
-MAX_UPLOAD_BYTES=$((MAX_UPLOAD_MB * 1024 * 1024))
-
-SETTINGS_FILE="/overleaf/services/web/config/settings.defaults.js"
-if docker exec sharelatex bash -c "sed -i 's/maxUploadSize:[^,]*/maxUploadSize: ${MAX_UPLOAD_BYTES}/' ${SETTINGS_FILE}" 2>/dev/null; then
-    echo -e "${GREEN}✓ Upload limit configured (${MAX_UPLOAD_MB}MB)${NC}"
-else
-    echo -e "${YELLOW}Warning: Could not configure maxUploadSize${NC}"
-fi
+# Note: upload limit is now applied natively via MAX_UPLOAD_SIZE (in MB) in
+# variables.env - it drives both nginx client_max_body_size and web maxUploadSize.
 
 
 # -----------------------------------------------------------------------------

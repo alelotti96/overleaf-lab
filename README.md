@@ -13,6 +13,8 @@ Scripts have been tested on Ubuntu 24.
 - Comments and review system
 - Template gallery
 - Project history with restore functionality
+- Import Microsoft Word and Markdown documents; export projects as Word, Markdown, or HTML (Pandoc, experimental upstream feature)
+- Optional GitHub two-way synchronization (requires a GitHub OAuth App)
 
 **Full TeXLive + Microsoft Fonts**:
 
@@ -84,6 +86,8 @@ The script asks for:
 - Dashboard admin password
 - SMTP settings (optional)
 - Public Zotero signup (yes/no)
+- OIDC single sign-on (optional)
+- GitHub synchronization (optional, needs a GitHub OAuth App client ID/secret)
 
 ## After Installation
 
@@ -104,7 +108,9 @@ Overleaf Lab distinguishes between two admin levels:
 | Role | Overleaf Access | Dashboard |
 |------|----------------|-----------|
 | **Admin** (`isAdmin: true`) | Manage Users (`/admin/user`) | Full access |
-| **Super Admin** (`isAdmin: true` + `adminRoles: ["super_admin"]`) | Manage Users + Manage Site (`/admin`) + Manage Projects (`/admin/project`) | Full access |
+| **Super Admin** (`isAdmin: true` + `adminRoles: ["super_admin"]`) | Manage Users + Manage Site (`/admin`) + Manage Projects (`/admin/project`) + can open any project by URL | Full access |
+
+Only Super Admins can access other users' projects (by URL or from Manage Projects). Normal admins are treated like regular users on projects they are not members of — the upstream behavior (any `isAdmin` user gets owner access to every project, via `ADMIN_PRIVILEGE_AVAILABLE=true` baked into the CEP image) is patched out at container startup.
 
 The user set as `ADMIN_EMAIL` during installation is automatically promoted to Super Admin at each container startup. Additional Super Admins can be assigned from the dashboard via the lock-shield button next to admin users.
 
@@ -166,8 +172,15 @@ The script will:
 - Show current version
 - List available versions from Docker Hub
 - Update and restart only the Overleaf container
+- Apply migration steps automatically when jumping to a new base version
+  (e.g. 6.1.x → 6.2.x: required `OVERLEAF_INVITE_TOKEN_SECRET`, Pandoc
+  Word/Markdown import-export, native history restore, upload-limit
+  conversion to MB, toolkit version alignment for git-bridge)
 
 Your projects, users, and settings are preserved. MongoDB and Redis remain untouched.
+
+> **Note (6.2.x):** upstream made the redesigned editor mandatory — after
+> updating, all users get the new editor UI.
 
 ## License
 

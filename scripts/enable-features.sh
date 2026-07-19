@@ -1,46 +1,12 @@
 #!/bin/bash
-# Enable Overleaf features by modifying settings.js
-# This script is executed inside the container on startup
-
-SETTINGS_FILE="/etc/overleaf/settings.js"
-
-# Check if splitTestOverrides already exists
-if grep -q "splitTestOverrides" "$SETTINGS_FILE"; then
-    echo "splitTestOverrides already configured"
-else
-
-# Determine which features to enable
-if [ "$ENABLE_NEW_EDITOR_UI" = "true" ]; then
-    echo "New editor UI: enabled"
-    # With new editor UI
-    sed -i '/^module.exports = settings$/i\
-\
-// Enable Overleaf features\
-// Added by overleaf-lab\
-settings.splitTestOverrides = {\
-  "history-ranges-support": "enabled",\
-  "revert-file": "enabled",\
-  "revert-project": "enabled",\
-  "editor-redesign": "enabled",\
-}\
-' "$SETTINGS_FILE"
-else
-    echo "New editor UI: disabled"
-    # Without new editor UI
-    sed -i '/^module.exports = settings$/i\
-\
-// Enable Overleaf features\
-// Added by overleaf-lab\
-settings.splitTestOverrides = {\
-  "history-ranges-support": "enabled",\
-  "revert-file": "enabled",\
-  "revert-project": "enabled",\
-}\
-' "$SETTINGS_FILE"
-fi
-
-echo "Overleaf features configured"
-fi
+# Enable Overleaf features - executed inside the container on startup
+#
+# Note: since CEP 6.2.0-ext-v5.0 the features previously enabled here via
+# settings.js splitTestOverrides are native env vars set in variables.env:
+#   - history restore  -> OVERLEAF_HISTORY_RESTORE=true
+#   - editor redesign  -> always on upstream (no longer optional)
+#   - pandoc import/export -> ENABLE_PANDOC_CONVERSIONS=true + PANDOC_IMAGE
+# No settings.js patching is needed anymore.
 
 # =============================================================================
 # OIDC Multi-Issuer Patch for Azure AD Multi-Tenant
@@ -143,6 +109,9 @@ fi
 # Patches AdminToolsRouter.mjs and router.mjs to restrict sensitive admin
 # routes (/admin, /admin/project/*) to users with super_admin role.
 # Normal admins can still access /admin/user (Manage Users).
+# Also patches AuthorizationManager.mjs so that only super_admins can open
+# other users' projects by URL (the CEP image ships ADMIN_PRIVILEGE_AVAILABLE=true,
+# which would otherwise give every isAdmin user OWNER access to any project).
 #
 # Also sets adminRoles: ["super_admin"] for the SUPER_ADMIN_EMAIL user in MongoDB.
 # Falls back to OVERLEAF_ADMIN_EMAIL (= ADMIN_EMAIL from config.env) if SUPER_ADMIN_EMAIL is not set.
