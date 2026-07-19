@@ -24,7 +24,10 @@ if [ -f "$NGINX_CONF" ]; then
         #    white one and offers no env var for the navbar color).
         if [ -n "$HEADER_BG_COLOR" ]; then
             HEADER_TEXT_COLOR="${HEADER_TEXT_COLOR:-#ffffff}"
-            CUSTOM_CSS="${CUSTOM_CSS}nav.navbar-main,nav.website-redesign-navbar{background-color:${HEADER_BG_COLOR}!important;}nav.navbar-main a,nav.navbar-main .navbar-title,nav.navbar-main .navbar-brand,nav.navbar-main .nav-link{color:${HEADER_TEXT_COLOR}!important;}"
+            # Top-level navbar text/links white (incl. dropdown TOGGLE buttons,
+            # which are <button class="dropdown-toggle"> without .nav-link);
+            # but keep the dropdown MENU items dark - they sit on a white panel.
+            CUSTOM_CSS="${CUSTOM_CSS}nav.navbar-main,nav.website-redesign-navbar{background-color:${HEADER_BG_COLOR}!important;}nav.navbar-main a,nav.navbar-main .navbar-title,nav.navbar-main .navbar-brand,nav.navbar-main .nav-link,nav.navbar-main .dropdown-toggle{color:${HEADER_TEXT_COLOR}!important;}nav.navbar-main .dropdown-menu .dropdown-item{color:#212529!important;}"
             echo "  Header color: ${HEADER_BG_COLOR} (text ${HEADER_TEXT_COLOR})"
         fi
 
