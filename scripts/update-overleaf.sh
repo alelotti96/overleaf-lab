@@ -214,6 +214,56 @@ elif ! grep -q '^OVERLEAF_DISABLE_LINK_SHARING=' "$VARIABLES_ENV"; then
     echo "Added OVERLEAF_DISABLE_LINK_SHARING=true"
 fi
 
+# 8) Branding: footer links + dashboard header color (overleaf-lab customization)
+_read_local() { [ -f "$CONFIG_LOCAL" ] && grep "^$1=" "$CONFIG_LOCAL" 2>/dev/null | head -1 | cut -d'"' -f2; }
+
+if ! grep -q '^OVERLEAF_RIGHT_FOOTER=' "$VARIABLES_ENV"; then
+    FORK_TEXT="$(_read_local FOOTER_FORK_TEXT)";     FORK_TEXT="${FORK_TEXT:-Fork on GitHub!}"
+    FORK_URL="$(_read_local FOOTER_FORK_URL)";       FORK_URL="${FORK_URL:-https://github.com/alelotti96/overleaf-lab/tree/master}"
+    CREDIT_TEXT="$(_read_local FOOTER_CREDIT_TEXT)"; CREDIT_TEXT="${CREDIT_TEXT:-Maintained by Alessandro Lotti}"
+    CREDIT_URL="$(_read_local FOOTER_CREDIT_URL)";   CREDIT_URL="${CREDIT_URL:-https://alessandrolotti.com/}"
+    HIDE_PB="$(_read_local HIDE_POWERED_BY)";        HIDE_PB="${HIDE_PB:-false}"
+    {
+        echo ""
+        echo "# Footer customization"
+        echo "OVERLEAF_RIGHT_FOOTER=[{\"text\":\"${FORK_TEXT}\",\"url\":\"${FORK_URL}\"}]"
+        echo "NAV_HIDE_POWERED_BY=${HIDE_PB}"
+    } >> "$VARIABLES_ENV"
+    if [ -n "$CREDIT_TEXT" ]; then
+        echo "OVERLEAF_LEFT_FOOTER=[{\"text\":\"${CREDIT_TEXT}\",\"url\":\"${CREDIT_URL}\"}]" >> "$VARIABLES_ENV"
+    fi
+    echo "Added footer customization (fork -> ${FORK_URL})"
+    # Persist to config.env.local so future configure.sh runs keep the same branding
+    if [ -f "$CONFIG_LOCAL" ] && ! grep -q '^FOOTER_FORK_URL=' "$CONFIG_LOCAL"; then
+        {
+            echo ""
+            echo "# Branding: footer links"
+            echo "FOOTER_FORK_TEXT=\"${FORK_TEXT}\""
+            echo "FOOTER_FORK_URL=\"${FORK_URL}\""
+            echo "FOOTER_CREDIT_TEXT=\"${CREDIT_TEXT}\""
+            echo "FOOTER_CREDIT_URL=\"${CREDIT_URL}\""
+            echo "HIDE_POWERED_BY=\"${HIDE_PB}\""
+        } >> "$CONFIG_LOCAL"
+    fi
+fi
+
+if ! grep -q '^HEADER_BG_COLOR=' "$VARIABLES_ENV"; then
+    HBG="$(_read_local HEADER_BG_COLOR)";  HBG="${HBG:-#1b222c}"
+    HTX="$(_read_local HEADER_TEXT_COLOR)"; HTX="${HTX:-#ffffff}"
+    if [ -n "$HBG" ]; then
+        {
+            echo ""
+            echo "# Dashboard header (navbar) color, applied as CSS by nginx-customizations.sh"
+            echo "HEADER_BG_COLOR=${HBG}"
+            echo "HEADER_TEXT_COLOR=${HTX}"
+        } >> "$VARIABLES_ENV"
+        echo "Set dashboard header color: ${HBG} (text ${HTX})"
+        if [ -f "$CONFIG_LOCAL" ] && ! grep -q '^HEADER_BG_COLOR=' "$CONFIG_LOCAL"; then
+            printf '\n# Branding: dashboard header color\nHEADER_BG_COLOR="%s"\nHEADER_TEXT_COLOR="%s"\n' "$HBG" "$HTX" >> "$CONFIG_LOCAL"
+        fi
+    fi
+fi
+
 # Pull the Pandoc conversion image if conversions are enabled
 # (with sandboxed compiles it runs as a sibling container, so it must be present locally)
 ENABLE_PANDOC_VAL=$(grep '^ENABLE_PANDOC_CONVERSIONS=' "$VARIABLES_ENV" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '[:space:]')

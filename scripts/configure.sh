@@ -365,6 +365,33 @@ EXTERNAL_AUTH=${EXTERNAL_AUTH}
 OVERLEAF_DISABLE_LINK_SHARING=true
 EOF
 
+    # -------------------------------------------------------------------------
+    # Branding: footer links + dashboard header color
+    # -------------------------------------------------------------------------
+    # Footer is native (server-ce settings.js reads these JSON env vars).
+    # Header color is injected as CSS by nginx-customizations.sh, which reads
+    # HEADER_BG_COLOR / HEADER_TEXT_COLOR from the container environment
+    # (variables.env is the sharelatex env_file).
+    _fork_text="${FOOTER_FORK_TEXT:-Fork on GitHub!}"
+    _fork_url="${FOOTER_FORK_URL:-https://github.com/overleaf/overleaf}"
+    cat >> overleaf-toolkit/config/variables.env <<EOF
+
+# Footer customization
+OVERLEAF_RIGHT_FOOTER=[{"text":"${_fork_text}","url":"${_fork_url}"}]
+NAV_HIDE_POWERED_BY=${HIDE_POWERED_BY:-false}
+EOF
+    if [ -n "${FOOTER_CREDIT_TEXT}" ]; then
+        echo "OVERLEAF_LEFT_FOOTER=[{\"text\":\"${FOOTER_CREDIT_TEXT}\",\"url\":\"${FOOTER_CREDIT_URL}\"}]" >> overleaf-toolkit/config/variables.env
+    fi
+    if [ -n "${HEADER_BG_COLOR}" ]; then
+        cat >> overleaf-toolkit/config/variables.env <<EOF
+
+# Dashboard header (navbar) color, applied as CSS by nginx-customizations.sh
+HEADER_BG_COLOR=${HEADER_BG_COLOR}
+HEADER_TEXT_COLOR=${HEADER_TEXT_COLOR:-#ffffff}
+EOF
+    fi
+
     # Add OIDC configuration if enabled
     if [ "${ENABLE_OIDC:-false}" = "true" ]; then
         cat >> overleaf-toolkit/config/variables.env <<EOF

@@ -43,6 +43,20 @@ The install script reads `config.env.local` and edits the appropriate config fil
 | `ENABLE_PANDOC_CONVERSIONS` | "true" | Import Word/Markdown documents, export projects as docx/Markdown/HTML (experimental upstream feature) |
 | `PANDOC_IMAGE` | "overleafcep/pandoc-ol:3.10.0.0" | Conversion image (must include zip and an empty entrypoint; the official pandoc image does not work) |
 
+## Branding: Footer & Header
+
+The footer links are native (set via env vars read by Overleaf). The dashboard header color is injected as CSS by `scripts/nginx-customizations.sh` — Overleaf 6.2 ships a white header and offers no env var for the navbar color.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FOOTER_FORK_TEXT` | "Fork on GitHub!" | Text of the bottom-right footer link |
+| `FOOTER_FORK_URL` | your fork URL | Target of the "Fork on GitHub" link |
+| `FOOTER_CREDIT_TEXT` | "Maintained by …" | Bottom-left credit (leave empty to omit) |
+| `FOOTER_CREDIT_URL` | maintainer URL | Link target for the credit |
+| `HIDE_POWERED_BY` | "false" | Hide the "© 2025 Powered by Overleaf" line |
+| `HEADER_BG_COLOR` | "#1b222c" | Dashboard header background (empty = keep the default white header) |
+| `HEADER_TEXT_COLOR` | "#ffffff" | Header text/link color |
+
 ## GitHub Synchronization [optional]
 
 Two-way sync between Overleaf projects and GitHub repositories. Requires a [GitHub OAuth App](https://github.com/yu-i-i/overleaf-cep/wiki/Extended-CE:-GitHub-Synchronization) with callback URL `<OVERLEAF_URL>/user/github-sync/oauth2/callback`.
