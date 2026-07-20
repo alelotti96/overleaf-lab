@@ -252,8 +252,9 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
         }
     }
 
-    const scanDisabled =
-        isScanning || !llmApiUrl || (!llmApiKey && !llmHasApiKey)
+    // overleaf-lab: only the URL is required — a local server may have no auth,
+    // so an empty key is valid. A stored key (llmHasApiKey) still works too.
+    const scanDisabled = isScanning || !llmApiUrl
 
     return (
         <>
@@ -456,7 +457,6 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
                             disabled={
                                 isCheckingConnection ||
                                 !llmApiUrl ||
-                                (!llmApiKey && !llmHasApiKey) ||
                                 !llmModelName
                             }
                             isLoading={isCheckingConnection}

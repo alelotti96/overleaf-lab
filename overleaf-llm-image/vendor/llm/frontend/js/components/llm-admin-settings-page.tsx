@@ -148,7 +148,10 @@ export default function LLMAdminSettingsPage() {
         }
     }, [isSuccess])
 
-    const canConnect = !!llmApiUrl && (!!llmApiKey || hasStoredKey)
+    // overleaf-lab: only the URL is required — a local llama.cpp server has no
+    // auth, so scan/test must work with an empty key. The server returns 401 if
+    // it actually needs one.
+    const canConnect = !!llmApiUrl
 
     const handleSave = (e: React.FormEvent) => {
         e.preventDefault()
@@ -297,6 +300,10 @@ export default function LLMAdminSettingsPage() {
                                             {t('llm_api_key_stored', 'An API key is already stored. Leave blank to keep it.')}
                                         </OLFormText>
                                     )}
+                                    <OLFormText>
+                                        <MaterialIcon type="info" className="me-1" style={{ fontSize: '0.875rem' }} />
+                                        {t('llm_api_key_optional_local', 'Leave blank for a local server with no auth (e.g. a llama.cpp server).')}
+                                    </OLFormText>
                                 </OLFormGroup>
 
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>

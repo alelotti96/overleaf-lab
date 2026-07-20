@@ -65,7 +65,9 @@ async function checkLLMConnection(req, res) {
         }
     }
 
-    if (!apiUrl || !apiKey || !modelName) {
+    // overleaf-lab: the key is optional (a local llama.cpp server has no auth);
+    // only the URL and model name are required.
+    if (!apiUrl || !modelName) {
         return res.status(400).json({ error: 'Missing required parameters' })
     }
 
@@ -86,12 +88,14 @@ async function checkLLMConnection(req, res) {
 
         const startTime = Date.now()
 
+        const headers = { 'Content-Type': 'application/json' }
+        if (typeof apiKey === 'string' && apiKey.length > 0) {
+            headers.Authorization = `Bearer ${apiKey}`
+        }
+
         const response = await fetch(llmApiUrl, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${apiKey}`,
-            },
+            headers,
             body: JSON.stringify(requestBody),
             signal: controller.signal,
         })
@@ -169,10 +173,12 @@ async function scanUserModels(req, res) {
         }
     }
 
-    if (!apiUrl || !apiKey) {
+    // overleaf-lab: only the URL is required. A local llama.cpp server has no
+    // auth, so an empty key is valid; send Authorization only when a key exists.
+    if (!apiUrl) {
         return res.status(400).json({
             success: false,
-            error: 'API URL and API key are required',
+            error: 'API URL is required',
         })
     }
 
@@ -180,11 +186,13 @@ async function scanUserModels(req, res) {
     const timeout = setTimeout(() => controller.abort(), 30000)
 
     try {
+        const headers = {}
+        if (typeof apiKey === 'string' && apiKey.length > 0) {
+            headers.Authorization = `Bearer ${apiKey}`
+        }
         const response = await fetch(`${apiUrl}/models`, {
             method: 'GET',
-            headers: {
-                Authorization: `Bearer ${apiKey}`,
-            },
+            headers,
             signal: controller.signal,
         })
 

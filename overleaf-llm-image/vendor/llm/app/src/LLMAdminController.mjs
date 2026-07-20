@@ -2,6 +2,7 @@ import logger from '@overleaf/logger'
 import { promises as fs } from 'fs'
 import path from 'path'
 import { expressify } from '@overleaf/promise-utils'
+import { encryptSecret, decryptSecret } from './LLMCrypto.mjs' // overleaf-lab: at-rest encryption of admin API key
 
 // Persist admin LLM settings in the same volume used by Overleaf data
 const ADMIN_SETTINGS_PATH = process.env.LLM_ADMIN_SETTINGS_PATH ||
@@ -98,7 +99,7 @@ async function saveAdminSettings(req, res) {
     }
 
     if (typeof llmApiKey === 'string' && llmApiKey.trim().length > 0) {
-        updatedSettings.llmApiKey = llmApiKey.trim()
+        updatedSettings.llmApiKey = encryptSecret(llmApiKey.trim()) // overleaf-lab: encrypt admin key at rest
     }
 
     await writeAdminSettings(updatedSettings)
@@ -124,9 +125,12 @@ export async function getAdminLLMSettings() {
     // chat share the same effective config (mirrors buildDisplaySettings above).
     const jsonHasModels =
         Array.isArray(settings.allowedModels) && settings.allowedModels.length > 0
+    // overleaf-lab: the stored admin key is encrypted at rest; decrypt before use.
+    // decryptSecret returns legacy plaintext (no enc:v1: prefix) unchanged.
+    const jsonKey = settings.llmApiKey ? decryptSecret(settings.llmApiKey) : ''
     return {
         llmApiUrl: settings.llmApiUrl || process.env.LLM_API_URL || null,
-        llmApiKey: settings.llmApiKey || process.env.LLM_API_KEY || null,
+        llmApiKey: jsonKey || process.env.LLM_API_KEY || null,
         allowedModels: jsonHasModels ? settings.allowedModels : envModelList(),
     }
 }
@@ -141,10 +145,12 @@ async function checkAdminLLMConnection(req, res) {
         adminSettings.allowedModels[0] ||
         (process.env.LLM_MODEL_NAME || 'default').split(',')[0].trim()
 
-    if (!effectiveUrl || !effectiveKey) {
+    // overleaf-lab: only the URL is required. A local llama.cpp server has no
+    // auth, so an empty key is valid; send Authorization only when a key exists.
+    if (!effectiveUrl) {
         return res.status(400).json({
             success: false,
-            error: 'LLM API URL and API key are required',
+            error: 'LLM API URL is required',
         })
     }
 
@@ -152,12 +158,13 @@ async function checkAdminLLMConnection(req, res) {
     const timeout = setTimeout(() => controller.abort(), 30000)
 
     try {
+        const headers = { 'Content-Type': 'application/json' }
+        if (typeof effectiveKey === 'string' && effectiveKey.length > 0) {
+            headers.Authorization = `Bearer ${effectiveKey}`
+        }
         const response = await fetch(`${effectiveUrl}/chat/completions`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${effectiveKey}`,
-            },
+            headers,
             body: JSON.stringify({
                 model: testModel,
                 messages: [{ role: 'user', content: 'Test connection' }],
@@ -198,19 +205,23 @@ async function scanAdminModels(req, res) {
     const llmApiUrl = apiUrl || adminSettings.llmApiUrl
     const llmApiKey = apiKey || adminSettings.llmApiKey
 
-    if (!llmApiUrl || !llmApiKey) {
+    // overleaf-lab: only the URL is required. A local llama.cpp server has no
+    // auth, so an empty key is valid; send Authorization only when a key exists.
+    if (!llmApiUrl) {
         return res.status(400).json({
             success: false,
-            error: 'Admin LLM API URL and API key must be configured first',
+            error: 'Admin LLM API URL must be configured first',
         })
     }
 
     try {
+        const headers = {}
+        if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
+            headers.Authorization = `Bearer ${llmApiKey}`
+        }
         const response = await fetch(`${llmApiUrl}/models`, {
             method: 'GET',
-            headers: {
-                Authorization: `Bearer ${llmApiKey}`,
-            },
+            headers,
         })
 
         if (!response.ok) {
