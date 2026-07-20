@@ -247,22 +247,14 @@ async function saveLLMSettings(req, res) {
 
     try {
         if (useOwnLLMSettings) {
-            const currentUser = await User.findById(userId, 'llmApiKey')
-            const hasExistingApiKey = currentUser && currentUser.llmApiKey
-
+            // overleaf-lab: the API key is optional (a local llama.cpp server has no
+            // auth); only the URL and model name are required. When a key IS provided
+            // it is still encrypted and stored below.
             if (!llmApiUrl || !llmModelName) {
                 return res.status(400).json({
                     success: false,
                     error:
                         'API URL and Model Name are required when enabling custom LLM settings',
-                })
-            }
-
-            if (!hasExistingApiKey && (!llmApiKey || llmApiKey.trim() === '')) {
-                return res.status(400).json({
-                    success: false,
-                    error:
-                        'API Key is required when enabling custom LLM settings',
                 })
             }
         }

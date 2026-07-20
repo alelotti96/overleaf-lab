@@ -94,8 +94,7 @@ async function getModels(req, res) {
                     user &&
                     user.useOwnLLMSettings &&
                     user.llmModelName &&
-                    user.llmApiUrl &&
-                    user.llmApiKey
+                    user.llmApiUrl
                 ) {
                     // overleaf-lab: llmModelName may be a comma-separated list of
                     // personal chat models; expose one selectable entry per id.
@@ -185,11 +184,10 @@ async function chat(req, res) {
                 user &&
                 user.useOwnLLMSettings &&
                 user.llmApiUrl &&
-                user.llmApiKey &&
                 (isPersonalModel || user.llmModelName)
             ) {
                 llmApiUrl = user.llmApiUrl
-                llmApiKey = decryptSecret(user.llmApiKey) // overleaf-lab: decrypt stored key at rest
+                llmApiKey = user.llmApiKey ? decryptSecret(user.llmApiKey) : '' // overleaf-lab: decrypt stored key at rest (empty when keyless)
                 personalModelName = isPersonalModel
                     ? model.substring('personal-'.length)
                     : user.llmModelName.split(',')[0].trim() // overleaf-lab: no model sent -> use the user's first (default) model
@@ -210,7 +208,7 @@ async function chat(req, res) {
         }
     }
 
-    if (!llmApiUrl || !llmApiKey) {
+    if (!llmApiUrl) {
         return res.status(503).json({
             error:
                 'LLM service is not configured. Please contact your administrator or configure your own LLM settings.',
@@ -267,12 +265,16 @@ async function chat(req, res) {
             '[LLM] chat: sending request to LLM API'
         )
 
+        // overleaf-lab: send Authorization only when a non-empty key exists, so a
+        // keyless local server is not sent a malformed empty Bearer header.
+        const chatHeaders = { 'Content-Type': 'application/json' }
+        if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
+            chatHeaders.Authorization = `Bearer ${llmApiKey}`
+        }
+
         const response = await fetch(llmApiFullUrl, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${llmApiKey}`,
-            },
+            headers: chatHeaders,
             body: JSON.stringify(requestBody),
             signal: controller.signal,
         })
@@ -423,16 +425,16 @@ async function completion(req, res) {
                 userId,
                 'useOwnLLMSettings llmApiUrl llmApiKey llmModelName'
             )
-            if (user && user.useOwnLLMSettings && user.llmApiUrl && user.llmApiKey) {
+            if (user && user.useOwnLLMSettings && user.llmApiUrl) {
                 llmApiUrl = user.llmApiUrl
-                llmApiKey = decryptSecret(user.llmApiKey) // overleaf-lab: decrypt stored key at rest
+                llmApiKey = user.llmApiKey ? decryptSecret(user.llmApiKey) : '' // overleaf-lab: decrypt stored key at rest (empty when keyless)
             }
         } catch (error) {
             logger.warn({ userId, err: error }, '[LLM] Error loading user settings for completion')
         }
     }
 
-    if (!llmApiUrl || !llmApiKey) {
+    if (!llmApiUrl) {
         return res.status(503).json({ success: false, error: 'LLM service is not configured' })
     }
 
@@ -448,12 +450,15 @@ async function completion(req, res) {
 
 ${leftContext}[CURSOR]${rightContext}`
 
+        // overleaf-lab: send Authorization only when a non-empty key exists.
+        const completionHeaders = { 'Content-Type': 'application/json' }
+        if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
+            completionHeaders.Authorization = `Bearer ${llmApiKey}`
+        }
+
         const response = await fetch(`${llmApiUrl}/chat/completions`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${llmApiKey}`,
-            },
+            headers: completionHeaders,
             body: JSON.stringify({
                 model: completionModel,
                 messages: [
