@@ -28,17 +28,23 @@ if [ ! -f "config.env.local" ]; then
     exit 1
 fi
 
-# Source config but handle special characters in PASSWORD_VALIDATION_PATTERN
-# The $ in patterns like "aa11$8" gets interpreted, so we read it separately
+# Load defaults from the template (config.env) FIRST, then apply the user's
+# config.env.local as overrides. config.env.local is a one-time copy of config.env
+# (install.sh does `cp config.env config.env.local`), so without this any variable
+# added to the template later (e.g. the BRANDING section) stays unset on existing
+# installs and its default is silently inactive. Sourcing config.env first fixes
+# that for every current and future template variable; the user's file still wins.
+# The $ in patterns like "aa11$8" gets interpreted, so PASSWORD is re-read below.
+source config.env
 source config.env.local
 
-# Read PASSWORD_VALIDATION_PATTERN literally (without shell expansion)
-# Escape $ as $$ for docker-compose
-PASSWORD_VALIDATION_PATTERN=$(grep '^PASSWORD_VALIDATION_PATTERN=' config.env.local | sed 's/^PASSWORD_VALIDATION_PATTERN=//' | tr -d '"' | sed 's/\$/\$\$/g')
-PASSWORD_VALIDATION_MIN_LENGTH=$(grep '^PASSWORD_VALIDATION_MIN_LENGTH=' config.env.local | sed 's/^PASSWORD_VALIDATION_MIN_LENGTH=//' | tr -d '"')
+# Read PASSWORD_VALIDATION_PATTERN literally (without shell expansion), preferring
+# config.env.local and falling back to the template. Escape $ as $$ for docker-compose.
+PASSWORD_VALIDATION_PATTERN=$(grep -h '^PASSWORD_VALIDATION_PATTERN=' config.env.local config.env 2>/dev/null | head -1 | sed 's/^PASSWORD_VALIDATION_PATTERN=//' | tr -d '"' | sed 's/\$/\$\$/g')
+PASSWORD_VALIDATION_MIN_LENGTH=$(grep -h '^PASSWORD_VALIDATION_MIN_LENGTH=' config.env.local config.env 2>/dev/null | head -1 | sed 's/^PASSWORD_VALIDATION_MIN_LENGTH=//' | tr -d '"')
 
-# Read EMAIL_FROM_ADDRESS literally
-EMAIL_FROM_ADDRESS=$(grep '^EMAIL_FROM_ADDRESS=' config.env.local | sed 's/^EMAIL_FROM_ADDRESS=//' | tr -d '"')
+# Read EMAIL_FROM_ADDRESS literally (config.env.local preferred, template fallback)
+EMAIL_FROM_ADDRESS=$(grep -h '^EMAIL_FROM_ADDRESS=' config.env.local config.env 2>/dev/null | head -1 | sed 's/^EMAIL_FROM_ADDRESS=//' | tr -d '"')
 
 # Generate OVERLEAF_INVITE_TOKEN_SECRET if missing (required by Overleaf CE >= 6.2.0,
 # the container refuses to start without it)
