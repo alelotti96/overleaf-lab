@@ -418,8 +418,13 @@ async function completion(req, res) {
         }
     }
 
-    // Try user settings if server-wide not configured
-    if (!usingPersonalCompletion && (!llmApiUrl || !llmApiKey) && userId) {
+    // Try the user's own settings only when NO shared server URL is configured.
+    // overleaf-lab: gate on the URL alone (not the key). A keyless shared endpoint
+    // is valid, so an empty key must NOT hijack completion onto the user's personal
+    // endpoint while the shared one is fine. When we do fall back, also switch
+    // completionModel to the user's own model, otherwise the env-derived 'default'
+    // is sent to their endpoint (e.g. OpenAI 404s on model 'default').
+    if (!usingPersonalCompletion && !llmApiUrl && userId) {
         try {
             const user = await User.findById(
                 userId,
@@ -427,7 +432,10 @@ async function completion(req, res) {
             )
             if (user && user.useOwnLLMSettings && user.llmApiUrl) {
                 llmApiUrl = user.llmApiUrl
-                llmApiKey = user.llmApiKey ? decryptSecret(user.llmApiKey) : '' // overleaf-lab: decrypt stored key at rest (empty when keyless)
+                llmApiKey = user.llmApiKey ? decryptSecret(user.llmApiKey) : '' // decrypt stored key at rest (empty when keyless)
+                if (user.llmModelName) {
+                    completionModel = user.llmModelName.split(',')[0].trim()
+                }
             }
         } catch (error) {
             logger.warn({ userId, err: error }, '[LLM] Error loading user settings for completion')
