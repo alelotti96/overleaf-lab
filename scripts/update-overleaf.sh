@@ -265,23 +265,44 @@ if ! grep -q '^HEADER_BG_COLOR=' "$VARIABLES_ENV"; then
 fi
 
 # 9) AI assistant (LLM): opt-in custom image. When enabled, the stock image is
-#    replaced by a locally-built overleaf-lab/sharelatex-llm, which must be
-#    (re)built BEFORE the new tag is pulled/started below - otherwise the
-#    sharelatex container will fail to come up. Skipped and silent when off.
+#    replaced by a locally-built overleaf-lab/sharelatex-llm that is built
+#    FROM overleafcep/sharelatex:<version>. On a version update it MUST be
+#    rebuilt on the NEW base BEFORE the new image is pulled/started below, or
+#    the sharelatex container will fail to come up. Skipped and silent when off.
 LLM_ENABLED_VAL="$(_read_local ENABLE_LLM_MODULE)"
-if [ "${LLM_ENABLED_VAL}" = "true" ]; then
+if [ "${LLM_ENABLED_VAL}" = "true" ] && [ "$CURRENT_VERSION" != "$NEW_VERSION" ]; then
     echo ""
     echo "-------------------------------------------------------------------"
     echo "AI assistant (LLM) is ENABLED (ENABLE_LLM_MODULE=true)."
-    echo "The custom image overleaf-lab/sharelatex-llm must be (re)built BEFORE"
-    echo "the new image is started below, or the sharelatex container will fail"
-    echo "to come up. This script will NOT build it for you. Rebuild it now with:"
     echo ""
-    echo "    ./scripts/build-llm-image.sh        # wraps overleaf-llm-image/build.sh"
+    echo "The custom image overleaf-lab/sharelatex-llm is built FROM"
+    echo "overleafcep/sharelatex:${NEW_VERSION}, so it must be REBUILT on this new"
+    echo "base before the new image is started below. Otherwise the running image"
+    echo "would still be FROM the previous base and the update is incomplete."
     echo ""
-    echo "then re-run ./scripts/configure.sh (bakes in the new base tag) and this"
-    echo "update. See overleaf-llm-image/README for details."
+    echo "The rebuild re-runs the anchor-based core patcher against the NEW base"
+    echo "source: if upstream drifted at a patch point, the build FAILS LOUDLY."
+    echo "If that happens, update overleaf-llm-image/patches/apply-core-patches.mjs"
+    echo "to match the new source, then rebuild, before deploying."
     echo "-------------------------------------------------------------------"
+    echo ""
+    read -p "Rebuild the custom LLM image now with ./scripts/build-llm-image.sh? (y/N): " LLM_REBUILD_REPLY
+    if [[ $LLM_REBUILD_REPLY =~ ^[Yy]$ ]]; then
+        # Align config.env.local to the new tag first, so build.sh (which reads
+        # OVERLEAF_IMAGE_TAG from config) builds FROM the NEW base.
+        if [ -f "$CONFIG_LOCAL" ]; then
+            sed -i "s|^OVERLEAF_IMAGE_TAG=.*|OVERLEAF_IMAGE_TAG=\"${NEW_VERSION}\"|" "$CONFIG_LOCAL"
+        fi
+        echo ""
+        echo "Building overleaf-lab/sharelatex-llm on ${NEW_VERSION} (this can take 15-30 min)..."
+        ./scripts/build-llm-image.sh
+        echo "Custom LLM image rebuilt on ${NEW_VERSION}."
+    else
+        echo ""
+        echo "Skipping the LLM image rebuild. WARNING: until you run"
+        echo "./scripts/build-llm-image.sh on the new base, the sharelatex container"
+        echo "may fail to start (the custom image is still FROM the previous base)."
+    fi
     echo ""
 fi
 

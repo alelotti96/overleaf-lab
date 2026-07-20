@@ -365,6 +365,41 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         GITHUB_SYNC_CLIENT_SECRET=""
     fi
 
+    # AI Assistant (LLM)
+    echo ""
+    echo "==============================================================================="
+    echo "AI ASSISTANT (LLM) (optional)"
+    echo "==============================================================================="
+    echo "An in-editor AI assistant (chat, Ask-AI on a selection, inline completion)"
+    echo "backed by an OpenAI-compatible LLM: a local llama.cpp, a hosted API, or per-user keys."
+    echo ""
+    echo "WARNING: enabling this requires BUILDING a custom Docker image with"
+    echo "  ./scripts/build-llm-image.sh   (~15-30 min, needs Docker + at least 8 GB RAM + network)."
+    echo "install.sh does NOT build it automatically; run that script before starting the stack."
+    echo ""
+    read -p "Enable the AI assistant (LLM)? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        ENABLE_LLM_MODULE="true"
+        read -p "Shared LLM endpoint URL (OpenAI-compatible, include /v1; e.g. local llama.cpp http://172.17.0.1:8080/v1; empty = configure later or rely on per-user keys): " LLM_API_URL
+        read -p "API key (leave empty for a local server with no auth): " LLM_API_KEY
+        read -p "Default model name(s), comma-separated (empty = scan later from the admin page): " LLM_MODEL_NAME
+        read -p "Let users bring their own OpenAI/Anthropic API keys? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            LLM_ALLOW_USER_SETTINGS="true"
+        else
+            LLM_ALLOW_USER_SETTINGS="false"
+        fi
+        echo -e "${GREEN}AI assistant (LLM) will be enabled${NC}"
+    else
+        ENABLE_LLM_MODULE="false"
+        LLM_API_URL=""
+        LLM_API_KEY=""
+        LLM_MODEL_NAME=""
+        LLM_ALLOW_USER_SETTINGS="false"
+    fi
+
     # Create config.env.local
     cp config.env config.env.local
 
@@ -411,8 +446,25 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         sed -i "s|OIDC_ALLOWED_GROUPS=.*|OIDC_ALLOWED_GROUPS=\"${OIDC_ALLOWED_GROUPS}\"|" config.env.local
     fi
 
+    # Set AI assistant (LLM) configuration
+    # (LLM_KEY_SECRET is intentionally NOT written here - configure.sh manages it)
+    sed -i "s|ENABLE_LLM_MODULE=.*|ENABLE_LLM_MODULE=\"${ENABLE_LLM_MODULE}\"|" config.env.local
+    if [ "$ENABLE_LLM_MODULE" = "true" ]; then
+        sed -i "s|LLM_API_URL=.*|LLM_API_URL=\"${LLM_API_URL}\"|" config.env.local
+        sed -i "s|LLM_API_KEY=.*|LLM_API_KEY=\"${LLM_API_KEY}\"|" config.env.local
+        sed -i "s|LLM_MODEL_NAME=.*|LLM_MODEL_NAME=\"${LLM_MODEL_NAME}\"|" config.env.local
+        sed -i "s|LLM_ALLOW_USER_SETTINGS=.*|LLM_ALLOW_USER_SETTINGS=\"${LLM_ALLOW_USER_SETTINGS}\"|" config.env.local
+    fi
+
     echo ""
     echo -e "${GREEN}✓ Configuration created${NC}"
+
+    if [ "$ENABLE_LLM_MODULE" = "true" ]; then
+        echo ""
+        echo -e "${YELLOW}AI assistant (LLM) enabled: build the custom image BEFORE starting the stack.${NC}"
+        echo "  Run: ./scripts/build-llm-image.sh   (~15-30 min, needs Docker + >=8 GB RAM + network)"
+        echo "  Until that image exists, the Overleaf container will fail to start."
+    fi
 else
     echo -e "${GREEN}✓ Configuration file found, skipping wizard${NC}"
 

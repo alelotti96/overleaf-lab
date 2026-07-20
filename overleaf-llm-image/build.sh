@@ -5,19 +5,43 @@
 #
 # PREREQUISITE: vendor/llm/ must already be vendored into this directory (another
 # step / agent populates it). This script does NOT clone anything and does NOT
-# download the module — it only runs `docker build` on the local context.
+# download the module - it only runs `docker build` on the local context.
 #
-# The base image (overleafcep/sharelatex:6.2.0-ext-v5.0) must be available to the
-# Docker daemon (locally present or pullable). Build needs network (npm), plenty
-# of RAM for webpack (>= 8 GB recommended), and ~15-30 min. See README.md.
+# The base image (overleafcep/sharelatex:${BASE_VERSION}, where BASE_VERSION is
+# read from config.env.local / config.env) must be available to the Docker daemon
+# (locally present or pullable). Build needs network (npm), plenty of RAM for
+# webpack (>= 8 GB recommended), and ~15-30 min. See README.md.
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-BASE_IMAGE="overleafcep/sharelatex:6.2.0-ext-v5.0"
+# --- derive the CEP base version from config --------------------------------
+# Build FROM overleafcep/sharelatex:<BASE_VERSION>, where BASE_VERSION follows
+# OVERLEAF_IMAGE_TAG in config. Prefer config.env.local (the active, git-ignored
+# config), fall back to the tracked config.env template, then a sane default.
+# This way a base-version bump in config rebuilds on the new base next time.
+read_image_tag() {
+  # prints OVERLEAF_IMAGE_TAG from $1 with quotes/comment/whitespace stripped
+  local file="$1" line
+  [ -f "$file" ] || return 0
+  line="$(grep -E '^[[:space:]]*OVERLEAF_IMAGE_TAG=' "$file" 2>/dev/null | tail -n 1 || true)"
+  line="${line#*=}"     # drop key up to the first =
+  line="${line%%#*}"    # drop any inline comment
+  line="${line//\"/}"   # drop double quotes
+  line="${line//\'/}"   # drop single quotes
+  printf '%s' "$line" | tr -d '[:space:]'
+}
+
+BASE_VERSION="$(read_image_tag "$HERE/../config.env.local")"
+if [ -z "$BASE_VERSION" ]; then
+  BASE_VERSION="$(read_image_tag "$HERE/../config.env")"
+fi
+BASE_VERSION="${BASE_VERSION:-6.2.0-ext-v5.0}"
+
+BASE_IMAGE="overleafcep/sharelatex:${BASE_VERSION}"
 OUT_IMAGE="overleaf-lab/sharelatex-llm"
-OUT_TAG="6.2.0-ext-v5.0"
+OUT_TAG="${BASE_VERSION}"
 OUT_REF="${OUT_IMAGE}:${OUT_TAG}"
 
 # --- sanity: the module must be vendored before we build --------------------
