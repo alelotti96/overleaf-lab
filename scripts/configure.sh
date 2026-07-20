@@ -68,6 +68,50 @@ fi
 ENABLE_PANDOC_CONVERSIONS="${ENABLE_PANDOC_CONVERSIONS:-true}"
 PANDOC_IMAGE="${PANDOC_IMAGE:-overleafcep/pandoc-ol:3.10.0.0}"
 
+# AI assistant (LLM): opt-in custom-image swap.
+# When ENABLE_LLM_MODULE=true, swap OVERLEAF_IMAGE/OVERLEAF_IMAGE_TAG to the
+# locally-built custom image (overleaf-lab/sharelatex-llm), mirroring the
+# local/sharelatex-texlive-full swap. This only overrides the in-memory shell
+# variables that flow into overleaf.rc and docker-compose.override.yml below;
+# config.env.local is NOT modified, so flipping the flag back to false and
+# re-running configure.sh cleanly restores the stock image. When false, the
+# stock OVERLEAF_IMAGE/OVERLEAF_IMAGE_TAG are left untouched.
+ENABLE_LLM_MODULE="${ENABLE_LLM_MODULE:-false}"
+if [ "${ENABLE_LLM_MODULE}" = "true" ]; then
+    # Conflict guard: the LLM image and a texlive-full custom image can't both
+    # own OVERLEAF_IMAGE. The LLM image is built FROM the standard base; to also
+    # keep the extra TeX Live packages you would have to rebuild overleaf-llm-image
+    # FROM local/sharelatex-texlive-full instead (see overleaf-llm-image/README).
+    # For now the LLM image wins and we warn.
+    if [ "${OVERLEAF_IMAGE}" != "overleafcep/sharelatex" ] && [ "${OVERLEAF_IMAGE}" != "overleaf-lab/sharelatex-llm" ]; then
+        echo -e "${YELLOW}Warning: ENABLE_LLM_MODULE=true overrides your custom OVERLEAF_IMAGE=${OVERLEAF_IMAGE}.${NC}"
+        echo -e "${YELLOW}         The LLM and texlive-full images can't both own OVERLEAF_IMAGE.${NC}"
+        echo -e "${YELLOW}         To keep extra TeX Live packages, rebuild overleaf-llm-image${NC}"
+        echo -e "${YELLOW}         FROM local/sharelatex-texlive-full (see overleaf-llm-image/README).${NC}"
+    fi
+    OVERLEAF_IMAGE="overleaf-lab/sharelatex-llm"
+    OVERLEAF_IMAGE_TAG="6.2.0-ext-v5.0"
+    echo "AI assistant (LLM) enabled: using custom image ${OVERLEAF_IMAGE}:${OVERLEAF_IMAGE_TAG}"
+    echo "  (build it first with ./scripts/build-llm-image.sh - see overleaf-llm-image/README)"
+
+    # Per-user LLM API key encryption secret (input to the AES-256-GCM key
+    # derivation used by the vendored LLM module to encrypt User.llmApiKey at
+    # rest). CRITICAL: generate it ONCE and reuse it forever - rotating or
+    # losing it makes all previously stored user keys undecryptable and forces
+    # every user to re-enter their key. Reuse any existing value (from
+    # config.env.local or the environment); never overwrite. Mirrors the
+    # OVERLEAF_INVITE_TOKEN_SECRET generate-and-persist pattern above.
+    if [ -z "$LLM_KEY_SECRET" ]; then
+        echo "Generating LLM_KEY_SECRET (encrypts per-user LLM API keys at rest)..."
+        LLM_KEY_SECRET=$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null || openssl rand -hex 32)
+        if grep -q '^LLM_KEY_SECRET=' config.env.local; then
+            sed -i "s|^LLM_KEY_SECRET=.*|LLM_KEY_SECRET=\"${LLM_KEY_SECRET}\"|" config.env.local
+        else
+            printf '\n# LLM per-user API key encryption secret (auto-generated; do NOT change or lose)\nLLM_KEY_SECRET="%s"\n' "$LLM_KEY_SECRET" >> config.env.local
+        fi
+    fi
+fi
+
 # Get absolute paths
 INSTALL_DIR="$PROJECT_ROOT"
 
@@ -423,6 +467,35 @@ GITHUB_SYNC_ENABLED=true
 GITHUB_SYNC_CLIENT_ID=${GITHUB_SYNC_CLIENT_ID}
 GITHUB_SYNC_CLIENT_SECRET=${GITHUB_SYNC_CLIENT_SECRET}
 EOF
+    fi
+
+    # Add AI assistant (LLM) configuration if enabled.
+    # Values are inlined directly (like the OIDC/GitHub blocks above) so URLs and
+    # keys are written verbatim without _replace_var escaping. When disabled,
+    # NOTHING LLM-related is written and variables.env is unchanged from stock.
+    if [ "${ENABLE_LLM_MODULE:-false}" = "true" ]; then
+        cat >> overleaf-toolkit/config/variables.env <<EOF
+
+# AI assistant (LLM) - OpenAI-compatible endpoint (opt-in via ENABLE_LLM_MODULE)
+LLM_ENABLED=true
+LLM_API_URL=${LLM_API_URL}
+LLM_ALLOW_USER_SETTINGS=${LLM_ALLOW_USER_SETTINGS:-false}
+# Admin-managed settings persisted on the sharelatex data volume
+LLM_ADMIN_SETTINGS_PATH=/var/lib/overleaf/data/llm-admin-settings.json
+# Secret used to encrypt per-user API keys at rest (AES-256-GCM); auto-generated
+# and persisted in config.env.local. Changing/losing it invalidates stored keys.
+LLM_KEY_SECRET=${LLM_KEY_SECRET}
+EOF
+        # Optional values: only written when set (empty = module defaults / auto-discovery)
+        if [ -n "${LLM_API_KEY}" ]; then
+            echo "LLM_API_KEY=${LLM_API_KEY}" >> overleaf-toolkit/config/variables.env
+        fi
+        if [ -n "${LLM_MODEL_NAME}" ]; then
+            echo "LLM_MODEL_NAME=${LLM_MODEL_NAME}" >> overleaf-toolkit/config/variables.env
+        fi
+        if [ -n "${LLM_COMPLETION_MODEL}" ]; then
+            echo "LLM_COMPLETION_MODEL=${LLM_COMPLETION_MODEL}" >> overleaf-toolkit/config/variables.env
+        fi
     fi
 
     # Replace variables in variables.env

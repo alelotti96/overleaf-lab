@@ -264,6 +264,27 @@ if ! grep -q '^HEADER_BG_COLOR=' "$VARIABLES_ENV"; then
     fi
 fi
 
+# 9) AI assistant (LLM): opt-in custom image. When enabled, the stock image is
+#    replaced by a locally-built overleaf-lab/sharelatex-llm, which must be
+#    (re)built BEFORE the new tag is pulled/started below - otherwise the
+#    sharelatex container will fail to come up. Skipped and silent when off.
+LLM_ENABLED_VAL="$(_read_local ENABLE_LLM_MODULE)"
+if [ "${LLM_ENABLED_VAL}" = "true" ]; then
+    echo ""
+    echo "-------------------------------------------------------------------"
+    echo "AI assistant (LLM) is ENABLED (ENABLE_LLM_MODULE=true)."
+    echo "The custom image overleaf-lab/sharelatex-llm must be (re)built BEFORE"
+    echo "the new image is started below, or the sharelatex container will fail"
+    echo "to come up. This script will NOT build it for you. Rebuild it now with:"
+    echo ""
+    echo "    ./scripts/build-llm-image.sh        # wraps overleaf-llm-image/build.sh"
+    echo ""
+    echo "then re-run ./scripts/configure.sh (bakes in the new base tag) and this"
+    echo "update. See overleaf-llm-image/README for details."
+    echo "-------------------------------------------------------------------"
+    echo ""
+fi
+
 # Pull the Pandoc conversion image if conversions are enabled
 # (with sandboxed compiles it runs as a sibling container, so it must be present locally)
 ENABLE_PANDOC_VAL=$(grep '^ENABLE_PANDOC_CONVERSIONS=' "$VARIABLES_ENV" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '[:space:]')

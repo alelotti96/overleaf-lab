@@ -41,7 +41,10 @@ if [ -f "$NGINX_CONF" ]; then
         # OVERLEAF_LAB_NGINX_PATCH: Increase proxy buffers for large OIDC headers\
         proxy_buffer_size 128k;\
         proxy_buffers 4 256k;\
-        proxy_busy_buffers_size 256k;' "$NGINX_CONF"
+        proxy_busy_buffers_size 256k;\
+        # OVERLEAF_LAB_NGINX_PATCH: raise proxy timeouts for the non-streaming LLM chat (300s server-side; default 60s would 504)\
+        proxy_read_timeout 320s;\
+        proxy_send_timeout 320s;' "$NGINX_CONF"
 
         # Add location blocks to fix OIDC undefined redirects
         sed -i '/location \/ {/i\
