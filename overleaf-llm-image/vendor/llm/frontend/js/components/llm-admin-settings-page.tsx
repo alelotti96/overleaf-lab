@@ -110,6 +110,9 @@ const stepNumberStyle: React.CSSProperties = {
 export default function LLMAdminSettingsPage() {
     const { t } = useTranslation()
     const hasStoredKey = getMeta('ol-hasLlmApiKey') === 'true'
+    // overleaf-lab: true when the shown URL is inherited from the LLM_API_URL env
+    // var rather than saved in the admin settings file.
+    const apiUrlFromEnv = getMeta('ol-llmApiUrlFromEnv') === 'true'
 
     const [systemPrompt, setSystemPrompt] = useState<string>(
         (getMeta('ol-systemPrompt') as string) || DEFAULT_SYSTEM_PROMPT
@@ -264,6 +267,12 @@ export default function LLMAdminSettingsPage() {
                                         }
                                         placeholder="https://api.example.com/v1"
                                     />
+                                    {apiUrlFromEnv && (
+                                        <OLFormText>
+                                            <MaterialIcon type="info" className="me-1" style={{ fontSize: '0.875rem' }} />
+                                            {t('llm_admin_from_env', 'Inherited from the LLM_API_URL environment variable. Saving here stores it in the admin settings file.')}
+                                        </OLFormText>
+                                    )}
                                 </OLFormGroup>
 
                                 <OLFormGroup controlId="llm-api-key" style={{ marginBottom: '1rem' }}>

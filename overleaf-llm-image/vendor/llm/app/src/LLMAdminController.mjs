@@ -28,25 +28,45 @@ async function writeAdminSettings(data) {
     }
 }
 
-async function adminSettingsPage(req, res) {
+// overleaf-lab: the shared LLM backend can be configured either via this admin
+// settings JSON file OR via environment variables (LLM_API_URL / LLM_API_KEY /
+// LLM_MODEL_NAME). The chat already falls back to env; expose the same fallback
+// here so the admin page and the model scan reflect an env-only configuration
+// instead of looking empty.
+function envModelList() {
+    const raw = process.env.LLM_AVAILABLE_MODELS || process.env.LLM_MODEL_NAME || ''
+    return raw
+        .split(',')
+        .map(m => m.trim())
+        .filter(m => m.length > 0)
+}
+
+// Effective settings for display: the JSON value, else the env fallback, plus
+// flags telling the UI which values are inherited from the environment. The API
+// key value is never returned, only whether one is set.
+async function buildDisplaySettings() {
     const settings = await readAdminSettings()
-    const pugPath = new URL('../../app/views/llm-admin-settings.pug', import.meta.url).pathname
-    res.render(pugPath, {
+    const envModels = envModelList()
+    const jsonHasModels =
+        Array.isArray(settings.allowedModels) && settings.allowedModels.length > 0
+    return {
         systemPrompt: settings.systemPrompt || '',
-        llmApiUrl: settings.llmApiUrl || '',
-        hasLlmApiKey: !!settings.llmApiKey,
-        allowedModels: settings.allowedModels || [],
-    })
+        llmApiUrl: settings.llmApiUrl || process.env.LLM_API_URL || '',
+        hasLlmApiKey: !!(settings.llmApiKey || process.env.LLM_API_KEY),
+        allowedModels: jsonHasModels ? settings.allowedModels : envModels,
+        llmApiUrlFromEnv: !settings.llmApiUrl && !!process.env.LLM_API_URL,
+        hasApiKeyFromEnv: !settings.llmApiKey && !!process.env.LLM_API_KEY,
+        allowedModelsFromEnv: !jsonHasModels && envModels.length > 0,
+    }
+}
+
+async function adminSettingsPage(req, res) {
+    const pugPath = new URL('../../app/views/llm-admin-settings.pug', import.meta.url).pathname
+    res.render(pugPath, await buildDisplaySettings())
 }
 
 async function getAdminSettings(req, res) {
-    const settings = await readAdminSettings()
-    res.json({
-        systemPrompt: settings.systemPrompt || '',
-        llmApiUrl: settings.llmApiUrl || '',
-        hasLlmApiKey: !!settings.llmApiKey,
-        allowedModels: settings.allowedModels || [],
-    })
+    res.json(await buildDisplaySettings())
 }
 
 async function saveAdminSettings(req, res) {
@@ -100,12 +120,14 @@ export async function getSystemPrompt() {
 
 export async function getAdminLLMSettings() {
     const settings = await readAdminSettings()
+    // overleaf-lab: fall back to env so the model scan / connection-check and the
+    // chat share the same effective config (mirrors buildDisplaySettings above).
+    const jsonHasModels =
+        Array.isArray(settings.allowedModels) && settings.allowedModels.length > 0
     return {
-        llmApiUrl: settings.llmApiUrl || null,
-        llmApiKey: settings.llmApiKey || null,
-        allowedModels: Array.isArray(settings.allowedModels)
-            ? settings.allowedModels
-            : [],
+        llmApiUrl: settings.llmApiUrl || process.env.LLM_API_URL || null,
+        llmApiKey: settings.llmApiKey || process.env.LLM_API_KEY || null,
+        allowedModels: jsonHasModels ? settings.allowedModels : envModelList(),
     }
 }
 
