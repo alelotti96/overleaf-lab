@@ -24,10 +24,13 @@ if [ -f "$NGINX_CONF" ]; then
         #    white one and offers no env var for the navbar color).
         if [ -n "$HEADER_BG_COLOR" ]; then
             HEADER_TEXT_COLOR="${HEADER_TEXT_COLOR:-#ffffff}"
-            # Top-level navbar text/links white (incl. dropdown TOGGLE buttons,
-            # which are <button class="dropdown-toggle"> without .nav-link);
-            # but keep the dropdown MENU items dark - they sit on a white panel.
-            CUSTOM_CSS="${CUSTOM_CSS}nav.navbar-main,nav.website-redesign-navbar{background-color:${HEADER_BG_COLOR}!important;}nav.navbar-main a,nav.navbar-main .navbar-title,nav.navbar-main .navbar-brand,nav.navbar-main .nav-link,nav.navbar-main .dropdown-toggle{color:${HEADER_TEXT_COLOR}!important;}nav.navbar-main .dropdown-menu .dropdown-item{color:#212529!important;}"
+            # Dark navbar: top-level text/links/toggle buttons white (the toggle is
+            # a <button class="dropdown-toggle"> without .nav-link). The dropdown
+            # MENUS render dark in Overleaf's redesigned navbar, so we also force
+            # the panel to the header colour and the items to the text colour, with
+            # a subtle hover. Setting BOTH panel and item colour keeps them readable
+            # whether Overleaf renders the panel dark or light (no dark-on-dark).
+            CUSTOM_CSS="${CUSTOM_CSS}nav.navbar-main,nav.website-redesign-navbar{background-color:${HEADER_BG_COLOR}!important;}nav.navbar-main a,nav.navbar-main .navbar-title,nav.navbar-main .navbar-brand,nav.navbar-main .nav-link,nav.navbar-main .dropdown-toggle{color:${HEADER_TEXT_COLOR}!important;}nav.navbar-main .dropdown-menu,nav.website-redesign-navbar .dropdown-menu{background-color:${HEADER_BG_COLOR}!important;border:1px solid rgba(255,255,255,0.15)!important;}nav.navbar-main .dropdown-menu .dropdown-item,nav.website-redesign-navbar .dropdown-menu .dropdown-item{color:${HEADER_TEXT_COLOR}!important;}nav.navbar-main .dropdown-menu .dropdown-item:hover,nav.navbar-main .dropdown-menu .dropdown-item:focus,nav.website-redesign-navbar .dropdown-menu .dropdown-item:hover,nav.website-redesign-navbar .dropdown-menu .dropdown-item:focus{background-color:rgba(255,255,255,0.12)!important;color:${HEADER_TEXT_COLOR}!important;}"
             echo "  Header color: ${HEADER_BG_COLOR} (text ${HEADER_TEXT_COLOR})"
         fi
 
