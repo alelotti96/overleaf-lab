@@ -88,6 +88,13 @@ export default {
         logger.debug({}, '[LLM] Route registered: POST /user/llm-settings/check')
 
         webRouter.post(
+            '/user/llm-settings/models',
+            AuthenticationController.requireLogin(),
+            LLMSettingsController.scanUserModels
+        )
+        logger.debug({}, '[LLM] Route registered: POST /user/llm-settings/models')
+
+        webRouter.post(
             '/user/llm-settings',
             AuthenticationController.requireLogin(),
             LLMSettingsController.saveLLMSettings

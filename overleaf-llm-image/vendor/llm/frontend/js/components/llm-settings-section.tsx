@@ -19,12 +19,25 @@ type Props = {
     }
 }
 
+// overleaf-lab: provider presets. Selecting a known provider fills in its
+// OpenAI-compatible base URL; "Custom" reveals the free-text URL field.
+const OPENAI_URL = 'https://api.openai.com/v1'
+const ANTHROPIC_URL = 'https://api.anthropic.com/v1'
+
+function providerFromUrl(url: string): 'openai' | 'anthropic' | 'custom' {
+    if (url.includes('openai.com')) return 'openai'
+    if (url.includes('anthropic.com')) return 'anthropic'
+    return 'custom'
+}
+
 export default function LLMSettingsSection({ initialSettings }: Props) {
     const { t } = useTranslation()
     const [useOwnLLMSettings, setUseOwnLLMSettings] = useState(
         initialSettings?.useOwnSettings || false
     )
     const [llmApiKey, setLlmApiKey] = useState('')
+    // overleaf-lab: llmModelName is a comma-separated list of personal chat
+    // models; the first id is the default in the editor's chat model picker.
     const [llmModelName, setLlmModelName] = useState(
         initialSettings?.modelName || ''
     )
@@ -37,6 +50,14 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
         initialSettings?.completionModel || ''
     )
     const [customCompletionSelected, setCustomCompletionSelected] = useState(false)
+    // overleaf-lab: provider selector, derived initially from the stored URL
+    const [provider, setProvider] = useState<'openai' | 'anthropic' | 'custom'>(
+        providerFromUrl(initialSettings?.apiUrl || '')
+    )
+    // overleaf-lab: model ids discovered via "Scan for models"
+    const [scannedModels, setScannedModels] = useState<string[]>([])
+    const [isScanning, setIsScanning] = useState(false)
+    const [scanError, setScanError] = useState<string | null>(null)
     const [isCheckingConnection, setIsCheckingConnection] = useState(false)
     const [connectionCheckResult, setConnectionCheckResult] = useState<{
         success: boolean
@@ -59,6 +80,41 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
         }
     }, [isLlmSuccess])
 
+    const handleProviderChange = (value: string) => {
+        const next = value as 'openai' | 'anthropic' | 'custom'
+        setProvider(next)
+        // Switching provider invalidates any previously scanned model list.
+        setScannedModels([])
+        setScanError(null)
+        if (next === 'openai') {
+            setLlmApiUrl(OPENAI_URL)
+        } else if (next === 'anthropic') {
+            setLlmApiUrl(ANTHROPIC_URL)
+        }
+        // 'custom' keeps whatever URL is currently entered and reveals the field.
+    }
+
+    const handleScanModels = async () => {
+        setIsScanning(true)
+        setScanError(null)
+        try {
+            const response = await postJSON('/user/llm-settings/models', {
+                body: {
+                    apiUrl: llmApiUrl,
+                    apiKey: llmApiKey || undefined,
+                },
+            })
+            setScannedModels(
+                Array.isArray(response.models) ? response.models : []
+            )
+        } catch (err: any) {
+            setScanError(err.message || 'Failed to scan for models')
+            setScannedModels([])
+        } finally {
+            setIsScanning(false)
+        }
+    }
+
     const handleCheckLLMConnection = async () => {
         setIsCheckingConnection(true)
         setConnectionCheckResult(null)
@@ -67,7 +123,8 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
                 body: {
                     apiUrl: llmApiUrl,
                     apiKey: llmApiKey || undefined,
-                    modelName: llmModelName,
+                    // Check uses the default (first) chat model id.
+                    modelName: llmModelName.split(',')[0].trim(),
                 },
             })
             setConnectionCheckResult({
@@ -90,7 +147,7 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
                 body: {
                     useOwnLLMSettings,
                     llmApiKey: llmApiKey || undefined,
-                    llmModelName,
+                    llmModelName, // overleaf-lab: comma-separated chat model ids
                     llmApiUrl,
                     llmCompletionModel, // overleaf-lab: resolved completion model id ('' = local)
                 },
@@ -114,6 +171,9 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
             setLlmApiUrl('')
             setLlmCompletionModel('')
             setCustomCompletionSelected(false)
+            setProvider('custom')
+            setScannedModels([])
+            setScanError(null)
             setConnectionCheckResult(null)
 
             runLlmAsync(
@@ -130,17 +190,43 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
         }
     }
 
-    // overleaf-lab: completion-model options are derived reactively from the
-    // current API URL so they match the user's chosen provider.
+    // overleaf-lab: currently selected chat model ids (comma-separated -> array).
+    const selectedChatModels = llmModelName
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0)
+
+    // Options for the multi-select: scanned ids plus any already-selected ids
+    // that aren't in the scan (so an existing selection is always visible even
+    // before scanning). Deduplicated, scanned ids first.
+    const chatModelOptions = Array.from(
+        new Set([...scannedModels, ...selectedChatModels])
+    )
+
+    const handleChatModelsSelect = (
+        e: React.ChangeEvent<HTMLSelectElement>
+    ) => {
+        const selected = Array.from(e.target.selectedOptions).map(o => o.value)
+        setLlmModelName(selected.join(','))
+    }
+
+    // overleaf-lab: completion-model options. After a scan we offer the real
+    // discovered ids; otherwise we fall back to provider-aware cheap presets.
     const completionOptions: { value: string; label: string }[] = [
         { value: '', label: t('local_shared_completion_model', 'Local / shared model (default)') },
     ]
-    if (llmApiUrl.includes('openai.com')) {
-        completionOptions.push({ value: 'gpt-4.1-nano', label: 'gpt-4.1-nano' })
-        completionOptions.push({ value: 'gpt-4o-mini', label: 'gpt-4o-mini' })
-    }
-    if (llmApiUrl.includes('anthropic.com')) {
-        completionOptions.push({ value: 'claude-haiku-4-5', label: 'claude-haiku-4-5' })
+    if (scannedModels.length > 0) {
+        for (const m of scannedModels) {
+            completionOptions.push({ value: m, label: m })
+        }
+    } else {
+        if (llmApiUrl.includes('openai.com')) {
+            completionOptions.push({ value: 'gpt-4.1-nano', label: 'gpt-4.1-nano' })
+            completionOptions.push({ value: 'gpt-4o-mini', label: 'gpt-4o-mini' })
+        }
+        if (llmApiUrl.includes('anthropic.com')) {
+            completionOptions.push({ value: 'claude-haiku-4-5', label: 'claude-haiku-4-5' })
+        }
     }
     completionOptions.push({
         value: '__custom__',
@@ -166,6 +252,9 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
         }
     }
 
+    const scanDisabled =
+        isScanning || !llmApiUrl || (!llmApiKey && !llmHasApiKey)
+
     return (
         <>
             <OLFormGroup>
@@ -190,6 +279,43 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
                         handleSaveLLMSettings()
                     }}
                 >
+                    <OLFormGroup controlId="llm-provider-input">
+                        <OLFormLabel>
+                            {t('llm_provider', 'Provider')}
+                        </OLFormLabel>
+                        <select
+                            id="llm-provider-input"
+                            className="form-select"
+                            value={provider}
+                            onChange={e => handleProviderChange(e.target.value)}
+                        >
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic</option>
+                            <option value="custom">
+                                {t('custom', 'Custom')}
+                            </option>
+                        </select>
+                    </OLFormGroup>
+
+                    <OLFormGroup controlId="llm-api-url-input">
+                        <OLFormLabel>API URL</OLFormLabel>
+                        {provider === 'custom' ? (
+                            <OLFormControl
+                                type="text"
+                                value={llmApiUrl}
+                                onChange={e => setLlmApiUrl(e.target.value)}
+                                placeholder="e.g., https://api.openai.com/v1"
+                            />
+                        ) : (
+                            <OLFormControl
+                                type="text"
+                                value={llmApiUrl}
+                                readOnly
+                                plaintext
+                            />
+                        )}
+                    </OLFormGroup>
+
                     <OLFormGroup controlId="llm-api-key-input">
                         <OLFormLabel>API Key</OLFormLabel>
                         <OLFormControl
@@ -206,24 +332,69 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
                         )}
                     </OLFormGroup>
 
-                    <OLFormGroup controlId="llm-model-name-input">
-                        <OLFormLabel>Model Name</OLFormLabel>
+                    <OLFormGroup>
+                        <OLButton
+                            variant="secondary"
+                            type="button"
+                            onClick={handleScanModels}
+                            disabled={scanDisabled}
+                            isLoading={isScanning}
+                            loadingLabel={t('scanning', 'Scanning…')}
+                        >
+                            {t('scan_for_models', 'Scan for models')}
+                        </OLButton>
+                        {scannedModels.length > 0 && (
+                            <OLFormText>
+                                {t(
+                                    'scan_found_n_models',
+                                    'Found {{count}} models.'
+                                ).replace('{{count}}', String(scannedModels.length))}
+                            </OLFormText>
+                        )}
+                    </OLFormGroup>
+
+                    {scanError && (
+                        <OLFormGroup>
+                            <OLNotification type="error" content={scanError} />
+                        </OLFormGroup>
+                    )}
+
+                    <OLFormGroup controlId="llm-chat-models-input">
+                        <OLFormLabel>
+                            {t('chat_models', 'Chat models')}
+                        </OLFormLabel>
+                        {chatModelOptions.length > 0 && (
+                            <select
+                                id="llm-chat-models-input"
+                                className="form-select"
+                                multiple
+                                size={Math.min(
+                                    8,
+                                    Math.max(6, chatModelOptions.length)
+                                )}
+                                value={selectedChatModels}
+                                onChange={handleChatModelsSelect}
+                            >
+                                {chatModelOptions.map(m => (
+                                    <option key={m} value={m}>
+                                        {m}
+                                    </option>
+                                ))}
+                            </select>
+                        )}
                         <OLFormControl
                             type="text"
                             value={llmModelName}
                             onChange={e => setLlmModelName(e.target.value)}
-                            placeholder="e.g., gpt-4, claude-3"
+                            placeholder="e.g., gpt-4o, gpt-4.1"
+                            style={{ marginTop: '0.5rem' }}
                         />
-                    </OLFormGroup>
-
-                    <OLFormGroup controlId="llm-api-url-input">
-                        <OLFormLabel>API URL</OLFormLabel>
-                        <OLFormControl
-                            type="text"
-                            value={llmApiUrl}
-                            onChange={e => setLlmApiUrl(e.target.value)}
-                            placeholder="e.g., https://api.openai.com/v1"
-                        />
+                        <OLFormText>
+                            {t(
+                                'chat_models_help',
+                                'Pick one or more chat models (or type comma-separated ids). The first one is the default in the editor.'
+                            )}
+                        </OLFormText>
                     </OLFormGroup>
 
                     <OLFormGroup controlId="llm-completion-model-input">
@@ -255,6 +426,15 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
                             {t(
                                 'inline_completion_model_help',
                                 'Local / shared model is free and low-latency. gpt-4.1-nano / gpt-4o-mini cost roughly a few cents per month; claude-haiku costs more (completion runs at high frequency).'
+                            )}
+                        </OLFormText>
+                    </OLFormGroup>
+
+                    <OLFormGroup>
+                        <OLFormText>
+                            {t(
+                                'llm_cheap_models_hint',
+                                '💡 Cheap models — completion (high-frequency, keep it cheap): OpenAI gpt-4.1-nano / gpt-4o-mini · Anthropic claude-haiku-4-5. Chat (quality): OpenAI gpt-4o / gpt-4.1 · Anthropic claude-sonnet-4-6 / claude-sonnet-5. You can pick several chat models and switch between them in the editor.'
                             )}
                         </OLFormText>
                     </OLFormGroup>

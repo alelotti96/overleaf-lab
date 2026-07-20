@@ -97,14 +97,21 @@ async function getModels(req, res) {
                     user.llmApiUrl &&
                     user.llmApiKey
                 ) {
-                    const personalModel = {
-                        id: `personal-${user.llmModelName}`,
-                        name: `${user.llmModelName} (🔒 Personal)`,
-                        isDefault: false,
-                        isPersonal: true,
-                        label: 'Private',
+                    // overleaf-lab: llmModelName may be a comma-separated list of
+                    // personal chat models; expose one selectable entry per id.
+                    const personalModelIds = user.llmModelName
+                        .split(',')
+                        .map(id => id.trim())
+                        .filter(id => id.length > 0)
+                    for (const modelId of personalModelIds) {
+                        models.push({
+                            id: `personal-${modelId}`,
+                            name: `${modelId} (🔒 Personal)`,
+                            isDefault: false,
+                            isPersonal: true,
+                            label: 'Private',
+                        })
                     }
-                    models.push(personalModel)
                 }
             } catch (error) {
                 logger.warn(
@@ -185,7 +192,7 @@ async function chat(req, res) {
                 llmApiKey = decryptSecret(user.llmApiKey) // overleaf-lab: decrypt stored key at rest
                 personalModelName = isPersonalModel
                     ? model.substring('personal-'.length)
-                    : user.llmModelName // overleaf-lab: no model sent -> use the user's own model
+                    : user.llmModelName.split(',')[0].trim() // overleaf-lab: no model sent -> use the user's first (default) model
             } else if (isPersonalModel) {
                 return res.status(400).json({
                     error:

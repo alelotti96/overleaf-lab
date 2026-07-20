@@ -138,6 +138,90 @@ async function checkLLMConnection(req, res) {
     }
 }
 
+// overleaf-lab: scan the user's own LLM provider for available model ids.
+// Mirrors LLMAdminController.scanAdminModels but resolves credentials from the
+// request body, falling back to the user's stored key/URL (like checkLLMConnection).
+async function scanUserModels(req, res) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+    const { apiUrl: providedApiUrl, apiKey: providedApiKey } = req.body
+
+    logger.debug(
+        { userId, apiUrl: providedApiUrl, hasProvidedKey: !!providedApiKey },
+        '[LLM] scanUserModels: request received'
+    )
+
+    let apiKey = providedApiKey
+    let apiUrl = providedApiUrl
+    // Fall back to stored key/URL when either is omitted
+    if (!apiKey || !apiUrl) {
+        try {
+            const user = await User.findById(userId, 'llmApiKey llmApiUrl')
+            if (user) {
+                if (!apiKey && user.llmApiKey) {
+                    apiKey = decryptSecret(user.llmApiKey) // overleaf-lab: decrypt stored key at rest
+                }
+                if (!apiUrl && user.llmApiUrl) {
+                    apiUrl = user.llmApiUrl
+                }
+            }
+        } catch (err) {
+            logger.warn({ userId, err }, '[LLM] Could not fetch stored settings for model scan')
+        }
+    }
+
+    if (!apiUrl || !apiKey) {
+        return res.status(400).json({
+            success: false,
+            error: 'API URL and API key are required',
+        })
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30000)
+
+    try {
+        const response = await fetch(`${apiUrl}/models`, {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+            },
+            signal: controller.signal,
+        })
+
+        clearTimeout(timeout)
+
+        if (!response.ok) {
+            const body = await response.text()
+            return res.status(400).json({
+                success: false,
+                error: 'Failed to fetch models',
+                status: response.status,
+                details: body,
+            })
+        }
+
+        const data = await response.json()
+        const ids = Array.isArray(data?.data)
+            ? data.data.map(entry => String(entry.id)).sort()
+            : []
+
+        res.json({ success: true, models: ids })
+    } catch (error) {
+        clearTimeout(timeout)
+
+        if (error.name === 'AbortError') {
+            return res.status(504).json({
+                success: false,
+                error: 'Connection timeout',
+                details: 'The LLM API did not respond within 30 seconds',
+            })
+        }
+
+        logger.error({ userId, err: error }, '[LLM] User model scan failed')
+        res.status(500).json({ success: false, error: 'Model scan failed' })
+    }
+}
+
 async function saveLLMSettings(req, res) {
     const userId = SessionManager.getLoggedInUserId(req.session)
     const { useOwnLLMSettings, llmApiKey, llmModelName, llmApiUrl, llmCompletionModel } = req.body
@@ -212,5 +296,6 @@ async function saveLLMSettings(req, res) {
 export default {
     llmSettingsPage: expressify(llmSettingsPage),
     checkLLMConnection: expressify(checkLLMConnection),
+    scanUserModels: expressify(scanUserModels),
     saveLLMSettings: expressify(saveLLMSettings),
 }
