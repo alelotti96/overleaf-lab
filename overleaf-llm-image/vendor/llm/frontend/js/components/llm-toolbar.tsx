@@ -119,23 +119,23 @@ const LLMToolbar = forwardRef<LLMToolbarHandle, {}>((_, ref) => {
         // Build a prompt based on the mode
         const modePrompts: Record<number, string> = {
             0: ask, // free-form chat
-            1: `Paraphrase the following LaTeX text, keeping all LaTeX commands intact:\n\n${selectionText}`,
-            2: `Rewrite the following LaTeX text in a scientific academic style:\n\n${selectionText}`,
-            3: `Rewrite the following LaTeX text more concisely:\n\n${selectionText}`,
-            4: `Rewrite the following LaTeX text in a punchy style:\n\n${selectionText}`,
-            5: `Split the following LaTeX paragraph into multiple shorter paragraphs:\n\n${selectionText}`,
-            6: `Join the following LaTeX paragraphs into a single cohesive paragraph:\n\n${selectionText}`,
-            7: `Summarize the following LaTeX text:\n\n${selectionText}`,
-            8: `Explain the following LaTeX text:\n\n${selectionText}`,
-            9: `Generate an academic title based on this LaTeX content:\n\n${selectionText}`,
-            10: `Generate an academic abstract based on this LaTeX content:\n\n${selectionText}`,
+            1: `Paraphrase the following LaTeX text. Keep every LaTeX command, math, and citation key intact. Output only the paraphrased text, with no preamble, no explanation, and no code fences.\n\n${selectionText}`,
+            2: `Rewrite the following LaTeX text in fluent, formal academic English. Preserve every LaTeX command, math, and citation key. Output only the rewritten text, with no preamble and no code fences.\n\n${selectionText}`,
+            3: `Rewrite the following LaTeX text more concisely, preserving its meaning and every LaTeX command, math, and citation. Output only the rewritten text, nothing else.\n\n${selectionText}`,
+            4: `Rewrite the following LaTeX text in a punchier, more engaging style while keeping it accurate. Preserve every LaTeX command, math, and citation. Output only the rewritten text, nothing else.\n\n${selectionText}`,
+            5: `Split the following LaTeX paragraph into several shorter, well-structured paragraphs. Keep the wording and all LaTeX; only add paragraph breaks. Output only the resulting LaTeX, nothing else.\n\n${selectionText}`,
+            6: `Join the following LaTeX paragraphs into a single cohesive paragraph, preserving every LaTeX command, math, and citation. Output only the resulting paragraph, nothing else.\n\n${selectionText}`,
+            7: `Summarize the following LaTeX text concisely. Output only the summary as plain LaTeX, with no preamble and no code fences.\n\n${selectionText}`,
+            8: `Explain the following LaTeX text clearly and concisely for the author:\n\n${selectionText}`,
+            9: `Propose one concise, specific academic title for the following content. Output only the title text: no quotes, no label, no trailing period.\n\n${selectionText}`,
+            10: `Write a single self-contained academic abstract (about 150 to 250 words) for the following content. Output only the abstract text: no heading, no label, and no code fences.\n\n${selectionText}`,
         }
 
         const messages = [
             {
                 role: 'system',
                 content:
-                    'You are a helpful LaTeX writing assistant. Respond with clean LaTeX code when appropriate.',
+                    'You are a LaTeX writing assistant embedded in an editor. Preserve existing LaTeX commands, math, and citation keys exactly, and reply in the same language as the input. When asked to rewrite or transform text, return only the resulting text, with no preamble and no Markdown code fences.',
             },
             {
                 role: 'user',

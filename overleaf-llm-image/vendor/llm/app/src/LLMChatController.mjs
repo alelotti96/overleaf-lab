@@ -227,23 +227,22 @@ async function chat(req, res) {
     try {
         const llmApiFullUrl = `${llmApiUrl}/chat/completions`
 
-        // Prepend admin-configured system prompt if set and not already present
-        let finalMessages = messages
+        // Prepend the admin-configured system prompt (if any) plus an always-on
+        // instruction to reply in the user's language, then merge any client
+        // system message. This keeps replies in the input language regardless of
+        // whether an admin prompt is set.
+        const languageInstruction = `Reply in the same language as the user's latest message (for example, answer in Italian if the user writes in Italian).`
         const adminSystemPrompt = await getSystemPrompt()
-        if (adminSystemPrompt) {
-            const hasSystemMessage = messages.length > 0 && messages[0].role === 'system'
-            if (hasSystemMessage) {
-                finalMessages = [
-                    { role: 'system', content: adminSystemPrompt + '\n\n' + messages[0].content },
-                    ...messages.slice(1),
-                ]
-            } else {
-                finalMessages = [
-                    { role: 'system', content: adminSystemPrompt },
-                    ...messages,
-                ]
-            }
-        }
+        const systemPreamble = adminSystemPrompt
+            ? `${adminSystemPrompt}\n\n${languageInstruction}`
+            : languageInstruction
+        const hasSystemMessage = messages.length > 0 && messages[0].role === 'system'
+        const finalMessages = hasSystemMessage
+            ? [
+                  { role: 'system', content: `${systemPreamble}\n\n${messages[0].content}` },
+                  ...messages.slice(1),
+              ]
+            : [{ role: 'system', content: systemPreamble }, ...messages]
 
         const requestBody = {
             model: modelNameForApi,
@@ -455,7 +454,7 @@ async function completion(req, res) {
     }, 30000) // 30 seconds for completions
 
     try {
-        const systemPrompt = `/no_think\nYou are a text completion engine. Output ONLY the missing text. No thinking, no explanation, no markdown, no code fences, no tags. Just the raw continuation characters.`
+        const systemPrompt = `/no_think\nYou are a text completion engine. Output ONLY the missing text, in the same language as the surrounding text. No thinking, no explanation, no markdown, no code fences, no tags. Just the raw continuation characters.`
 
         const userPrompt = `Complete the text at [CURSOR]. Output only the few words that replace [CURSOR]:
 
