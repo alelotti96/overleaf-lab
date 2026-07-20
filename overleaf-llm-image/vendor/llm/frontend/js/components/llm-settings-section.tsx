@@ -210,23 +210,20 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
         setLlmModelName(selected.join(','))
     }
 
-    // overleaf-lab: completion-model options. After a scan we offer the real
-    // discovered ids; otherwise we fall back to provider-aware cheap presets.
+    // overleaf-lab: the completion control is a binary choice: the shared model
+    // chosen by the admin (value '') OR the user's OWN personal model. We never
+    // present a list of shared/scanned models to pick from; the personal option
+    // is a provider preset (a cheap model on the user's own endpoint) or a
+    // custom id they type in below.
     const completionOptions: { value: string; label: string }[] = [
-        { value: '', label: t('local_shared_completion_model', 'Local / shared model (default)') },
+        { value: '', label: t('shared_completion_model_admin', 'Shared model (chosen by admin)') },
     ]
-    if (scannedModels.length > 0) {
-        for (const m of scannedModels) {
-            completionOptions.push({ value: m, label: m })
-        }
-    } else {
-        if (llmApiUrl.includes('openai.com')) {
-            completionOptions.push({ value: 'gpt-4.1-nano', label: 'gpt-4.1-nano' })
-            completionOptions.push({ value: 'gpt-4o-mini', label: 'gpt-4o-mini' })
-        }
-        if (llmApiUrl.includes('anthropic.com')) {
-            completionOptions.push({ value: 'claude-haiku-4-5', label: 'claude-haiku-4-5' })
-        }
+    if (llmApiUrl.includes('openai.com')) {
+        completionOptions.push({ value: 'gpt-4.1-nano', label: 'gpt-4.1-nano' })
+        completionOptions.push({ value: 'gpt-4o-mini', label: 'gpt-4o-mini' })
+    }
+    if (llmApiUrl.includes('anthropic.com')) {
+        completionOptions.push({ value: 'claude-haiku-4-5', label: 'claude-haiku-4-5' })
     }
     completionOptions.push({
         value: '__custom__',

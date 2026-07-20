@@ -55,6 +55,7 @@ async function buildDisplaySettings() {
         llmApiUrl: settings.llmApiUrl || process.env.LLM_API_URL || '',
         hasLlmApiKey: !!(settings.llmApiKey || process.env.LLM_API_KEY),
         allowedModels: jsonHasModels ? settings.allowedModels : envModels,
+        completionModel: settings.completionModel || '',
         llmApiUrlFromEnv: !settings.llmApiUrl && !!process.env.LLM_API_URL,
         hasApiKeyFromEnv: !settings.llmApiKey && !!process.env.LLM_API_KEY,
         allowedModelsFromEnv: !jsonHasModels && envModels.length > 0,
@@ -71,7 +72,7 @@ async function getAdminSettings(req, res) {
 }
 
 async function saveAdminSettings(req, res) {
-    const { systemPrompt, llmApiUrl, llmApiKey, allowedModels } = req.body
+    const { systemPrompt, llmApiUrl, llmApiKey, allowedModels, completionModel } = req.body
 
     if (typeof systemPrompt !== 'string') {
         return res.status(400).json({ error: 'systemPrompt must be a string' })
@@ -96,6 +97,7 @@ async function saveAdminSettings(req, res) {
         systemPrompt,
         llmApiUrl: typeof llmApiUrl === 'string' ? llmApiUrl : (existing.llmApiUrl || ''),
         allowedModels: Array.isArray(allowedModels) ? allowedModels : existing.allowedModels || [],
+        completionModel: typeof completionModel === 'string' ? completionModel : (existing.completionModel || ''),
     }
 
     if (typeof llmApiKey === 'string' && llmApiKey.trim().length > 0) {
@@ -132,6 +134,7 @@ export async function getAdminLLMSettings() {
         llmApiUrl: settings.llmApiUrl || process.env.LLM_API_URL || null,
         llmApiKey: jsonKey || process.env.LLM_API_KEY || null,
         allowedModels: jsonHasModels ? settings.allowedModels : envModelList(),
+        completionModel: settings.completionModel || '',
     }
 }
 

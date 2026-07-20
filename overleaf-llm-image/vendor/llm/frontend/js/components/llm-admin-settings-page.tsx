@@ -128,6 +128,11 @@ export default function LLMAdminSettingsPage() {
             .filter(Boolean)
     )
     const [availableModels, setAvailableModels] = useState<string[]>([])
+    // overleaf-lab: admin-chosen inline-completion model for the shared backend
+    // ('' = auto, i.e. the first allowed model). Separate from the chat models.
+    const [completionModel, setCompletionModel] = useState<string>(
+        (getMeta('ol-completionModel') as string) || ''
+    )
     const [scanStatus, setScanStatus] = useState<string | null>(null)
     const [testStatus, setTestStatus] = useState<string | null>(null)
 
@@ -162,6 +167,7 @@ export default function LLMAdminSettingsPage() {
                     llmApiUrl,
                     llmApiKey,
                     allowedModels,
+                    completionModel,
                 },
             })
         ).catch(() => { })
@@ -443,6 +449,34 @@ export default function LLMAdminSettingsPage() {
                                         </div>
                                     </>
                                 )}
+
+                                {/* overleaf-lab: admin picks the single shared inline-completion model */}
+                                <OLFormGroup controlId="llm-completion-model" style={{ marginTop: allModels.length > 0 ? '1rem' : 0 }}>
+                                    <OLFormLabel>
+                                        {t('inline_completion_model', 'Inline completion model')}
+                                    </OLFormLabel>
+                                    <select
+                                        id="llm-completion-model"
+                                        className="form-select"
+                                        value={completionModel}
+                                        onChange={e => setCompletionModel(e.target.value)}
+                                    >
+                                        <option value="">
+                                            {t('auto_first_allowed_model', 'Auto (first allowed model)')}
+                                        </option>
+                                        {allModels.map(model => (
+                                            <option key={model} value={model}>
+                                                {model}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <OLFormText>
+                                        {t(
+                                            'inline_completion_model_admin_help',
+                                            'Model used for inline autocomplete on the shared backend. Can differ from the chat models.'
+                                        )}
+                                    </OLFormText>
+                                </OLFormGroup>
                             </div>
 
                             {/* ── Section 3: System Prompt ── */}

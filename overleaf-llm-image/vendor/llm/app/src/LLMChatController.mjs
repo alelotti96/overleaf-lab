@@ -385,8 +385,11 @@ async function completion(req, res) {
     let llmApiUrl = adminLlmSettings.llmApiUrl || process.env.LLM_API_URL
     let llmApiKey = adminLlmSettings.llmApiKey || process.env.LLM_API_KEY
 
-    // overleaf-lab: default completion model (shared/local server) — may be overridden below
+    // overleaf-lab: default completion model for the shared backend. Prefer the
+    // admin-chosen completion model, then the env override, then the first env
+    // model. May be overridden below by the user's personal completion settings.
     let completionModel =
+        adminLlmSettings.completionModel ||
         process.env.LLM_COMPLETION_MODEL ||
         (process.env.LLM_MODEL_NAME || 'default').split(',')[0].trim() // 'default' instead of hardcoded 'qwen3-32b'
 
