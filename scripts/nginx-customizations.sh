@@ -33,6 +33,14 @@ if [ -f "$NGINX_CONF" ]; then
 
         # Add sub_filter to inject the CSS and increase proxy buffers for OIDC.
         # The single-quoted sed is broken to splice in "${CUSTOM_CSS}".
+        #
+        # NOTE: we deliberately do NOT set proxy_read_timeout / proxy_send_timeout
+        # here. The CEP nginx template already defines them (10m = 600s) inside this
+        # same `location / {` block, which (a) already exceeds the non-streaming LLM
+        # chat's 300s server-side timeout, so no override is needed, and (b) makes any
+        # addition a DUPLICATE directive - nginx aborts at boot with "[emerg] ...
+        # directive is duplicate" and never listens (the container stays Up, so the
+        # failure is only visible in the logs). See the LLM module notes.
         sed -i '/location \/ {/a\
         # OVERLEAF_LAB_NGINX_PATCH\
         sub_filter "</head>" "<style>'"${CUSTOM_CSS}"'</style></head>";\
@@ -41,10 +49,7 @@ if [ -f "$NGINX_CONF" ]; then
         # OVERLEAF_LAB_NGINX_PATCH: Increase proxy buffers for large OIDC headers\
         proxy_buffer_size 128k;\
         proxy_buffers 4 256k;\
-        proxy_busy_buffers_size 256k;\
-        # OVERLEAF_LAB_NGINX_PATCH: raise proxy timeouts for the non-streaming LLM chat (300s server-side; default 60s would 504)\
-        proxy_read_timeout 320s;\
-        proxy_send_timeout 320s;' "$NGINX_CONF"
+        proxy_busy_buffers_size 256k;' "$NGINX_CONF"
 
         # Add location blocks to fix OIDC undefined redirects
         sed -i '/location \/ {/i\

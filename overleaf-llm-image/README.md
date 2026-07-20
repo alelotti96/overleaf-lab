@@ -21,7 +21,9 @@ cannot be bind-mounted into a running container. The base image keeps the full
 `services/web` source + build driver (only dev-deps were pruned; `yarn install`
 restores them), so we **layer** rather than build from source.
 
-**Needs:** Docker + BuildKit · base image present/pullable · `vendor/llm/`
+**Needs:** Docker + **Buildx** (the Dockerfile uses `--mount=type=cache`, which
+requires the buildx builder; install the `docker-buildx` plugin if missing —
+`build.sh` sets `DOCKER_BUILDKIT=1`) · base image present/pullable · `vendor/llm/`
 populated · build-time npm access · **≥ 8 GB RAM** · **~15-30 min** (TeX Live is
 inherited from the base, not rebuilt).
 
@@ -89,14 +91,21 @@ routes require the `super_admin` role (consistent with
 
 ## Notes
 
-- **Non-streaming chat.** Single blocking reply, server timeout **300 s**; a proxy
-  in front needs `proxy_read_timeout ≥ 300s` (`nginx-customizations.sh` sets 320 s).
-  Completion / connection checks use 30 s.
+- **Non-streaming chat.** Single blocking reply, server timeout **300 s**. The CEP
+  nginx template already proxies `location /` with `proxy_read_timeout 10m` (600 s),
+  which covers it — so `nginx-customizations.sh` adds **no** timeout override (adding
+  one duplicates the directive and makes nginx abort at boot). Completion /
+  connection checks use 30 s.
 - **Admin keys** live in a plaintext JSON file at
   `/var/lib/overleaf/data/llm-admin-settings.json` — keep it on a writable
   persistent volume, or admin-set keys are lost on restart.
 - **Unmerged upstream.** This pins the commit's functional changes onto the frozen
   `v6.2.0-ext-v5.0` source; re-vendor and re-validate anchors if you bump the base.
+- **Chat is not persisted.** The backend is a stateless proxy; conversation history
+  lives only in the browser session and is lost on reload / navigation.
+- **Selection toolbar / "Ask AI".** Upstream these send no model and therefore only
+  use the shared backend. This build routes them to the user's **personal** model
+  when one is configured (falling back to the shared backend otherwise).
 
 ## Layout
 
@@ -109,3 +118,28 @@ overleaf-llm-image/
   vendor/llm/                    # the vendored module (fixed + super-admin-gated)
   README.md
 ```
+
+## Local changes on top of PR #171
+
+Everything under `vendor/llm/` is the upstream module with only these local
+adjustments (plus host wiring in `config.env` / `scripts/`):
+
+- Made the three hardcoded `qwen3-32b` model fallbacks env-configurable.
+- **AES-256-GCM encryption** of per-user API keys at rest (`LLMCrypto.mjs` + `LLM_KEY_SECRET`).
+- Bring-your-own keys work with **OpenAI and Anthropic** (OpenAI-compatible endpoint).
+- Per-user **inline-completion model** choice (provider-aware).
+- Admin settings restricted to **`super_admin`** (see `LLMRouter.mjs`).
+- The selection toolbar / **"Ask AI" now uses the user's personal model** when
+  configured (upstream sends no model, so it only used the shared backend).
+- Opt-in packaging: layered build, anchor-based core patcher, one-variable enable/rollback.
+
+## Credits
+
+The LLM AI Assistant is the work of **David Rotermund**
+([@davrot](https://github.com/davrot)), contributed as
+**[PR #171](https://github.com/yu-i-i/overleaf-cep/pull/171)** ("llm", commit
+`f908a9698b`) to [yu-i-i/overleaf-cep](https://github.com/yu-i-i/overleaf-cep), and
+itself derived from [lcpu-club/overleaf](https://github.com/lcpu-club/overleaf).
+Licensed **AGPL-3.0**. This directory only vendors that module into a buildable
+custom image and adds the opt-in packaging + local changes listed above; all
+AI-assistant functionality is upstream work.

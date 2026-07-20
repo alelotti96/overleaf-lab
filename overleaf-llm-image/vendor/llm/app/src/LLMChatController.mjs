@@ -156,12 +156,19 @@ async function chat(req, res) {
     }
 
     const isPersonalModel = model && model.startsWith('personal-')
+    // overleaf-lab: when the request carries NO model (the selection toolbar /
+    // "Ask AI" sends only messages), honor the user's personal LLM settings if they
+    // have them, so those features use the user's own key/model just like the chat
+    // does. Falls back to the shared backend when no personal settings exist.
+    const tryPersonalNoModel =
+        !model && userId && Settings.llm && Settings.llm.allowUserSettings
 
     const adminLlmSettings = await getAdminLLMSettings()
     let llmApiUrl = adminLlmSettings.llmApiUrl || process.env.LLM_API_URL
     let llmApiKey = adminLlmSettings.llmApiKey || process.env.LLM_API_KEY
+    let personalModelName = null
 
-    if (isPersonalModel && userId) {
+    if ((isPersonalModel || tryPersonalNoModel) && userId) {
         try {
             const user = await User.findById(
                 userId,
@@ -171,36 +178,40 @@ async function chat(req, res) {
                 user &&
                 user.useOwnLLMSettings &&
                 user.llmApiUrl &&
-                user.llmApiKey
+                user.llmApiKey &&
+                (isPersonalModel || user.llmModelName)
             ) {
                 llmApiUrl = user.llmApiUrl
                 llmApiKey = decryptSecret(user.llmApiKey) // overleaf-lab: decrypt stored key at rest
-            } else {
+                personalModelName = isPersonalModel
+                    ? model.substring('personal-'.length)
+                    : user.llmModelName // overleaf-lab: no model sent -> use the user's own model
+            } else if (isPersonalModel) {
                 return res.status(400).json({
                     error:
                         'Your LLM settings are incomplete. Please configure API URL, API Key, and Model Name in your account settings.',
                 })
             }
+            // A no-model request with incomplete personal settings falls through to
+            // the shared backend checked below.
         } catch (error) {
-            return res.status(500).json({
-                error: 'Failed to retrieve user LLM settings',
-            })
-        }
-    } else if (!isPersonalModel) {
-        if (!llmApiUrl || !llmApiKey) {
-            return res.status(503).json({
-                error:
-                    'LLM service is not configured. Please contact your administrator or configure your own LLM settings.',
-            })
+            if (isPersonalModel) {
+                return res.status(500).json({
+                    error: 'Failed to retrieve user LLM settings',
+                })
+            }
         }
     }
 
     if (!llmApiUrl || !llmApiKey) {
-        return res.status(503).json({ error: 'LLM service is not configured' })
+        return res.status(503).json({
+            error:
+                'LLM service is not configured. Please contact your administrator or configure your own LLM settings.',
+        })
     }
 
-    const modelNameForApi = isPersonalModel && model
-        ? model.substring('personal-'.length)
+    const modelNameForApi = personalModelName
+        ? personalModelName
         : model || ((process.env.LLM_MODEL_NAME || process.env.LLM_AVAILABLE_MODELS || 'default').split(',')[0].trim()) // overleaf-lab: env-configurable fallback instead of hardcoded 'qwen3-32b'
 
     const controller = new AbortController()
