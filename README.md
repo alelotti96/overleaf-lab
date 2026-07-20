@@ -222,6 +222,31 @@ sudo systemctl daemon-reload && sudo systemctl enable --now llama-server
 
 This starts llama-server on boot and restarts it if it crashes.
 
+### Multiple local models (router)
+
+`llama-server` serves one model per process, so running N models means N servers on N ports (for example port 18080 for a big chat model and 18081 for a small fast completion model). `scripts/llama-router.py` is a small, standard-library-only, OpenAI-compatible router that merges those backends behind a single endpoint: it combines every backend's `GET /v1/models` and dispatches each `POST /chat/completions` to the backend that serves the requested model.
+
+Configure it via environment variables:
+
+- `LLAMA_BACKENDS`: comma-separated backend base URLs, each ending in `/v1` (default `http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1`).
+- `ROUTER_PORT`: the router's listen port (default `18090`).
+
+The install wizard can set this up automatically: answer "yes" to the router question during the AI assistant step and it installs a systemd service named `llama-router` and points `LLM_API_URL` at the router (`http://172.17.0.1:18090/v1`, the Docker bridge host IP).
+
+To set it up manually (or re-run it later):
+
+```bash
+./scripts/setup-llama-router.sh "http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1"
+```
+
+This installs and starts the `llama-router` systemd service. It does not start the `llama-server` backends themselves: run those yourself (one per model). Once they are up, a quick test lists every model from every backend:
+
+```bash
+curl http://127.0.0.1:18090/v1/models
+```
+
+This pairs with the admin model selection: pick the big model for chat and a small fast one as the inline-completion model, and the router dispatches each request to the server that holds that model.
+
 ## Git Integration (Git Bridge)
 
 Overleaf's **Git Bridge** lets you clone, pull, and push an Overleaf project over git using a personal access token, so you can edit locally and sync changes.

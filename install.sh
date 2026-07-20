@@ -391,6 +391,23 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         else
             LLM_ALLOW_USER_SETTINGS="false"
         fi
+
+        # Optional: a local multi-model router in front of several llama-server backends
+        echo ""
+        echo "Note: this only applies if llama.cpp runs on THIS machine. If llama runs on another box, skip this and point LLM_API_URL at that box's router yourself."
+        read -p "Run a local multi-model LLM router on THIS host (bundles multiple local llama-server backends behind one endpoint)? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            SETUP_LLAMA_ROUTER="true"
+            read -p "Backend llama-server endpoints (comma-separated, each incl. /v1) [http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1]: " LLAMA_BACKENDS
+            LLAMA_BACKENDS=${LLAMA_BACKENDS:-"http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1"}
+            # Point Overleaf at the router (docker-bridge host IP) instead of a single backend
+            LLM_API_URL="http://172.17.0.1:18090/v1"
+            echo -e "${GREEN}The multi-model router will be installed as a systemd service (llama-router).${NC}"
+        else
+            SETUP_LLAMA_ROUTER="false"
+        fi
+
         echo -e "${GREEN}AI assistant (LLM) will be enabled${NC}"
     else
         ENABLE_LLM_MODULE="false"
@@ -398,6 +415,7 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         LLM_API_KEY=""
         LLM_MODEL_NAME=""
         LLM_ALLOW_USER_SETTINGS="false"
+        SETUP_LLAMA_ROUTER="false"
     fi
 
     # Create config.env.local
@@ -761,6 +779,19 @@ if [ -d "$SCRIPT_DIR/zotero-proxies" ]; then
     fi
 else
     echo -e "${YELLOW}Warning: zotero-proxies directory not found${NC}"
+fi
+
+# -----------------------------------------------------------------------------
+# Optional: local multi-model LLM router (systemd service)
+# -----------------------------------------------------------------------------
+# If the user opted in during the LLM wizard, install the llama-router service
+# now (systemd is usable at this point). A failure here must warn but NOT abort
+# the install, so it is guarded with '|| echo'.
+if [ "${SETUP_LLAMA_ROUTER:-false}" = "true" ]; then
+    echo ""
+    echo "Setting up the local multi-model LLM router (llama-router systemd service)..."
+    chmod +x ./scripts/setup-llama-router.sh
+    ./scripts/setup-llama-router.sh "$LLAMA_BACKENDS" || echo -e "${YELLOW}WARNING: llama-router setup failed; you can run ./scripts/setup-llama-router.sh manually later${NC}"
 fi
 
 # -----------------------------------------------------------------------------
