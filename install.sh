@@ -381,7 +381,7 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         ENABLE_LLM_MODULE="true"
-        read -p "Shared LLM endpoint URL (OpenAI-compatible, include /v1; e.g. local llama.cpp http://172.17.0.1:8080/v1; empty = configure later or rely on per-user keys): " LLM_API_URL
+        read -p "Shared LLM endpoint URL (OpenAI-compatible, include /v1; e.g. local llama.cpp http://172.17.0.1:18080/v1; empty = configure later or rely on per-user keys): " LLM_API_URL
         read -p "API key (leave empty for a local server with no auth): " LLM_API_KEY
         read -p "Default model name(s), comma-separated (empty = scan later from the admin page): " LLM_MODEL_NAME
         read -p "Let users bring their own OpenAI/Anthropic API keys? (y/N): " -n 1 -r

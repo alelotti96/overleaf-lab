@@ -146,7 +146,7 @@ Or manually, on an existing install, set these in `config.env.local`:
 
 ```bash
 ENABLE_LLM_MODULE="true"
-LLM_API_URL="http://172.17.0.1:8080/v1"   # OpenAI-compatible, include /v1
+LLM_API_URL="http://172.17.0.1:18080/v1"   # OpenAI-compatible, include /v1
 LLM_API_KEY=""                            # empty for a local no-auth server
 LLM_MODEL_NAME=""                         # comma-separated; empty = scan from the admin page
 LLM_ALLOW_USER_SETTINGS="true"            # let users bring their own keys
@@ -178,7 +178,7 @@ The cheapest backend is a local [llama.cpp](https://github.com/ggml-org/llama.cp
 2. Run `llama-server`, for example:
 
    ```bash
-   llama-server -hf ggml-org/gpt-oss-120b-GGUF -c 8192 --jinja --host 0.0.0.0 --port 8080
+   llama-server -hf ggml-org/gpt-oss-120b-GGUF -c 8192 --jinja --host 0.0.0.0 --port 18080
    ```
 
    - `--jinja` applies the model's chat template (required for chat).
@@ -189,7 +189,7 @@ The cheapest backend is a local [llama.cpp](https://github.com/ggml-org/llama.cp
 3. Point Overleaf at it in `config.env.local`:
 
    ```bash
-   LLM_API_URL="http://172.17.0.1:8080/v1"
+   LLM_API_URL="http://172.17.0.1:18080/v1"
    ```
 
    `172.17.0.1` is the Docker bridge host IP, so the Overleaf container can reach a `llama-server` running on the host.
@@ -206,7 +206,7 @@ Wants=network-online.target
 Type=simple
 User=<user>
 WorkingDirectory=/home/<user>/llama.cpp/build/bin
-ExecStart=/usr/bin/numactl --interleave=all /home/<user>/llama.cpp/build/bin/llama-server -hf ggml-org/gpt-oss-120b-GGUF -c 8192 -t 24 --jinja --host 0.0.0.0 --port 8080
+ExecStart=/usr/bin/numactl --interleave=all /home/<user>/llama.cpp/build/bin/llama-server -hf ggml-org/gpt-oss-120b-GGUF -c 8192 -t 24 --jinja --host 0.0.0.0 --port 18080
 Restart=always
 RestartSec=5
 
