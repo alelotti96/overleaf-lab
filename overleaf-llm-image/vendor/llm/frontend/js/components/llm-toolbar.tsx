@@ -13,6 +13,7 @@ import React, {
 import { EditorView } from '@codemirror/view'
 import { marked } from 'marked'
 import getMeta from '@/utils/meta'
+import { readSelectedModel } from '../utils/llm-selected-model'
 
 export type LLMToolbarHandle = {
     show: (view: EditorView) => void
@@ -143,6 +144,12 @@ const LLMToolbar = forwardRef<LLMToolbarHandle, {}>((_, ref) => {
             },
         ]
 
+        // overleaf-lab: reuse the model currently selected in the chat panel so
+        // "Ask AI" follows the same model. When nothing is stored (chat never
+        // opened / storage disabled) we omit `model`, keeping the previous
+        // behavior: the backend uses the user's personal model or the shared one.
+        const selectedModelId = readSelectedModel()
+
         try {
             const resp = await fetch(`/project/${projectId}/llm/chat`, {
                 method: 'POST',
@@ -151,7 +158,9 @@ const LLMToolbar = forwardRef<LLMToolbarHandle, {}>((_, ref) => {
                     'X-CSRF-Token': csrfToken,
                 },
                 credentials: 'same-origin',
-                body: JSON.stringify({ messages }),
+                body: JSON.stringify(
+                    selectedModelId ? { messages, model: selectedModelId } : { messages }
+                ),
             })
 
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`)

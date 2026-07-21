@@ -1,5 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import getMeta from '@/utils/meta'
+import {
+    readSelectedModel,
+    writeSelectedModel,
+} from '../utils/llm-selected-model'
 
 interface Message {
     role: 'system' | 'user' | 'assistant'
@@ -119,7 +123,15 @@ export const useLLMChat = () => {
                 const defaultModel =
                     modelsFromBackend.find((m: LLMModel) => m.isDefault) ||
                     modelsFromBackend[0]
-                setSelectedModel(defaultModel?.id || '')
+                // overleaf-lab: restore the last selected model if it is still
+                // available (remembers the choice and self-heals a stale/removed
+                // id by falling back to the default). See utils/llm-selected-model.
+                const stored = readSelectedModel()
+                const restored =
+                    stored && modelsFromBackend.some((m: LLMModel) => m.id === stored)
+                        ? stored
+                        : defaultModel?.id || ''
+                setSelectedModel(restored)
                 setModelsLoaded(true)
             } catch (err) {
                 console.error('[LLMChat] Failed to fetch models:', err)
@@ -132,6 +144,12 @@ export const useLLMChat = () => {
 
         fetchModels()
     }, [projectId])
+
+    // overleaf-lab: persist the selected model so the selection toolbar ("Ask AI")
+    // can reuse it. Runs for the initial default and every user change.
+    useEffect(() => {
+        writeSelectedModel(selectedModel)
+    }, [selectedModel])
 
     const sendMessage = useCallback(
         async (userMessage: string) => {
