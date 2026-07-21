@@ -156,7 +156,7 @@ const FILES = [
         'review-tooltip: llmEnabled gate',
         'const llmEnabled =',
         '    const [visible, setVisible] = useState(false)',
-        "    const [visible, setVisible] = useState(false)\n\n    const llmEnabled = !!(getMeta('ol-ExposedSettings') as any)?.llmEnabled"
+        "    const [visible, setVisible] = useState(false)\n\n    const llmEnabled = !!(getMeta('ol-ExposedSettings') as any)?.llmEnabled\n    // overleaf-lab: hide Ask AI when the admin disabled the chat feature at runtime\n    const llmChatEnabled = (window as any).__llmChatEnabled !== false"
       ),
       strEdit(
         'review-tooltip: Ask AI button',
@@ -164,7 +164,7 @@ const FILES = [
         '        </button>\n        {showChangesButtons && (',
         [
           '        </button>',
-          '        {llmEnabled && (',
+          '        {llmEnabled && llmChatEnabled && (',
           '          <>',
           '            <div className="review-tooltip-menu-divider" />',
           '            <button',
