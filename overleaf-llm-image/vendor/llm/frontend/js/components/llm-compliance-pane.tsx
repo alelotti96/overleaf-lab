@@ -215,6 +215,22 @@ function LLMCompliancePane() {
                     </OLButton>
                 </div>
 
+                {/* overleaf-lab: nudge users to keep the report; a new review is a
+                    heavy, minutes-long operation for the server. */}
+                <div
+                    style={{
+                        fontSize: '0.8em',
+                        color: MUTED,
+                        marginBottom: 8,
+                        overflowWrap: 'anywhere',
+                    }}
+                >
+                    {t(
+                        'review_download_hint',
+                        'Tip: download this report to keep it. Running a new review is a heavy operation for the server, so avoid repeating it unnecessarily.'
+                    )}
+                </div>
+
                 {/* overleaf-lab: compact counts summary */}
                 <div
                     style={{

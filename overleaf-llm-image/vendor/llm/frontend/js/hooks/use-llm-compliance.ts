@@ -67,8 +67,26 @@ interface RubricsResponse {
     rubrics?: ComplianceRubric[]
 }
 
-// overleaf-lab: build a plain, readable Markdown report from a finished result.
-function buildReportMarkdown(result: ComplianceResult): string {
+// overleaf-lab: escape user/model text before embedding it in the HTML report.
+function escapeHtml(s: string): string {
+    return String(s || '').replace(
+        /[&<>"']/g,
+        c =>
+            (({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;',
+            }) as Record<string, string>)[c] || c
+    )
+}
+
+// overleaf-lab: build a self-contained, styled HTML report from a finished result.
+// It opens in any browser and can be saved as PDF via the browser's Print dialog,
+// which avoids bundling a PDF library. Colors are fixed (a printable light document),
+// independent of the app theme.
+function buildReportHtml(result: ComplianceResult): string {
     const counts: Record<ComplianceStatus, number> = {
         ok: 0,
         partial: 0,
@@ -85,42 +103,60 @@ function buildReportMarkdown(result: ComplianceResult): string {
         missing: 'Missing',
         na: 'N/A',
     }
+    const statusColor: Record<ComplianceStatus, string> = {
+        ok: '#198754',
+        partial: '#f59e0b',
+        missing: '#dc3545',
+        na: '#6c757d',
+    }
 
-    const lines: string[] = []
-    lines.push(`# Compliance review - ${result.rubric.name}`)
-    lines.push('')
-    lines.push(`Model: ${result.model}`)
-    lines.push(
-        `Estimated document tokens: ~${result.documentTokensEstimate} / ${result.maxContextTokens}`
-    )
-    lines.push('')
-    lines.push('## Summary')
-    lines.push('')
-    lines.push(result.summary || '')
-    lines.push('')
-    lines.push(
-        `Counts: OK ${counts.ok || 0}, Partial ${counts.partial || 0}, Missing ${
-            counts.missing || 0
-        }, N/A ${counts.na || 0}`
-    )
-    lines.push('')
-    lines.push('## Requirements')
-    lines.push('')
-    result.items.forEach((item, idx) => {
-        lines.push(
-            `### ${idx + 1}. [${statusLabel[item.status] || 'N/A'}] ${item.requirement}`
-        )
-        lines.push('')
-        if (item.evidence) {
-            lines.push(`- Evidence: ${item.evidence}`)
-        }
-        if (item.suggestion) {
-            lines.push(`- Suggestion: ${item.suggestion}`)
-        }
-        lines.push('')
-    })
+    const itemsHtml = result.items
+        .map(item => {
+            const color = statusColor[item.status] || '#6c757d'
+            const label = statusLabel[item.status] || 'N/A'
+            const evidence = item.evidence
+                ? `<div class="ev"><strong>Evidence:</strong> ${escapeHtml(item.evidence)}</div>`
+                : ''
+            const suggestion = item.suggestion
+                ? `<div class="sg"><strong>Suggestion:</strong> ${escapeHtml(item.suggestion)}</div>`
+                : ''
+            return `<div class="item"><div class="req"><span class="badge" style="background:${color}">${label}</span> ${escapeHtml(
+                item.requirement
+            )}</div>${evidence}${suggestion}</div>`
+        })
+        .join('\n')
 
-    return lines.join('\n')
+    const title = `Compliance review - ${escapeHtml(result.rubric.name)}`
+
+    return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
+<style>
+  body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:820px;margin:2rem auto;padding:0 1rem;color:#1a1a1a;line-height:1.5}
+  h1{font-size:1.5rem;margin:0 0 .25rem}
+  h2{font-size:1.15rem;margin:1.5rem 0 .5rem}
+  .meta{color:#6c757d;font-size:.9rem;margin-bottom:1rem}
+  .summary{background:#f3f4f6;border-radius:8px;padding:1rem;margin:1rem 0;white-space:pre-wrap}
+  .counts span{display:inline-block;margin-right:1.25rem;font-weight:600}
+  .item{border-top:1px solid #e5e7eb;padding:.75rem 0}
+  .req{font-weight:600}
+  .badge{color:#fff;border-radius:4px;padding:1px 7px;font-size:.72rem;margin-right:6px;vertical-align:middle}
+  .ev,.sg{font-size:.9rem;color:#374151;margin-top:.3rem}
+  @media print{body{margin:0;max-width:none}}
+</style></head>
+<body>
+  <h1>${title}</h1>
+  <div class="meta">Model: ${escapeHtml(result.model)} - about ${result.documentTokensEstimate} tokens</div>
+  <div class="counts">
+    <span style="color:#198754">OK ${counts.ok || 0}</span>
+    <span style="color:#f59e0b">Partial ${counts.partial || 0}</span>
+    <span style="color:#dc3545">Missing ${counts.missing || 0}</span>
+    <span style="color:#6c757d">N/A ${counts.na || 0}</span>
+  </div>
+  <div class="summary">${escapeHtml(result.summary)}</div>
+  <h2>Requirements</h2>
+  ${itemsHtml}
+  <p class="meta">Tip: use your browser's Print dialog to save this report as PDF.</p>
+</body></html>`
 }
 
 export const useLLMCompliance = () => {
@@ -375,11 +411,12 @@ export const useLLMCompliance = () => {
         }
     }, [projectId])
 
-    // overleaf-lab: build a Markdown report and trigger a client-side download.
+    // overleaf-lab: build a self-contained HTML report and trigger a client-side
+    // download. Open it in a browser and Print to PDF for a PDF copy.
     const downloadReport = useCallback(() => {
         if (!result) return
 
-        const markdown = buildReportMarkdown(result)
+        const html = buildReportHtml(result)
         const safeRubricName =
             (result.rubric?.name || 'review')
                 .toLowerCase()
@@ -391,10 +428,10 @@ export const useLLMCompliance = () => {
         const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(
             now.getDate()
         )}-${pad(now.getHours())}${pad(now.getMinutes())}`
-        const filename = `review-${safeRubricName}-${stamp}.md`
+        const filename = `review-${safeRubricName}-${stamp}.html`
 
-        const blob = new Blob([markdown], {
-            type: 'text/markdown;charset=utf-8',
+        const blob = new Blob([html], {
+            type: 'text/html;charset=utf-8',
         })
         const url = URL.createObjectURL(blob)
         const anchor = document.createElement('a')

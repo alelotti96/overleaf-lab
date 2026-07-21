@@ -1,5 +1,6 @@
 import { memo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+import getMeta from '@/utils/meta'
 import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import OLIconButton from '@/shared/components/ol/ol-icon-button'
 import { useLLMChat } from '../hooks/use-llm-chat'
@@ -26,7 +27,31 @@ function PdfLogEntryAskAIButton({ logEntry }: AskAIButtonProps) {
     const handleAskAI = useCallback(async () => {
         if (!logEntry) return
         try {
-            const errorMessage = formatErrorForLLM(logEntry)
+            // overleaf-lab: fetch a few source lines around the error line so the
+            // model sees the actual code, not just the log. Best-effort: on any
+            // failure we send the error without the snippet.
+            let sourceSnippet = ''
+            if (logEntry.file && logEntry.line) {
+                try {
+                    const projectId = getMeta('ol-project_id')
+                    const params = new URLSearchParams({
+                        file: String(logEntry.file),
+                        line: String(logEntry.line),
+                    })
+                    const resp = await fetch(
+                        `/project/${projectId}/llm/source-context?${params.toString()}`,
+                        { credentials: 'same-origin' }
+                    )
+                    const json = await resp.json()
+                    if (json?.ok && json.snippet) {
+                        sourceSnippet = json.snippet
+                    }
+                } catch {
+                    // ignore, proceed without source context
+                }
+            }
+
+            const errorMessage = formatErrorForLLM(logEntry, sourceSnippet)
 
             // Open the LLM chat rail tab first
             window.dispatchEvent(
@@ -76,7 +101,7 @@ function PdfLogEntryAskAIButton({ logEntry }: AskAIButtonProps) {
     )
 }
 
-function formatErrorForLLM(logEntry: LogEntry): string {
+function formatErrorForLLM(logEntry: LogEntry, sourceSnippet?: string): string {
     const parts = [
         '🔴 **LaTeX Compilation Error**',
         '',
@@ -91,6 +116,19 @@ function formatErrorForLLM(logEntry: LogEntry): string {
 
     if (logEntry.line) {
         parts.push(`**Line:** ${logEntry.line}`)
+    }
+
+    // overleaf-lab: include the source lines around the error (the > line is the
+    // one the compiler flagged) so the model can point to and fix the actual code.
+    if (sourceSnippet) {
+        parts.push(
+            '',
+            '**Source around the error (the line marked with > is where the compiler reported it):**',
+            '```latex',
+            sourceSnippet,
+            '```',
+            ''
+        )
     }
 
     if (logEntry.raw && logEntry.raw !== logEntry.message) {

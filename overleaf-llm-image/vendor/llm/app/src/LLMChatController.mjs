@@ -4,6 +4,7 @@ import { AbortController } from 'abort-controller'
 import { expressify } from '@overleaf/promise-utils'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import { User } from '../../../../app/src/models/User.mjs'
+import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs' // overleaf-lab: read project docs for error source context
 import Settings from '@overleaf/settings'
 import { getSystemPrompt, getAdminLLMSettings, getLLMFeatureFlags } from './LLMAdminController.mjs'
 import { decryptSecret } from './LLMCrypto.mjs' // overleaf-lab: decrypt user API keys stored at rest
@@ -560,9 +561,89 @@ async function getFeatures(req, res) {
     res.json({ ...flags, allowUserSettings: !!(Settings.llm && Settings.llm.allowUserSettings) })
 }
 
+// overleaf-lab: return a window of source lines around a compile-error line, so the
+// "Ask AI about this error" prompt can include the actual code (not just the log
+// message). Works for any project file via getAllDocs, so an error inside an
+// \input-ed file that is not open in the editor is still covered.
+async function getSourceContext(req, res) {
+    const flags = await getLLMFeatureFlags()
+    if (!flags.chatEnabled) {
+        return res.json({ ok: false, error: 'feature_disabled' })
+    }
+
+    const projectId = req.params.Project_id
+    const rawFile = String(req.query.file || '')
+    const line = parseInt(req.query.line, 10)
+    let radius = parseInt(req.query.radius, 10)
+    if (!Number.isFinite(radius) || radius < 0) {
+        radius = 15
+    }
+    radius = Math.min(radius, 40) // overleaf-lab: cap the snippet size
+
+    if (!rawFile || !Number.isFinite(line) || line < 1) {
+        return res.json({ ok: false, error: 'bad_request' })
+    }
+
+    // overleaf-lab: normalize a log file path (may be /compile/x, ./x, or /x) to the
+    // project doc path key used by getAllDocs.
+    const norm = p =>
+        String(p || '')
+            .replace(/^\/?compile\//, '')
+            .replace(/^\.\//, '')
+            .replace(/^\//, '')
+
+    try {
+        const docsByPath = await ProjectEntityHandler.promises.getAllDocs(projectId)
+        const target = norm(rawFile)
+        const targetBase = target.split('/').pop()
+        let match = null
+        let baseMatch = null
+        for (const [docPath, value] of Object.entries(docsByPath || {})) {
+            if (!value) {
+                continue
+            }
+            const np = norm(docPath)
+            if (np === target || np.endsWith('/' + target) || target.endsWith('/' + np)) {
+                match = { path: docPath, lines: value.lines || [] }
+                break
+            }
+            if (!baseMatch && np.split('/').pop() === targetBase) {
+                baseMatch = { path: docPath, lines: value.lines || [] }
+            }
+        }
+        match = match || baseMatch
+        if (!match) {
+            return res.json({ ok: false, error: 'not_found' })
+        }
+
+        const lines = match.lines
+        const idx = line - 1
+        const start = Math.max(0, idx - radius)
+        const end = Math.min(lines.length, idx + radius + 1)
+        const numbered = []
+        for (let i = start; i < end; i++) {
+            // overleaf-lab: a leading '>' marks the line the compiler flagged.
+            const marker = i === idx ? '>' : ' '
+            numbered.push(`${marker} ${i + 1}: ${lines[i]}`)
+        }
+
+        return res.json({
+            ok: true,
+            file: match.path,
+            line,
+            startLine: start + 1,
+            snippet: numbered.join('\n'),
+        })
+    } catch (err) {
+        logger.warn({ projectId, err }, '[LLM] source-context failed')
+        return res.json({ ok: false, error: 'failed' })
+    }
+}
+
 export default {
     chat: expressify(chat),
     getModels: expressify(getModels),
     completion: expressify(completion),
     getFeatures: expressify(getFeatures),
+    getSourceContext: expressify(getSourceContext),
 }

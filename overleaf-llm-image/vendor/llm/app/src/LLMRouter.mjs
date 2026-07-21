@@ -66,6 +66,14 @@ export default {
         )
         logger.debug({}, '[LLM] Route registered: GET /project/:id/llm/features')
 
+        // overleaf-lab: source lines around a compile-error line for "Ask AI about this error"
+        webRouter.get(
+            '/project/:Project_id/llm/source-context',
+            AuthorizationMiddleware.ensureUserCanReadProject,
+            LLMChatController.getSourceContext
+        )
+        logger.debug({}, '[LLM] Route registered: GET /project/:id/llm/source-context')
+
         // Inline completion endpoint (project-scoped)
         webRouter.post(
             '/project/:Project_id/llm/completion',

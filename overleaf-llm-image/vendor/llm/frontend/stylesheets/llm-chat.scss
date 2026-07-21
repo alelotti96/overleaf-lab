@@ -79,7 +79,10 @@
         box-sizing: border-box;
     }
 
-    align-items: center;
+    /* overleaf-lab: stretch children to the full panel width so the input box and
+       messages grow as the panel widens (was center, which pinned them to their
+       content width and left the input small). */
+    align-items: stretch;
     padding: var(--spacing-03) var(--spacing-04) var(--spacing-03) var(--spacing-02);
     background-color: var(--llm-chat-new-message-bg);
     border-bottom: 1px solid var(--llm-chat-new-message-border);
@@ -120,8 +123,9 @@
         border: 1px solid var(--llm-chat-new-message-textarea-border);
         border-radius: var(--border-radius-base);
         background-color: var(--llm-chat-new-message-textarea-bg, #fff);
-        /* ensure the option text is readable in all themes */
-        color: var(--content-primary-themed);
+        /* overleaf-lab: inherit the themed panel text so the CLOSED select is legible
+           on light and dark (the option popup is themed separately below). */
+        color: inherit;
         font-size: var(--font-size-02);
         outline: none;
         border-color: var(--border-primary);
@@ -135,6 +139,15 @@
         background-position: calc(100% - 12px) calc(1em + 2px), calc(100% - 7px) calc(1em + 2px);
         background-size: 6px 6px, 6px 6px;
         background-repeat: no-repeat;
+
+        /* overleaf-lab: theme the native dropdown popup. Field/FieldText are a
+           matched CSS system-color pair, so the option list stays readable in both
+           light and dark, independent of how the app signals its theme (this fixes
+           the white-background / light-grey-text popup on the dark theme). */
+        option {
+            background-color: Field;
+            color: FieldText;
+        }
 
         &:focus {
             border-color: var(--border-primary);

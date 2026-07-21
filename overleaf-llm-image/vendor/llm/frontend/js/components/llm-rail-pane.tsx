@@ -37,11 +37,12 @@ function LLMRailPane() {
         border: 'none',
         padding: '6px 12px',
         cursor: 'pointer',
-        // overleaf-lab: use the theme-adaptive text color for BOTH tabs and
+        // overleaf-lab: inherit the panel's themed text color for BOTH tabs (same
+        // color as the "AI Assistant" header, so legible on light and dark), and
         // distinguish the active one with weight + an accent underline, the inactive
-        // one with reduced opacity. This stays legible on light and dark themes
-        // (the old --content-secondary fallback was too dim to read on dark).
-        color: 'var(--content-primary, inherit)',
+        // one with reduced opacity. Using inherit avoids depending on a token that
+        // did not flip on dark (--content-primary read dark-on-dark before).
+        color: 'inherit',
         opacity: active ? 1 : 0.6,
         fontWeight: active ? 600 : 400,
         borderBottom: active

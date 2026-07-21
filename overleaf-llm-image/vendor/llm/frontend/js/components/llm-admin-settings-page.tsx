@@ -107,6 +107,56 @@ const stepNumberStyle: React.CSSProperties = {
     flexShrink: 0,
 }
 
+// overleaf-lab: a small accessible toggle switch (styled from a button) used for
+// the per-feature enable/disable controls.
+function ToggleSwitch({
+    checked,
+    onChange,
+    label,
+}: {
+    checked: boolean
+    onChange: (v: boolean) => void
+    label?: string
+}) {
+    return (
+        <button
+            type="button"
+            role="switch"
+            aria-checked={checked}
+            aria-label={label}
+            onClick={() => onChange(!checked)}
+            style={{
+                position: 'relative',
+                width: 42,
+                height: 24,
+                flexShrink: 0,
+                borderRadius: 999,
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                transition: 'background-color 0.15s',
+                backgroundColor: checked
+                    ? 'var(--bg-accent-01, #0d6efd)'
+                    : 'var(--border-color-02, #adb5bd)',
+            }}
+        >
+            <span
+                style={{
+                    position: 'absolute',
+                    top: 3,
+                    left: checked ? 21 : 3,
+                    width: 18,
+                    height: 18,
+                    borderRadius: '50%',
+                    backgroundColor: '#fff',
+                    transition: 'left 0.15s',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                }}
+            />
+        </button>
+    )
+}
+
 export default function LLMAdminSettingsPage() {
     const { t } = useTranslation()
     const hasStoredKey = getMeta('ol-hasLlmApiKey') === 'true'
@@ -300,77 +350,30 @@ export default function LLMAdminSettingsPage() {
                                     borderRadius: '6px',
                                     overflow: 'hidden',
                                 }}>
-                                    <label
-                                        style={{
-                                            display: 'flex',
-                                            alignItems: 'flex-start',
-                                            gap: '0.75rem',
-                                            padding: '0.75rem 1rem',
-                                            borderBottom: '1px solid var(--border-color-01, #dee2e6)',
-                                            cursor: 'pointer',
-                                            margin: 0,
-                                        }}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={chatEnabled}
-                                            onChange={e => setChatEnabled(e.target.checked)}
-                                            style={{ width: '1rem', height: '1rem', marginTop: '0.125rem', accentColor: 'var(--bg-accent-01, #0d6efd)' }}
-                                        />
-                                        <div>
-                                            <span style={{ fontWeight: 500 }}>{t('feature_chat', 'Chat')}</span>
-                                            <OLFormText style={{ margin: 0 }}>
-                                                {t('feature_chat_help', 'The AI chat panel and Ask AI on selection.')}
-                                            </OLFormText>
+                                    {/* overleaf-lab: one toggle switch per feature */}
+                                    {[
+                                        { key: 'chat', on: chatEnabled, set: setChatEnabled, title: t('feature_chat', 'Chat'), help: t('feature_chat_help', 'The AI chat panel and Ask AI on selection.') },
+                                        { key: 'completion', on: completionEnabled, set: setCompletionEnabled, title: t('feature_completion', 'Inline completion'), help: t('feature_completion_help', 'Autocomplete suggestions while typing.') },
+                                        { key: 'review', on: reviewEnabled, set: setReviewEnabled, title: t('feature_review', 'Compliance review'), help: t('feature_review_help', 'The whole-document review.') },
+                                    ].map((f, i, arr) => (
+                                        <div
+                                            key={f.key}
+                                            style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                gap: '1rem',
+                                                padding: '0.75rem 1rem',
+                                                borderBottom: i < arr.length - 1 ? '1px solid var(--border-color-01, #dee2e6)' : undefined,
+                                            }}
+                                        >
+                                            <div>
+                                                <span style={{ fontWeight: 500 }}>{f.title}</span>
+                                                <OLFormText style={{ margin: 0 }}>{f.help}</OLFormText>
+                                            </div>
+                                            <ToggleSwitch checked={f.on} onChange={f.set} label={f.title} />
                                         </div>
-                                    </label>
-                                    <label
-                                        style={{
-                                            display: 'flex',
-                                            alignItems: 'flex-start',
-                                            gap: '0.75rem',
-                                            padding: '0.75rem 1rem',
-                                            borderBottom: '1px solid var(--border-color-01, #dee2e6)',
-                                            cursor: 'pointer',
-                                            margin: 0,
-                                        }}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={completionEnabled}
-                                            onChange={e => setCompletionEnabled(e.target.checked)}
-                                            style={{ width: '1rem', height: '1rem', marginTop: '0.125rem', accentColor: 'var(--bg-accent-01, #0d6efd)' }}
-                                        />
-                                        <div>
-                                            <span style={{ fontWeight: 500 }}>{t('feature_completion', 'Inline completion')}</span>
-                                            <OLFormText style={{ margin: 0 }}>
-                                                {t('feature_completion_help', 'Autocomplete suggestions while typing.')}
-                                            </OLFormText>
-                                        </div>
-                                    </label>
-                                    <label
-                                        style={{
-                                            display: 'flex',
-                                            alignItems: 'flex-start',
-                                            gap: '0.75rem',
-                                            padding: '0.75rem 1rem',
-                                            cursor: 'pointer',
-                                            margin: 0,
-                                        }}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={reviewEnabled}
-                                            onChange={e => setReviewEnabled(e.target.checked)}
-                                            style={{ width: '1rem', height: '1rem', marginTop: '0.125rem', accentColor: 'var(--bg-accent-01, #0d6efd)' }}
-                                        />
-                                        <div>
-                                            <span style={{ fontWeight: 500 }}>{t('feature_review', 'Compliance review')}</span>
-                                            <OLFormText style={{ margin: 0 }}>
-                                                {t('feature_review_help', 'The whole-document review.')}
-                                            </OLFormText>
-                                        </div>
-                                    </label>
+                                    ))}
                                 </div>
                             </div>
 
