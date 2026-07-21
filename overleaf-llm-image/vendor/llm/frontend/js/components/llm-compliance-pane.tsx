@@ -21,7 +21,13 @@ const STATUS_STYLE: Record<
     na: { icon: 'remove', color: 'var(--content-secondary, #6c757d)' },
 }
 
-const MUTED = 'var(--content-secondary, #6c757d)'
+// overleaf-lab: a muted-but-readable text color that adapts to the theme. It is a
+// slightly faded version of the ADAPTIVE primary token (--content-primary-themed,
+// the one that actually flips on dark), so grey text stays legible on the dark
+// theme. If color-mix is unsupported the value is ignored and the text falls back
+// to the inherited (readable) color.
+const MUTED =
+    'color-mix(in srgb, var(--content-primary-themed) 72%, transparent)'
 
 function ComplianceReportItem({ item }: { item: ComplianceItem }) {
     const { t } = useTranslation()
@@ -260,7 +266,11 @@ function LLMCompliancePane() {
                     style={{
                         padding: 10,
                         borderRadius: 6,
-                        background: 'var(--bg-light-secondary, rgba(125,125,125,0.08))',
+                        // overleaf-lab: translucent grey (works on light and dark)
+                        // instead of the fixed light --bg-light-secondary, which was a
+                        // white box on the dark theme, and an adaptive text color.
+                        background: 'rgba(125,125,125,0.14)',
+                        color: 'var(--content-primary-themed)',
                         overflowWrap: 'anywhere',
                     }}
                 >

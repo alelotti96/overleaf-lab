@@ -8,29 +8,29 @@
 // none of them forces a dark background.
 :root {
     --llm-chat-bg: transparent;
-    --llm-chat-color: var(--content-primary, inherit);
-    --llm-chat-text-color: var(--content-primary, inherit);
+    --llm-chat-color: var(--content-primary-themed, inherit);
+    --llm-chat-text-color: var(--content-primary-themed, inherit);
     --llm-chat-instructions-color: var(--content-secondary, #6c757d);
     --llm-chat-new-message-bg: transparent;
-    --llm-chat-new-message-textarea-color: var(--content-primary, inherit);
+    --llm-chat-new-message-textarea-color: var(--content-primary-themed, inherit);
     --llm-chat-new-message-textarea-bg: var(--bg-primary, transparent);
     --llm-chat-new-message-textarea-border: var(--border-primary, rgba(125, 125, 125, 0.35));
     --llm-chat-new-message-border: var(--border-primary, rgba(125, 125, 125, 0.2));
     --llm-chat-message-user-bg: var(--green-70, #2b8a5f);
     --llm-chat-message-user-text: var(--white, #fff);
     --llm-chat-message-assistant-bg: rgba(125, 125, 125, 0.14);
-    --llm-chat-message-assistant-text: var(--content-primary, inherit);
+    --llm-chat-message-assistant-text: var(--content-primary-themed, inherit);
     --llm-chat-code-bg: rgba(125, 125, 125, 0.18);
-    --llm-chat-code-text: var(--content-primary, inherit);
+    --llm-chat-code-text: var(--content-primary-themed, inherit);
 
     /* LLM-specific fallbacks for suggestion items and selector */
     --llm-chat-suggestions-bg: rgba(125, 125, 125, 0.1);
-    --llm-chat-suggestions-color: var(--content-primary, inherit);
-    --llm-chat-suggestions-title-color: var(--content-primary, inherit);
+    --llm-chat-suggestions-color: var(--content-primary-themed, inherit);
+    --llm-chat-suggestions-title-color: var(--content-primary-themed, inherit);
     --llm-chat-suggestion-item-bg: var(--bg-primary, transparent);
-    --llm-chat-suggestion-item-color: var(--content-primary, inherit);
-    --llm-model-selector-label-color: var(--content-primary, inherit);
-    --llm-model-selector-select-color: var(--content-primary, inherit);
+    --llm-chat-suggestion-item-color: var(--content-primary-themed, inherit);
+    --llm-model-selector-label-color: var(--content-primary-themed, inherit);
+    --llm-model-selector-select-color: var(--content-primary-themed, inherit);
     /* Max width used by suggestions and model selector */
     --llm-suggestions-max-width: 350px;
 }
@@ -123,9 +123,11 @@
         border: 1px solid var(--llm-chat-new-message-textarea-border);
         border-radius: var(--border-radius-base);
         background-color: var(--llm-chat-new-message-textarea-bg, #fff);
-        /* overleaf-lab: inherit the themed panel text so the CLOSED select is legible
-           on light and dark (the option popup is themed separately below). */
-        color: inherit;
+        /* overleaf-lab: use the ADAPTIVE themed token so the CLOSED select (the
+           selected model name) is legible on light AND dark. Plain --content-primary
+           did not flip on dark; --content-primary-themed does (the "Model" label
+           already uses it). The option popup is themed separately below. */
+        color: var(--content-primary-themed);
         font-size: var(--font-size-02);
         outline: none;
         border-color: var(--border-primary);
