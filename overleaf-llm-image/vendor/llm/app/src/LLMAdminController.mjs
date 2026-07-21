@@ -63,6 +63,11 @@ async function buildDisplaySettings() {
         complianceRubrics: Array.isArray(settings.complianceRubrics) ? settings.complianceRubrics : [],
         reviewModel: settings.reviewModel || '',
         maxContextTokens: settings.maxContextTokens || 32000,
+        // overleaf-lab: per-feature enable flags; absent field defaults to true so
+        // existing installs keep every feature on.
+        chatEnabled: settings.chatEnabled !== false,
+        completionEnabled: settings.completionEnabled !== false,
+        reviewEnabled: settings.reviewEnabled !== false,
     }
 }
 
@@ -85,6 +90,9 @@ async function saveAdminSettings(req, res) {
         complianceRubrics,
         reviewModel,
         maxContextTokens,
+        chatEnabled,
+        completionEnabled,
+        reviewEnabled,
     } = req.body
 
     if (typeof systemPrompt !== 'string') {
@@ -110,6 +118,18 @@ async function saveAdminSettings(req, res) {
     }
     if (reviewModel !== undefined && typeof reviewModel !== 'string') {
         return res.status(400).json({ error: 'reviewModel must be a string' })
+    }
+
+    // overleaf-lab: per-feature enable flags are optional booleans. When provided
+    // they must be booleans; when omitted the existing value is preserved below.
+    if (chatEnabled !== undefined && typeof chatEnabled !== 'boolean') {
+        return res.status(400).json({ error: 'chatEnabled must be a boolean' })
+    }
+    if (completionEnabled !== undefined && typeof completionEnabled !== 'boolean') {
+        return res.status(400).json({ error: 'completionEnabled must be a boolean' })
+    }
+    if (reviewEnabled !== undefined && typeof reviewEnabled !== 'boolean') {
+        return res.status(400).json({ error: 'reviewEnabled must be a boolean' })
     }
 
     const existing = await readAdminSettings()
@@ -152,6 +172,10 @@ async function saveAdminSettings(req, res) {
         complianceRubrics: sanitizedRubrics,
         reviewModel: typeof reviewModel === 'string' ? reviewModel : (existing.reviewModel || ''),
         maxContextTokens: sanitizedMaxContextTokens,
+        // overleaf-lab: omitted flag keeps the existing value (default true).
+        chatEnabled: typeof chatEnabled === 'boolean' ? chatEnabled : (existing.chatEnabled !== false),
+        completionEnabled: typeof completionEnabled === 'boolean' ? completionEnabled : (existing.completionEnabled !== false),
+        reviewEnabled: typeof reviewEnabled === 'boolean' ? reviewEnabled : (existing.reviewEnabled !== false),
     }
 
     if (typeof llmApiKey === 'string' && llmApiKey.trim().length > 0) {
@@ -192,6 +216,23 @@ export async function getAdminLLMSettings() {
         // overleaf-lab: document compliance review settings
         reviewModel: settings.reviewModel || '',
         maxContextTokens: settings.maxContextTokens || 32000,
+        // overleaf-lab: per-feature enable flags (absent field defaults to true).
+        chatEnabled: settings.chatEnabled !== false,
+        completionEnabled: settings.completionEnabled !== false,
+        reviewEnabled: settings.reviewEnabled !== false,
+    }
+}
+
+// overleaf-lab: per-feature enable flags for the chat, inline completion, and
+// compliance review features. An absent field defaults to true so existing
+// installs keep every feature on. Used for backend enforcement across the
+// project-scoped controllers and the user settings page.
+export async function getLLMFeatureFlags() {
+    const s = await readAdminSettings()
+    return {
+        chatEnabled: s.chatEnabled !== false,
+        completionEnabled: s.completionEnabled !== false,
+        reviewEnabled: s.reviewEnabled !== false,
     }
 }
 

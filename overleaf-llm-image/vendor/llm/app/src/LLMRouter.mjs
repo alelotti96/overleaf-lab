@@ -58,6 +58,14 @@ export default {
         )
         logger.debug({}, '[LLM] Route registered: GET /project/:id/llm/models')
 
+        // overleaf-lab: per-feature enable flags for the project UI.
+        webRouter.get(
+            '/project/:Project_id/llm/features',
+            AuthorizationMiddleware.ensureUserCanReadProject,
+            LLMChatController.getFeatures
+        )
+        logger.debug({}, '[LLM] Route registered: GET /project/:id/llm/features')
+
         // Inline completion endpoint (project-scoped)
         webRouter.post(
             '/project/:Project_id/llm/completion',
@@ -75,11 +83,25 @@ export default {
         logger.debug({}, '[LLM] Route registered: GET /project/:id/llm/compliance/rubrics')
 
         webRouter.post(
-            '/project/:Project_id/llm/compliance',
+            '/project/:Project_id/llm/compliance/start',
             AuthorizationMiddleware.ensureUserCanReadProject,
-            LLMComplianceController.runCompliance
+            LLMComplianceController.startReview
         )
-        logger.debug({}, '[LLM] Route registered: POST /project/:id/llm/compliance')
+        logger.debug({}, '[LLM] Route registered: POST /project/:id/llm/compliance/start')
+
+        webRouter.get(
+            '/project/:Project_id/llm/compliance/status/:jobId',
+            AuthorizationMiddleware.ensureUserCanReadProject,
+            LLMComplianceController.statusReview
+        )
+        logger.debug({}, '[LLM] Route registered: GET /project/:id/llm/compliance/status/:jobId')
+
+        webRouter.post(
+            '/project/:Project_id/llm/compliance/cancel/:jobId',
+            AuthorizationMiddleware.ensureUserCanReadProject,
+            LLMComplianceController.cancelReview
+        )
+        logger.debug({}, '[LLM] Route registered: POST /project/:id/llm/compliance/cancel/:jobId')
 
         // User LLM settings (only if allowed)
         if (Settings.llm && Settings.llm.allowUserSettings) {

@@ -8,6 +8,7 @@ import OLFormLabel from '@/shared/components/ol/ol-form-label'
 import OLFormControl from '@/shared/components/ol/ol-form-control'
 import OLFormText from '@/shared/components/ol/ol-form-text'
 import OLNotification from '@/shared/components/ol/ol-notification'
+import getMeta from '@/utils/meta'
 
 type Props = {
     initialSettings?: {
@@ -32,6 +33,13 @@ function providerFromUrl(url: string): 'openai' | 'anthropic' | 'custom' {
 
 export default function LLMSettingsSection({ initialSettings }: Props) {
     const { t } = useTranslation()
+    // overleaf-lab: super-admin feature flags for this user settings page. There
+    // is no project id here, so the flags come from server-rendered meta (both
+    // default to true when absent). Hide the personal chat-model UI when chat is
+    // off and the inline-completion-model UI when completion is off. The backend
+    // only renders this page when at least one is enabled.
+    const chatEnabled = getMeta('ol-featureChatEnabled') !== false
+    const completionEnabled = getMeta('ol-featureCompletionEnabled') !== false
     const [useOwnLLMSettings, setUseOwnLLMSettings] = useState(
         initialSettings?.useOwnSettings || false
     )
@@ -357,76 +365,84 @@ export default function LLMSettingsSection({ initialSettings }: Props) {
                         </OLFormGroup>
                     )}
 
-                    <OLFormGroup controlId="llm-chat-models-input">
-                        <OLFormLabel>
-                            {t('chat_models', 'Chat models')}
-                        </OLFormLabel>
-                        {chatModelOptions.length > 0 && (
-                            <select
-                                id="llm-chat-models-input"
-                                className="form-select"
-                                multiple
-                                size={Math.min(
-                                    8,
-                                    Math.max(6, chatModelOptions.length)
+                    {/* overleaf-lab: personal CHAT model UI, hidden when the admin
+                        disabled the chat feature for this user. */}
+                    {chatEnabled && (
+                        <OLFormGroup controlId="llm-chat-models-input">
+                            <OLFormLabel>
+                                {t('chat_models', 'Chat models')}
+                            </OLFormLabel>
+                            {chatModelOptions.length > 0 && (
+                                <select
+                                    id="llm-chat-models-input"
+                                    className="form-select"
+                                    multiple
+                                    size={Math.min(
+                                        8,
+                                        Math.max(6, chatModelOptions.length)
+                                    )}
+                                    value={selectedChatModels}
+                                    onChange={handleChatModelsSelect}
+                                >
+                                    {chatModelOptions.map(m => (
+                                        <option key={m} value={m}>
+                                            {m}
+                                        </option>
+                                    ))}
+                                </select>
+                            )}
+                            <OLFormControl
+                                type="text"
+                                value={llmModelName}
+                                onChange={e => setLlmModelName(e.target.value)}
+                                placeholder="e.g., gpt-4o, gpt-4.1"
+                                style={{ marginTop: '0.5rem' }}
+                            />
+                            <OLFormText>
+                                {t(
+                                    'chat_models_help',
+                                    'Pick one or more chat models (or type comma-separated ids). The first one is the default in the editor.'
                                 )}
-                                value={selectedChatModels}
-                                onChange={handleChatModelsSelect}
+                            </OLFormText>
+                        </OLFormGroup>
+                    )}
+
+                    {/* overleaf-lab: personal inline-COMPLETION model UI, hidden when
+                        the admin disabled the completion feature for this user. */}
+                    {completionEnabled && (
+                        <OLFormGroup controlId="llm-completion-model-input">
+                            <OLFormLabel>
+                                {t('inline_completion_model', 'Inline completion model')}
+                            </OLFormLabel>
+                            <select
+                                id="llm-completion-model-input"
+                                className="form-select"
+                                value={completionSelectValue}
+                                onChange={e => handleCompletionSelect(e.target.value)}
                             >
-                                {chatModelOptions.map(m => (
-                                    <option key={m} value={m}>
-                                        {m}
+                                {completionOptions.map(opt => (
+                                    <option key={opt.value} value={opt.value}>
+                                        {opt.label}
                                     </option>
                                 ))}
                             </select>
-                        )}
-                        <OLFormControl
-                            type="text"
-                            value={llmModelName}
-                            onChange={e => setLlmModelName(e.target.value)}
-                            placeholder="e.g., gpt-4o, gpt-4.1"
-                            style={{ marginTop: '0.5rem' }}
-                        />
-                        <OLFormText>
-                            {t(
-                                'chat_models_help',
-                                'Pick one or more chat models (or type comma-separated ids). The first one is the default in the editor.'
+                            {showCustomCompletion && (
+                                <OLFormControl
+                                    type="text"
+                                    value={llmCompletionModel}
+                                    onChange={e => setLlmCompletionModel(e.target.value)}
+                                    placeholder="e.g., gpt-4o-mini"
+                                    style={{ marginTop: '0.5rem' }}
+                                />
                             )}
-                        </OLFormText>
-                    </OLFormGroup>
-
-                    <OLFormGroup controlId="llm-completion-model-input">
-                        <OLFormLabel>
-                            {t('inline_completion_model', 'Inline completion model')}
-                        </OLFormLabel>
-                        <select
-                            id="llm-completion-model-input"
-                            className="form-select"
-                            value={completionSelectValue}
-                            onChange={e => handleCompletionSelect(e.target.value)}
-                        >
-                            {completionOptions.map(opt => (
-                                <option key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                </option>
-                            ))}
-                        </select>
-                        {showCustomCompletion && (
-                            <OLFormControl
-                                type="text"
-                                value={llmCompletionModel}
-                                onChange={e => setLlmCompletionModel(e.target.value)}
-                                placeholder="e.g., gpt-4o-mini"
-                                style={{ marginTop: '0.5rem' }}
-                            />
-                        )}
-                        <OLFormText>
-                            {t(
-                                'inline_completion_model_help',
-                                'Local / shared model is free and low-latency. gpt-4.1-nano / gpt-4o-mini cost roughly a few cents per month; claude-haiku costs more (completion runs at high frequency).'
-                            )}
-                        </OLFormText>
-                    </OLFormGroup>
+                            <OLFormText>
+                                {t(
+                                    'inline_completion_model_help',
+                                    'Local / shared model is free and low-latency. gpt-4.1-nano / gpt-4o-mini cost roughly a few cents per month; claude-haiku costs more (completion runs at high frequency).'
+                                )}
+                            </OLFormText>
+                        </OLFormGroup>
+                    )}
 
                     <OLFormGroup>
                         <OLFormText>

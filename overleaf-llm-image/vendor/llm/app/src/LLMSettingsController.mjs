@@ -6,6 +6,7 @@ import SessionManager from '../../../../app/src/Features/Authentication/SessionM
 import { User } from '../../../../app/src/models/User.mjs'
 import { expressify } from '@overleaf/promise-utils'
 import { encryptSecret, decryptSecret } from './LLMCrypto.mjs' // overleaf-lab: at-rest encryption of user API keys
+import { getLLMFeatureFlags } from './LLMAdminController.mjs' // overleaf-lab: per-feature enable flags
 
 const llmSettingsPugPath = fileURLToPath(
     new URL('../../app/views/llm-settings.pug', import.meta.url)
@@ -15,6 +16,13 @@ async function llmSettingsPage(req, res) {
     const userId = SessionManager.getLoggedInUserId(req.session)
 
     logger.debug({ userId, pugPath: llmSettingsPugPath }, '[LLM] llmSettingsPage: rendering')
+
+    // overleaf-lab: when both chat and inline completion are disabled by the admin,
+    // the personal-settings page has nothing to configure, so send the user home.
+    const flags = await getLLMFeatureFlags()
+    if (!flags.chatEnabled && !flags.completionEnabled) {
+        return res.redirect('/')
+    }
 
     let user = {}
     try {
@@ -39,7 +47,11 @@ async function llmSettingsPage(req, res) {
         '[LLM] llmSettingsPage: user settings loaded'
     )
 
-    res.render(llmSettingsPugPath, { user: { llmSettings } })
+    res.render(llmSettingsPugPath, {
+        user: { llmSettings },
+        // overleaf-lab: expose the enable flags so the page can hide the disabled section.
+        featureFlags: { chatEnabled: flags.chatEnabled, completionEnabled: flags.completionEnabled },
+    })
 }
 
 async function checkLLMConnection(req, res) {

@@ -130,7 +130,7 @@ In Overleaf: **New File → From External URL** → paste the URL as `references
 
 ## AI Assistant (LLM)
 
-An optional in-editor AI assistant: a chat panel, "Ask AI" on a text selection, "Ask AI about this error" on compile-log entries, and inline completion. It is backed by any OpenAI-compatible LLM: a local llama.cpp server, a hosted API, or each user's own key.
+An optional in-editor AI assistant: a chat panel, "Ask AI" on a text selection, "Ask AI about this error" on compile-log entries, inline completion, and a **document compliance review** that checks the whole project against admin-defined rubrics. It is backed by any OpenAI-compatible LLM: a local llama.cpp server, a hosted API, or each user's own key.
 
 It is **opt-in** and ships **off** by default. Enabling it requires **building a custom Docker image** (`overleaf-lab/sharelatex-llm`, layered `FROM` the stock Overleaf image), because the editor frontend is bundled at build time and cannot be added to a running container:
 
@@ -165,6 +165,18 @@ then build the image and apply:
 ### Bring-your-own keys
 
 With `LLM_ALLOW_USER_SETTINGS=true`, each user can add their own provider in their **AI Settings**: an OpenAI endpoint (`https://api.openai.com/v1`) or an Anthropic endpoint (`https://api.anthropic.com/v1`), plus their key and model. A "Personal" model then appears in the chat picker and routes to their account. User keys are **AES-256-GCM encrypted at rest** in MongoDB. The admin LLM settings page (`/admin/llm/settings`) is **super-admin only**.
+
+Each user also picks their **inline-completion model** (local shared, or their own cheap cloud model). A super-admin can set the shared completion model to **Disabled**, so autocomplete runs only for users with their own key, keeping the high-frequency load off a self-hosted backend.
+
+### Feature toggles
+
+A super-admin can enable or disable each AI feature independently (chat, inline completion, compliance review) from `/admin/llm/settings`. A disabled feature is refused by the backend for everyone, including users with their own key, and its UI is hidden (with chat off but review on, the Review panel stays available). If both chat and completion are disabled, the per-user AI Settings page is hidden too. All features are on by default.
+
+### Document compliance review
+
+A super-admin defines named **rubrics** (writing guidelines for theses / internships) in `/admin/llm/settings`, along with the **review model** and its **max context tokens**. In the editor, users open the AI Assistant rail, switch to the **Review** tab, pick a rubric, and run: the whole project (all `.tex` files) is checked against the rubric and a per-requirement report is produced (status, evidence, suggestion), with a **Download report** button.
+
+Reviews are long, so they run **one at a time** with a queue: the UI shows the queue position, a running or queued review can be **cancelled** (and is cancelled automatically on page refresh), and a project too large for the review model's context window is refused rather than truncated. Point the review model at a large-context server (see the router below to run a separate review backend).
 
 ### Updating
 

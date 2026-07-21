@@ -65,17 +65,20 @@ function LLMCompliancePane() {
         rubricsLoaded,
         selectedRubricId,
         setSelectedRubricId,
-        isRunning,
+        phase,
+        position,
         result,
         errorInfo,
         runReview,
+        cancelReview,
+        downloadReport,
         hasRubrics,
     } = useLLMCompliance()
 
     if (!rubricsLoaded) {
         return (
             <div style={{ padding: 12, color: MUTED }}>
-                {t('loading', 'Loading')}…
+                {t('loading', 'Loading')}...
             </div>
         )
     }
@@ -91,12 +94,18 @@ function LLMCompliancePane() {
         )
     }
 
-    // overleaf-lab: map the fixed backend error codes to friendly copy.
+    // overleaf-lab: a job is active (in queue or running) while we poll it.
+    const isActive = phase === 'queued' || phase === 'running'
+    // overleaf-lab: the run button is only shown/enabled in the resting phases.
+    const showRunButton = phase === 'idle' || phase === 'done' || phase === 'error'
+
+    // overleaf-lab: map the fixed backend error codes to friendly copy. The code
+    // now lives in errorInfo.errorCode.
     const renderError = (): React.ReactNode => {
         if (!errorInfo) return null
 
         let message: string
-        switch (errorInfo.error) {
+        switch (errorInfo.errorCode) {
             case 'too_long':
                 message = t(
                     'review_too_long',
@@ -127,6 +136,12 @@ function LLMCompliancePane() {
             case 'disabled':
                 message = t('review_disabled', 'The AI service is disabled.')
                 break
+            case 'not_found':
+                message = t(
+                    'review_not_found',
+                    'The review was not found or has expired.'
+                )
+                break
             default:
                 message =
                     errorInfo.message ||
@@ -134,7 +149,7 @@ function LLMCompliancePane() {
         }
 
         const showTokens =
-            errorInfo.error === 'too_long' &&
+            errorInfo.errorCode === 'too_long' &&
             errorInfo.documentTokensEstimate != null &&
             errorInfo.maxContextTokens != null
 
@@ -182,6 +197,24 @@ function LLMCompliancePane() {
                     flex: 1,
                 }}
             >
+                {/* overleaf-lab: download the report as Markdown */}
+                <div
+                    style={{
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        marginBottom: 8,
+                    }}
+                >
+                    <OLButton
+                        variant="secondary"
+                        type="button"
+                        onClick={downloadReport}
+                    >
+                        <MaterialIcon type="download" />{' '}
+                        {t('download_report', 'Download report')}
+                    </OLButton>
+                </div>
+
                 {/* overleaf-lab: compact counts summary */}
                 <div
                     style={{
@@ -219,7 +252,7 @@ function LLMCompliancePane() {
                 </div>
 
                 <div style={{ color: MUTED, fontSize: '0.85em', marginTop: 6 }}>
-                    {t('model_label', 'Model')}: {result.model} · ~
+                    {t('model_label', 'Model')}: {result.model} - ~
                     {result.documentTokensEstimate} {t('tokens', 'tokens')}
                 </div>
 
@@ -258,7 +291,7 @@ function LLMCompliancePane() {
                     className="form-select"
                     value={selectedRubricId}
                     onChange={e => setSelectedRubricId(e.target.value)}
-                    disabled={isRunning}
+                    disabled={isActive}
                     aria-label={t('review_rubric', 'Review rubric')}
                     style={{ flex: 1, minWidth: 0 }}
                 >
@@ -268,32 +301,70 @@ function LLMCompliancePane() {
                         </option>
                     ))}
                 </select>
-                <OLButton
-                    variant="primary"
-                    type="button"
-                    onClick={runReview}
-                    disabled={isRunning || !selectedRubricId}
-                    isLoading={isRunning}
-                    loadingLabel={t('run_review', 'Run review')}
-                >
-                    <MaterialIcon type="fact_check" /> {t('run_review', 'Run review')}
-                </OLButton>
+                {showRunButton && (
+                    <OLButton
+                        variant="primary"
+                        type="button"
+                        onClick={runReview}
+                        disabled={!selectedRubricId}
+                    >
+                        <MaterialIcon type="fact_check" />{' '}
+                        {t('run_review', 'Run review')}
+                    </OLButton>
+                )}
             </div>
 
-            {isRunning && (
-                <div style={{ marginTop: 12, color: MUTED, display: 'flex', gap: 8 }}>
-                    <MaterialIcon type="hourglass_empty" />
-                    <span>
-                        {t(
-                            'review_in_progress',
-                            'Review in progress. This can take a few minutes for a long document.'
-                        )}
-                    </span>
+            {/* overleaf-lab: queued state - position note + cancel */}
+            {phase === 'queued' && (
+                <div style={{ marginTop: 12, color: MUTED }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <MaterialIcon type="schedule" />
+                        <span>{t('review_queued', 'In queue')}</span>
+                    </div>
+                    {position > 0 && (
+                        <div style={{ marginTop: 4, fontSize: '0.85em' }}>
+                            {t('review_queue_position', 'Requests ahead of you:')}{' '}
+                            {position}
+                        </div>
+                    )}
+                    <div style={{ marginTop: 8 }}>
+                        <OLButton
+                            variant="secondary"
+                            type="button"
+                            onClick={cancelReview}
+                        >
+                            <MaterialIcon type="close" /> {t('cancel', 'Cancel')}
+                        </OLButton>
+                    </div>
                 </div>
             )}
 
-            {!isRunning && renderError()}
-            {!isRunning && renderResult()}
+            {/* overleaf-lab: running state - in-progress note + cancel */}
+            {phase === 'running' && (
+                <div style={{ marginTop: 12, color: MUTED }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <MaterialIcon type="hourglass_empty" />
+                        <span>
+                            {t(
+                                'review_in_progress',
+                                'Review in progress. This can take a few minutes for a long document.'
+                            )}
+                        </span>
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                        <OLButton
+                            variant="secondary"
+                            type="button"
+                            onClick={cancelReview}
+                        >
+                            <MaterialIcon type="close" /> {t('cancel', 'Cancel')}
+                        </OLButton>
+                    </div>
+                </div>
+            )}
+
+            {phase === 'error' && renderError()}
+            {phase === 'done' && renderResult()}
         </div>
     )
 }

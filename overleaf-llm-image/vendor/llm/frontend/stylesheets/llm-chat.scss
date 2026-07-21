@@ -1,56 +1,38 @@
 // LLM Chat styling matching the regular chat theme
+// overleaf-lab: theme-aware LLM chat palette. The original code forced a dark
+// palette (var(--bg-dark-primary), var(--white), ...) even on the light theme,
+// so the chat looked dark on a light IDE. We now use the theme-adaptive tokens
+// (--content-primary, --border-primary) and a transparent background that simply
+// inherits the already-themed rail panel, plus translucent grey bubbles/code that
+// read well on both light and dark. Fallbacks keep it safe if a token is missing:
+// none of them forces a dark background.
 :root {
-    --llm-chat-bg: var(--neutral-80);
-    --llm-chat-color: var(--white);
-    --llm-chat-text-color: var(--neutral-90);
-    --llm-chat-instructions-color: var(--neutral-20);
-    --llm-chat-new-message-bg: var(--neutral-70);
-    --llm-chat-new-message-textarea-color: var(--neutral-90);
-    --llm-chat-new-message-textarea-bg: var(--neutral-20);
-    --llm-chat-new-message-textarea-border: var(--editor-border-color);
-    --llm-chat-new-message-border: var(--editor-border-color);
-    --llm-chat-message-user-bg: var(--green-70);
-    --llm-chat-message-user-text: var(--white);
-    --llm-chat-message-assistant-bg: var(--bg-light-secondary);
-    --llm-chat-message-assistant-text: var(--neutral-90);
-    --llm-chat-code-bg: rgba(0, 0, 0, 0.1);
-    --llm-chat-code-text: var(--neutral-90);
+    --llm-chat-bg: transparent;
+    --llm-chat-color: var(--content-primary, inherit);
+    --llm-chat-text-color: var(--content-primary, inherit);
+    --llm-chat-instructions-color: var(--content-secondary, #6c757d);
+    --llm-chat-new-message-bg: transparent;
+    --llm-chat-new-message-textarea-color: var(--content-primary, inherit);
+    --llm-chat-new-message-textarea-bg: var(--bg-primary, transparent);
+    --llm-chat-new-message-textarea-border: var(--border-primary, rgba(125, 125, 125, 0.35));
+    --llm-chat-new-message-border: var(--border-primary, rgba(125, 125, 125, 0.2));
+    --llm-chat-message-user-bg: var(--green-70, #2b8a5f);
+    --llm-chat-message-user-text: var(--white, #fff);
+    --llm-chat-message-assistant-bg: rgba(125, 125, 125, 0.14);
+    --llm-chat-message-assistant-text: var(--content-primary, inherit);
+    --llm-chat-code-bg: rgba(125, 125, 125, 0.18);
+    --llm-chat-code-text: var(--content-primary, inherit);
 
     /* LLM-specific fallbacks for suggestion items and selector */
-    --llm-chat-suggestions-bg: var(--bg-light-secondary, #f3f4f6);
-    --llm-chat-suggestions-color: var(--content-primary, #111);
-    --llm-chat-suggestions-title-color: var(--content-primary, #111);
-    --llm-chat-suggestion-item-bg: var(--llm-chat-new-message-textarea-bg, #fff);
-    --llm-chat-suggestion-item-color: var(--content-primary, #111);
-    --llm-model-selector-label-color: var(--content-primary, #111);
-    --llm-model-selector-select-color: var(--content-primary, #111);
+    --llm-chat-suggestions-bg: rgba(125, 125, 125, 0.1);
+    --llm-chat-suggestions-color: var(--content-primary, inherit);
+    --llm-chat-suggestions-title-color: var(--content-primary, inherit);
+    --llm-chat-suggestion-item-bg: var(--bg-primary, transparent);
+    --llm-chat-suggestion-item-color: var(--content-primary, inherit);
+    --llm-model-selector-label-color: var(--content-primary, inherit);
+    --llm-model-selector-select-color: var(--content-primary, inherit);
     /* Max width used by suggestions and model selector */
     --llm-suggestions-max-width: 350px;
-}
-
-.ide-redesign-main {
-    --llm-chat-bg: var(--bg-dark-primary);
-    --llm-chat-color: var(--content-primary);
-    --llm-chat-text-color: var(--content-primary);
-    --llm-chat-instructions-color: var(--content-primary-dark);
-    --llm-chat-new-message-bg: var(--bg-dark-primary);
-    --llm-chat-new-message-textarea-color: var(--content-primary-dark);
-    --llm-chat-new-message-textarea-bg: var(--bg-dark-primary);
-    --llm-chat-message-user-bg: var(--green-70);
-    --llm-chat-message-user-text: var(--white);
-    --llm-chat-message-assistant-bg: var(--bg-light-secondary);
-    --llm-chat-message-assistant-text: var(--content-primary);
-    --llm-chat-code-bg: rgba(0, 0, 0, 0.2);
-    --llm-chat-code-text: var(--content-primary);
-
-    /* Dark-theme LLM overrides */
-    --llm-chat-suggestions-bg: var(--bg-dark-secondary, #111827);
-    --llm-chat-suggestions-color: var(--content-primary, #e6eef7);
-    --llm-chat-suggestions-title-color: var(--content-primary, #e6eef7);
-    --llm-chat-suggestion-item-bg: var(--llm-chat-new-message-textarea-bg, #111827);
-    --llm-chat-suggestion-item-color: var(--content-primary, #e6eef7);
-    --llm-model-selector-label-color: var(--content-primary, #e6eef7);
-    --llm-model-selector-select-color: var(--content-primary, #e6eef7);
 }
 
 .llm-rail-panel {

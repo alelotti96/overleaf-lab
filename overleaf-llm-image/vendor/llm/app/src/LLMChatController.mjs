@@ -5,7 +5,7 @@ import { expressify } from '@overleaf/promise-utils'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import { User } from '../../../../app/src/models/User.mjs'
 import Settings from '@overleaf/settings'
-import { getSystemPrompt, getAdminLLMSettings } from './LLMAdminController.mjs'
+import { getSystemPrompt, getAdminLLMSettings, getLLMFeatureFlags } from './LLMAdminController.mjs'
 import { decryptSecret } from './LLMCrypto.mjs' // overleaf-lab: decrypt user API keys stored at rest
 
 // Helper function to remove <think> tags (for DeepSeek, Qwen and similar models)
@@ -73,6 +73,12 @@ async function getModels(req, res) {
     try {
         if (Settings.llm && !Settings.llm.enabled) {
             logger.debug({}, '[LLM] getModels: LLM disabled, returning empty')
+            return res.json({ models: [] })
+        }
+
+        // overleaf-lab: chat feature disabled by admin -> no models to select.
+        const flags = await getLLMFeatureFlags()
+        if (!flags.chatEnabled) {
             return res.json({ models: [] })
         }
 
@@ -159,6 +165,13 @@ async function chat(req, res) {
 
     if (Settings.llm && !Settings.llm.enabled) {
         return res.status(503).json({ error: 'LLM service is disabled' })
+    }
+
+    // overleaf-lab: chat feature disabled by admin. Enforced for everyone, including
+    // users with personal API keys, before any personal-settings resolution.
+    const flags = await getLLMFeatureFlags()
+    if (!flags.chatEnabled) {
+        return res.status(403).json({ error: 'feature_disabled', message: 'The chat feature is disabled' })
     }
 
     const isPersonalModel = model && model.startsWith('personal-')
@@ -380,6 +393,14 @@ async function completion(req, res) {
         return res.status(503).json({ success: false, error: 'LLM service is disabled' })
     }
 
+    // overleaf-lab: inline completion disabled by admin. Enforced before any
+    // personal-settings resolution so a personal key cannot re-enable completion.
+    // Return an empty suggestion so the editor simply shows nothing, with no error.
+    const flags = await getLLMFeatureFlags()
+    if (!flags.completionEnabled) {
+        return res.json({ success: true, data: '' })
+    }
+
     const adminLlmSettings = await getAdminLLMSettings()
     let llmApiUrl = adminLlmSettings.llmApiUrl || process.env.LLM_API_URL
     let llmApiKey = adminLlmSettings.llmApiKey || process.env.LLM_API_KEY
@@ -531,8 +552,17 @@ ${leftContext}[CURSOR]${rightContext}`
     }
 }
 
+// overleaf-lab: expose the per-feature enable flags to the project UI so it can hide
+// disabled features. allowUserSettings tells the client whether personal settings
+// are available at all.
+async function getFeatures(req, res) {
+    const flags = await getLLMFeatureFlags()
+    res.json({ ...flags, allowUserSettings: !!(Settings.llm && Settings.llm.allowUserSettings) })
+}
+
 export default {
     chat: expressify(chat),
     getModels: expressify(getModels),
     completion: expressify(completion),
+    getFeatures: expressify(getFeatures),
 }

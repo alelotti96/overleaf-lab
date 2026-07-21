@@ -140,6 +140,11 @@ export default function LLMAdminSettingsPage() {
     const [complianceRubrics, setComplianceRubrics] = useState<Array<{ id: string; name: string; guidelines: string }>>(initialRubrics)
     const [reviewModel, setReviewModel] = useState<string>((getMeta('ol-reviewModel') as string) || '')
     const [maxContextTokens, setMaxContextTokens] = useState<number>(parseInt((getMeta('ol-maxContextTokens') as string) || '32000', 10) || 32000)
+    // overleaf-lab: per-feature enable/disable toggles. The metas use data-type='json'
+    // so getMeta returns the parsed boolean; default to true when missing/undefined.
+    const [chatEnabled, setChatEnabled] = useState<boolean>(getMeta('ol-chatEnabled') !== false)
+    const [completionEnabled, setCompletionEnabled] = useState<boolean>(getMeta('ol-completionEnabled') !== false)
+    const [reviewEnabled, setReviewEnabled] = useState<boolean>(getMeta('ol-reviewEnabled') !== false)
     const [scanStatus, setScanStatus] = useState<string | null>(null)
     const [testStatus, setTestStatus] = useState<string | null>(null)
 
@@ -178,6 +183,9 @@ export default function LLMAdminSettingsPage() {
                     complianceRubrics,
                     reviewModel,
                     maxContextTokens,
+                    chatEnabled,
+                    completionEnabled,
+                    reviewEnabled,
                 },
             })
         ).catch(() => { })
@@ -272,10 +280,104 @@ export default function LLMAdminSettingsPage() {
                         </div>
 
                         <form onSubmit={handleSave}>
-                            {/* ── Section 1: API Connection ── */}
+                            {/* ── Section 1: Features ── */}
+                            {/* overleaf-lab: master on/off switches per AI feature */}
                             <div style={sectionStyle}>
                                 <div style={sectionHeaderStyle}>
                                     <span style={stepNumberStyle}>1</span>
+                                    <MaterialIcon type="toggle_on" />
+                                    {t('llm_features', 'Features')}
+                                </div>
+                                <p style={sectionDescStyle}>
+                                    {t(
+                                        'llm_features_desc',
+                                        'Enable or disable each AI feature for all users. A disabled feature cannot be used by anyone, even with their own API key.'
+                                    )}
+                                </p>
+
+                                <div style={{
+                                    border: '1px solid var(--border-color-01, #dee2e6)',
+                                    borderRadius: '6px',
+                                    overflow: 'hidden',
+                                }}>
+                                    <label
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'flex-start',
+                                            gap: '0.75rem',
+                                            padding: '0.75rem 1rem',
+                                            borderBottom: '1px solid var(--border-color-01, #dee2e6)',
+                                            cursor: 'pointer',
+                                            margin: 0,
+                                        }}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={chatEnabled}
+                                            onChange={e => setChatEnabled(e.target.checked)}
+                                            style={{ width: '1rem', height: '1rem', marginTop: '0.125rem', accentColor: 'var(--bg-accent-01, #0d6efd)' }}
+                                        />
+                                        <div>
+                                            <span style={{ fontWeight: 500 }}>{t('feature_chat', 'Chat')}</span>
+                                            <OLFormText style={{ margin: 0 }}>
+                                                {t('feature_chat_help', 'The AI chat panel and Ask AI on selection.')}
+                                            </OLFormText>
+                                        </div>
+                                    </label>
+                                    <label
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'flex-start',
+                                            gap: '0.75rem',
+                                            padding: '0.75rem 1rem',
+                                            borderBottom: '1px solid var(--border-color-01, #dee2e6)',
+                                            cursor: 'pointer',
+                                            margin: 0,
+                                        }}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={completionEnabled}
+                                            onChange={e => setCompletionEnabled(e.target.checked)}
+                                            style={{ width: '1rem', height: '1rem', marginTop: '0.125rem', accentColor: 'var(--bg-accent-01, #0d6efd)' }}
+                                        />
+                                        <div>
+                                            <span style={{ fontWeight: 500 }}>{t('feature_completion', 'Inline completion')}</span>
+                                            <OLFormText style={{ margin: 0 }}>
+                                                {t('feature_completion_help', 'Autocomplete suggestions while typing.')}
+                                            </OLFormText>
+                                        </div>
+                                    </label>
+                                    <label
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'flex-start',
+                                            gap: '0.75rem',
+                                            padding: '0.75rem 1rem',
+                                            cursor: 'pointer',
+                                            margin: 0,
+                                        }}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={reviewEnabled}
+                                            onChange={e => setReviewEnabled(e.target.checked)}
+                                            style={{ width: '1rem', height: '1rem', marginTop: '0.125rem', accentColor: 'var(--bg-accent-01, #0d6efd)' }}
+                                        />
+                                        <div>
+                                            <span style={{ fontWeight: 500 }}>{t('feature_review', 'Compliance review')}</span>
+                                            <OLFormText style={{ margin: 0 }}>
+                                                {t('feature_review_help', 'The whole-document review.')}
+                                            </OLFormText>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+
+                            {/* ── Section 2: API Connection ── */}
+                            <div style={sectionStyle}>
+                                <div style={sectionHeaderStyle}>
+                                    <span style={stepNumberStyle}>2</span>
                                     <MaterialIcon type="link" />
                                     {t('api_connection', 'API Connection')}
                                     {testStatus === 'success' && (
@@ -366,10 +468,10 @@ export default function LLMAdminSettingsPage() {
                                 </div>
                             </div>
 
-                            {/* ── Section 2: Model Selection ── */}
+                            {/* ── Section 3: Model Selection ── */}
                             <div style={sectionStyle}>
                                 <div style={sectionHeaderStyle}>
-                                    <span style={stepNumberStyle}>2</span>
+                                    <span style={stepNumberStyle}>3</span>
                                     <MaterialIcon type="model_training" />
                                     {t('model_selection', 'Model Selection')}
                                     {allModels.length > 0 && (
@@ -510,10 +612,10 @@ export default function LLMAdminSettingsPage() {
                                 </OLFormGroup>
                             </div>
 
-                            {/* ── Section 3: System Prompt ── */}
+                            {/* ── Section 4: System Prompt ── */}
                             <div style={sectionStyle}>
                                 <div style={sectionHeaderStyle}>
-                                    <span style={stepNumberStyle}>3</span>
+                                    <span style={stepNumberStyle}>4</span>
                                     <MaterialIcon type="description" />
                                     {t('system_prompt', 'System Prompt')}
                                 </div>
@@ -557,10 +659,10 @@ export default function LLMAdminSettingsPage() {
                                 </div>
                             </div>
 
-                            {/* ── Section 4: Compliance Review ── */}
+                            {/* ── Section 5: Compliance Review ── */}
                             <div style={sectionStyle}>
                                 <div style={sectionHeaderStyle}>
-                                    <span style={stepNumberStyle}>4</span>
+                                    <span style={stepNumberStyle}>5</span>
                                     <MaterialIcon type="fact_check" />
                                     {t('compliance_review', 'Compliance Review')}
                                 </div>

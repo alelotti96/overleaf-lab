@@ -16,6 +16,10 @@ block append meta
     meta(name='ol-complianceRubrics' data-type='json' content=JSON.stringify(complianceRubrics || []))
     meta(name='ol-reviewModel' data-type='string' content=reviewModel)
     meta(name='ol-maxContextTokens' data-type='string' content=String(maxContextTokens))
+    //- overleaf-lab: per-feature enable/disable toggles (default true)
+    meta(name='ol-chatEnabled' data-type='json' content=JSON.stringify(chatEnabled))
+    meta(name='ol-completionEnabled' data-type='json' content=JSON.stringify(completionEnabled))
+    meta(name='ol-reviewEnabled' data-type='json' content=JSON.stringify(reviewEnabled))
 
 block content
     main#main-content.content.content-alt

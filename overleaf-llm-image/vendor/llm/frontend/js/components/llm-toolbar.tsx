@@ -14,6 +14,7 @@ import { EditorView } from '@codemirror/view'
 import { marked } from 'marked'
 import getMeta from '@/utils/meta'
 import { readSelectedModel } from '../utils/llm-selected-model'
+import { useLLMFeatures } from '../hooks/use-llm-features'
 
 export type LLMToolbarHandle = {
     show: (view: EditorView) => void
@@ -87,6 +88,10 @@ const Spinner = () => (
 )
 
 const LLMToolbar = forwardRef<LLMToolbarHandle, {}>((_, ref) => {
+    // overleaf-lab: the floating "Ask AI" selection toolbar is part of the chat
+    // feature, so it obeys the super-admin chat flag. Called unconditionally to
+    // respect the rules of hooks; the returned JSX is gated further down.
+    const features = useLLMFeatures()
     const [anchorShown, setAnchorShown] = useState(false)
     const [panelRect, setPanelRect] = useState({ top: 0, left: 0, width: 520 })
     const [anchorPos, setAnchorPos] = useState({ top: 0, left: 0 })
@@ -432,6 +437,23 @@ const LLMToolbar = forwardRef<LLMToolbarHandle, {}>((_, ref) => {
         Math.round(window.innerHeight * 0.5)
     )
 
+    // overleaf-lab: once the flags load, if chat is disabled for this project the
+    // toolbar must never surface its anchor/menu/panels. Render the same inert
+    // fixed container it shows when there is no selection, so nothing appears.
+    if (features.loaded && features.chatEnabled === false) {
+        return (
+            <div
+                ref={wrapRef}
+                style={{
+                    position: 'absolute',
+                    inset: 0,
+                    pointerEvents: 'none',
+                    zIndex: 9999,
+                }}
+            />
+        )
+    }
+
     return (
         <div
             ref={wrapRef}
@@ -448,8 +470,10 @@ const LLMToolbar = forwardRef<LLMToolbarHandle, {}>((_, ref) => {
         .llm-input-card{width:100%;background:linear-gradient(180deg,#071021,#071827);border-radius:14px;padding:12px 12px 12px 56px;position:relative;box-shadow:0 14px 40px rgba(3,8,22,0.55);border:1px solid rgba(255,255,255,0.04)}
         .llm-badge{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;color:#e6eef8}
         .llm-input{width:100%;min-height:40px;max-height:160px;padding:8px 84px 8px 10px;border-radius:10px;background:transparent;color:#e6eef8;border:1px solid rgba(255,255,255,0.06);outline:none;resize:none;line-height:20px;font-size:14px;box-sizing:border-box}
-        .llm-send{position:absolute;right:44px;top:50%;transform:translateY(-50%);width:34px;height:34px;border-radius:9px;background:rgba(255,255,255,0.02);display:flex;align-items:center;justify-content:center;cursor:pointer}
-        .llm-close{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:34px;border-radius:9px;background:rgba(255,255,255,0.02);display:flex;align-items:center;justify-content:center;cursor:pointer}
+        .llm-send{position:absolute;right:44px;top:50%;transform:translateY(-50%);width:34px;height:34px;border-radius:9px;background:rgba(16,185,129,0.18);border:1px solid rgba(16,185,129,0.4);color:#eafff5;font-size:18px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+        .llm-send:hover{background:rgba(16,185,129,0.3)}
+        .llm-close{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:34px;border-radius:9px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.16);color:#e6eef8;font-size:20px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+        .llm-close:hover{background:rgba(255,255,255,0.16)}
         .llm-menu{margin-top:0;background:linear-gradient(180deg,#071021,#071827);border-radius:12px;padding:10px 8px;color:#dfe7ee;border:1px solid rgba(255,255,255,0.04);box-shadow:0 14px 40px rgba(3,8,22,0.55)}
         .llm-item{height:40px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:10px;cursor:pointer}
         .llm-item:hover{background:rgba(255,255,255,0.04)}
