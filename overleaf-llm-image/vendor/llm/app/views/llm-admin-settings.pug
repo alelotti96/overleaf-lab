@@ -20,6 +20,12 @@ block append meta
     meta(name='ol-chatEnabled' data-type='json' content=JSON.stringify(chatEnabled))
     meta(name='ol-completionEnabled' data-type='json' content=JSON.stringify(completionEnabled))
     meta(name='ol-reviewEnabled' data-type='json' content=JSON.stringify(reviewEnabled))
+    //- overleaf-lab: editable AI prompts and their built-in defaults for reset buttons
+    meta(name='ol-askAiSystemPrompt' data-type='string' content=askAiSystemPrompt)
+    meta(name='ol-errorPrompt' data-type='string' content=errorPrompt)
+    meta(name='ol-reviewSystemPrompt' data-type='string' content=reviewSystemPrompt)
+    meta(name='ol-askAiActionPrompts' data-type='json' content=JSON.stringify(askAiActionPrompts || {}))
+    meta(name='ol-promptDefaults' data-type='json' content=JSON.stringify(promptDefaults || {}))
 
 block content
     main#main-content.content.content-alt

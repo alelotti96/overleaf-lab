@@ -15,6 +15,7 @@ import { marked } from 'marked'
 import getMeta from '@/utils/meta'
 import { readSelectedModel } from '../utils/llm-selected-model'
 import { useLLMFeatures } from '../hooks/use-llm-features'
+import { useLLMPrompts } from '../hooks/use-llm-prompts'
 
 export type LLMToolbarHandle = {
     show: (view: EditorView) => void
@@ -92,6 +93,11 @@ const LLMToolbar = forwardRef<LLMToolbarHandle, {}>((_, ref) => {
     // feature, so it obeys the super-admin chat flag. Called unconditionally to
     // respect the rules of hooks; the returned JSX is gated further down.
     const features = useLLMFeatures()
+    // overleaf-lab: admin-editable prompts. Called unconditionally at the top so
+    // the rules of hooks hold. `prompts` is read directly inside postToAPI (a
+    // closure recreated each render), falling back to the hardcoded strings when
+    // a field is missing or the fetch has not resolved.
+    const { prompts } = useLLMPrompts()
     const [anchorShown, setAnchorShown] = useState(false)
     const [panelRect, setPanelRect] = useState({ top: 0, left: 0, width: 520 })
     const [anchorPos, setAnchorPos] = useState({ top: 0, left: 0 })
@@ -137,15 +143,64 @@ const LLMToolbar = forwardRef<LLMToolbarHandle, {}>((_, ref) => {
             10: `Write a single self-contained academic abstract (about 150 to 250 words) for the following content. Output only the abstract text: no heading, no label, and no code fences.\n\n${selectionText}`,
         }
 
+        // overleaf-lab: numeric transform modes map to admin action keys. Mode 0
+        // is free-form chat and has no template.
+        const modeActionKey: Record<number, string> = {
+            1: 'paraphrase',
+            2: 'academic',
+            3: 'concise',
+            4: 'punchy',
+            5: 'split',
+            6: 'join',
+            7: 'summarize',
+            8: 'explain',
+            9: 'title',
+            10: 'abstract',
+        }
+
+        // overleaf-lab: hardcoded system prompt kept verbatim as the fallback
+        // used whenever the admin prompt is absent or the fetch has not resolved.
+        const fallbackSystemPrompt =
+            'You are a LaTeX writing assistant embedded in an editor. Preserve existing LaTeX commands, math, and citation keys exactly, and reply in the same language as the input. When asked to rewrite or transform text, return only the resulting text, with no preamble and no Markdown code fences.'
+
+        // overleaf-lab: prefer the admin system prompt when it is a non-empty
+        // string, otherwise keep the hardcoded one.
+        const systemContent =
+            typeof prompts?.askAiSystemPrompt === 'string' &&
+                prompts.askAiSystemPrompt.trim() !== ''
+                ? prompts.askAiSystemPrompt
+                : fallbackSystemPrompt
+
+        // overleaf-lab: build the user content. Mode 0 stays free-form chat
+        // (uses the user's `ask`). Transform modes prefer the admin template,
+        // substituting the literal {{selection}} with the selected text (or
+        // appending it when the template omits the placeholder), and fall back
+        // to the hardcoded modePrompts entry when no admin template exists.
+        let userContent: string
+        if (mode >= 1) {
+            const actionKey = modeActionKey[mode]
+            const template = actionKey
+                ? prompts?.askAiActionPrompts?.[actionKey]
+                : undefined
+            if (typeof template === 'string' && template.trim() !== '') {
+                userContent = template.includes('{{selection}}')
+                    ? template.split('{{selection}}').join(selectionText)
+                    : `${template}\n\n${selectionText}`
+            } else {
+                userContent = modePrompts[mode] || ask
+            }
+        } else {
+            userContent = modePrompts[mode] || ask
+        }
+
         const messages = [
             {
                 role: 'system',
-                content:
-                    'You are a LaTeX writing assistant embedded in an editor. Preserve existing LaTeX commands, math, and citation keys exactly, and reply in the same language as the input. When asked to rewrite or transform text, return only the resulting text, with no preamble and no Markdown code fences.',
+                content: systemContent,
             },
             {
                 role: 'user',
-                content: modePrompts[mode] || ask,
+                content: userContent,
             },
         ]
 

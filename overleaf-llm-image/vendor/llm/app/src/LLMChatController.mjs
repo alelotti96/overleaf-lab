@@ -6,7 +6,7 @@ import SessionManager from '../../../../app/src/Features/Authentication/SessionM
 import { User } from '../../../../app/src/models/User.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs' // overleaf-lab: read project docs for error source context
 import Settings from '@overleaf/settings'
-import { getSystemPrompt, getAdminLLMSettings, getLLMFeatureFlags } from './LLMAdminController.mjs'
+import { getSystemPrompt, getAdminLLMSettings, getLLMFeatureFlags, getLLMPrompts } from './LLMAdminController.mjs'
 import { decryptSecret } from './LLMCrypto.mjs' // overleaf-lab: decrypt user API keys stored at rest
 
 // Helper function to remove <think> tags (for DeepSeek, Qwen and similar models)
@@ -640,10 +640,24 @@ async function getSourceContext(req, res) {
     }
 }
 
+// overleaf-lab: expose the EFFECTIVE editable prompts (admin override or default) to
+// the project UI so the "Ask AI" toolbar and the "Ask AI about this error" button use
+// the admin-tuned system prompt, action templates, and error instruction block. The
+// review system prompt stays server-side and is not returned here.
+async function getPrompts(req, res) {
+    const prompts = await getLLMPrompts()
+    res.json({
+        askAiSystemPrompt: prompts.askAiSystemPrompt,
+        errorPrompt: prompts.errorPrompt,
+        askAiActionPrompts: prompts.askAiActionPrompts,
+    })
+}
+
 export default {
     chat: expressify(chat),
     getModels: expressify(getModels),
     completion: expressify(completion),
     getFeatures: expressify(getFeatures),
     getSourceContext: expressify(getSourceContext),
+    getPrompts: expressify(getPrompts),
 }

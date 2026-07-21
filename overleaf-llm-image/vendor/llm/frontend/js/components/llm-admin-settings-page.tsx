@@ -195,6 +195,16 @@ export default function LLMAdminSettingsPage() {
     const [chatEnabled, setChatEnabled] = useState<boolean>(getMeta('ol-chatEnabled') !== false)
     const [completionEnabled, setCompletionEnabled] = useState<boolean>(getMeta('ol-completionEnabled') !== false)
     const [reviewEnabled, setReviewEnabled] = useState<boolean>(getMeta('ol-reviewEnabled') !== false)
+    // overleaf-lab: editable AI prompts. Empty field means the backend uses its
+    // built-in default; promptDefaults feeds the per-field reset buttons.
+    const promptDefaults = (getMeta('ol-promptDefaults') as any) || {}
+    const [askAiSystemPrompt, setAskAiSystemPrompt] = useState<string>((getMeta('ol-askAiSystemPrompt') as string) || '')
+    const [errorPrompt, setErrorPrompt] = useState<string>((getMeta('ol-errorPrompt') as string) || '')
+    const [reviewSystemPrompt, setReviewSystemPrompt] = useState<string>((getMeta('ol-reviewSystemPrompt') as string) || '')
+    const initialActions = (getMeta('ol-askAiActionPrompts') as Record<string, string>) || {}
+    const [askAiActionPrompts, setAskAiActionPrompts] = useState<Record<string, string>>(initialActions && typeof initialActions === 'object' ? initialActions : {})
+    // overleaf-lab: keep the Ask AI action templates block collapsed by default
+    const [showActions, setShowActions] = useState(false)
     const [scanStatus, setScanStatus] = useState<string | null>(null)
     const [testStatus, setTestStatus] = useState<string | null>(null)
 
@@ -236,6 +246,10 @@ export default function LLMAdminSettingsPage() {
                     chatEnabled,
                     completionEnabled,
                     reviewEnabled,
+                    askAiSystemPrompt,
+                    errorPrompt,
+                    reviewSystemPrompt,
+                    askAiActionPrompts,
                 },
             })
         ).catch(() => { })
@@ -800,6 +814,141 @@ export default function LLMAdminSettingsPage() {
                                         )}
                                     </OLFormText>
                                 </OLFormGroup>
+                            </div>
+
+                            {/* ── Section 6: AI Prompts ── */}
+                            {/* overleaf-lab: editable prompts behind each AI feature; empty means built-in default */}
+                            <div style={sectionStyle}>
+                                <div style={sectionHeaderStyle}>
+                                    <span style={stepNumberStyle}>6</span>
+                                    <MaterialIcon type="edit_note" />
+                                    {t('ai_prompts', 'AI Prompts')}
+                                </div>
+                                <p style={sectionDescStyle}>
+                                    {t(
+                                        'ai_prompts_desc',
+                                        'Customize the prompts behind each AI feature. Leave a field empty to use the built-in default.'
+                                    )}
+                                </p>
+
+                                {/* overleaf-lab: (a) the three standalone prompts, each with a reset link */}
+                                {[
+                                    {
+                                        key: 'askAiSystemPrompt',
+                                        value: askAiSystemPrompt,
+                                        set: setAskAiSystemPrompt,
+                                        def: promptDefaults.askAiSystemPrompt,
+                                        label: t('ask_ai_behavior_prompt', 'Ask AI behavior prompt'),
+                                        help: t('ask_ai_behavior_prompt_help', 'System prompt for the selection toolbar (Ask AI / paraphrase / rewrite).'),
+                                    },
+                                    {
+                                        key: 'errorPrompt',
+                                        value: errorPrompt,
+                                        set: setErrorPrompt,
+                                        def: promptDefaults.errorPrompt,
+                                        label: t('error_help_prompt', 'Error help prompt'),
+                                        help: t('error_help_prompt_help', 'Instructions appended when a user clicks Ask AI about a compile error.'),
+                                    },
+                                    {
+                                        key: 'reviewSystemPrompt',
+                                        value: reviewSystemPrompt,
+                                        set: setReviewSystemPrompt,
+                                        def: promptDefaults.reviewSystemPrompt,
+                                        label: t('review_system_prompt', 'Review system prompt'),
+                                        help: t('review_system_prompt_help', 'System prompt for the whole-document compliance review.'),
+                                    },
+                                ].map(field => (
+                                    <div key={field.key} style={{ marginBottom: '1.25rem' }}>
+                                        <OLFormGroup controlId={`llm-${field.key}`} style={{ marginBottom: '0.25rem' }}>
+                                            <OLFormLabel>
+                                                {field.label}
+                                            </OLFormLabel>
+                                            <OLFormControl
+                                                as="textarea"
+                                                rows={6}
+                                                value={field.value}
+                                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                                                    field.set(e.target.value)
+                                                }
+                                                style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
+                                            />
+                                        </OLFormGroup>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <OLFormText style={{ margin: 0 }}>
+                                                {field.help}
+                                            </OLFormText>
+                                            <OLButton
+                                                variant="link"
+                                                size="sm"
+                                                type="button"
+                                                onClick={() => field.set(field.def || '')}
+                                                style={{ padding: 0, fontSize: '0.8125rem' }}
+                                            >
+                                                <MaterialIcon type="restart_alt" className="me-1" style={{ fontSize: '1rem' }} />
+                                                {t('reset_to_default', 'Reset to default')}
+                                            </OLButton>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {/* overleaf-lab: (b) collapsible Ask AI action templates, one textarea per action */}
+                                <div style={{ marginTop: '0.5rem' }}>
+                                    <OLButton
+                                        variant="link"
+                                        size="sm"
+                                        type="button"
+                                        onClick={() => setShowActions(v => !v)}
+                                        style={{ padding: 0, fontSize: '0.875rem' }}
+                                    >
+                                        <MaterialIcon type={showActions ? 'expand_less' : 'expand_more'} className="me-1" style={{ fontSize: '1.125rem' }} />
+                                        {t('ask_ai_action_templates', 'Ask AI action templates')}
+                                    </OLButton>
+
+                                    {showActions && (
+                                        <div style={{ marginTop: '0.75rem' }}>
+                                            <OLFormText style={{ marginTop: 0, marginBottom: '0.75rem' }}>
+                                                {t(
+                                                    'ask_ai_action_help',
+                                                    'Each template runs on the selected text. Use {{selection}} where the selected text should be inserted; if omitted, it is appended.'
+                                                )}
+                                            </OLFormText>
+                                            {['paraphrase', 'academic', 'concise', 'punchy', 'split', 'join', 'summarize', 'explain', 'title', 'abstract'].map(key => (
+                                                <div key={key} style={{ marginBottom: '1rem' }}>
+                                                    <OLFormGroup controlId={`llm-action-${key}`} style={{ marginBottom: '0.25rem' }}>
+                                                        <OLFormLabel>
+                                                            {t(`ask_ai_action_${key}`, key.charAt(0).toUpperCase() + key.slice(1))}
+                                                        </OLFormLabel>
+                                                        <OLFormControl
+                                                            as="textarea"
+                                                            rows={4}
+                                                            value={askAiActionPrompts[key] || ''}
+                                                            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+                                                                const value = e.target.value
+                                                                setAskAiActionPrompts(prev => ({ ...prev, [key]: value }))
+                                                            }}
+                                                            style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
+                                                        />
+                                                    </OLFormGroup>
+                                                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                                        <OLButton
+                                                            variant="link"
+                                                            size="sm"
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const def = promptDefaults.askAiActionPrompts?.[key] || ''
+                                                                setAskAiActionPrompts(prev => ({ ...prev, [key]: def }))
+                                                            }}
+                                                            style={{ padding: 0, fontSize: '0.8125rem' }}
+                                                        >
+                                                            <MaterialIcon type="restart_alt" className="me-1" style={{ fontSize: '1rem' }} />
+                                                            {t('reset_to_default', 'Reset to default')}
+                                                        </OLButton>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
                             {/* ── Notifications ── */}

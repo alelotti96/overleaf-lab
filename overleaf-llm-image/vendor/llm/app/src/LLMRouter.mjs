@@ -74,6 +74,15 @@ export default {
         )
         logger.debug({}, '[LLM] Route registered: GET /project/:id/llm/source-context')
 
+        // overleaf-lab: effective editable prompts (Ask AI system prompt, error
+        // instruction block, and per-action templates) for the project UI.
+        webRouter.get(
+            '/project/:Project_id/llm/prompts',
+            AuthorizationMiddleware.ensureUserCanReadProject,
+            LLMChatController.getPrompts
+        )
+        logger.debug({}, '[LLM] Route registered: GET /project/:id/llm/prompts')
+
         // Inline completion endpoint (project-scoped)
         webRouter.post(
             '/project/:Project_id/llm/completion',

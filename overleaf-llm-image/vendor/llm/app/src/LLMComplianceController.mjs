@@ -3,7 +3,7 @@ import Settings from '@overleaf/settings'
 import { expressify } from '@overleaf/promise-utils'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs'
-import { getAdminLLMSettings, getComplianceRubrics, getLLMFeatureFlags } from './LLMAdminController.mjs'
+import { getAdminLLMSettings, getComplianceRubrics, getLLMFeatureFlags, getLLMPrompts } from './LLMAdminController.mjs'
 
 // overleaf-lab: in-memory job queue for compliance reviews. A review sends the
 // whole project to the LLM and can run for minutes, so we run one at a time per
@@ -15,27 +15,9 @@ let running = false // one review at a time
 // still returns the result instead of a not_found.
 const JOB_TTL_MS = 15 * 60 * 1000
 
-// overleaf-lab: system prompt for the compliance reviewer. Kept as a constant so
-// the exact instructions (JSON-only output, reply in the guidelines language) are
-// easy to audit and tune.
-const COMPLIANCE_SYSTEM_PROMPT = `You are a meticulous reviewer that checks whether a LaTeX document complies with a set of writing guidelines for academic theses and internship reports.
-
-You will receive:
-1. GUIDELINES: the requirements the document must satisfy.
-2. DOCUMENT: the full LaTeX source of the project (possibly multiple files, each marked with a FILE header).
-
-For each distinct requirement you can identify in the GUIDELINES, judge whether the DOCUMENT satisfies it. Base your judgement only on the DOCUMENT content.
-
-Reply in the same language as the GUIDELINES (for example, in Italian if the guidelines are in Italian).
-
-Return ONLY a JSON object, with no preamble, no explanation, and no code fences, in exactly this shape:
-{
-  "summary": "a short overall assessment (2 to 4 sentences)",
-  "items": [
-    { "requirement": "the guideline requirement, restated concisely", "status": "ok", "evidence": "a short quote or the section/file where it is satisfied, or why it is missing", "suggestion": "a concrete suggestion to satisfy it (empty string when status is ok)" }
-  ]
-}
-Use "ok" when clearly satisfied, "partial" when partially satisfied, "missing" when not satisfied, "na" when not applicable or impossible to verify from the source.`
+// overleaf-lab: the compliance reviewer system prompt now lives in LLMPrompts.mjs as
+// DEFAULT_REVIEW_SYSTEM_PROMPT and is resolved per review via getLLMPrompts() so a
+// super-admin override takes effect. See performReview below.
 
 // overleaf-lab: remove <think>...</think> blocks (case-insensitive, dot-all), same
 // approach as LLMChatController, for models like DeepSeek/Qwen that emit reasoning.
@@ -153,6 +135,10 @@ async function performReview(job) {
         (admin.allowedModels && admin.allowedModels[0]) ||
         ((process.env.LLM_MODEL_NAME || process.env.LLM_AVAILABLE_MODELS || 'default').split(',')[0].trim())
 
+    // overleaf-lab: resolve the effective editable prompts (admin override or the
+    // shipped default) so the review uses the admin-tuned system prompt.
+    const prompts = await getLLMPrompts()
+
     // Assemble the whole project into one LaTeX blob.
     const docsByPath = await ProjectEntityHandler.promises.getAllDocs(projectId)
     const docs = []
@@ -207,7 +193,7 @@ async function performReview(job) {
     const promptTokensEstimate =
         documentTokensEstimate +
         estimateTokens(rubric.guidelines) +
-        estimateTokens(COMPLIANCE_SYSTEM_PROMPT)
+        estimateTokens(prompts.reviewSystemPrompt)
     if (promptTokensEstimate + OUTPUT_RESERVE > maxContextTokens) {
         return {
             type: 'error',
@@ -261,7 +247,7 @@ async function performReview(job) {
     const requestBody = {
         model: reviewModel,
         messages: [
-            { role: 'system', content: COMPLIANCE_SYSTEM_PROMPT },
+            { role: 'system', content: prompts.reviewSystemPrompt },
             { role: 'user', content: userContent },
         ],
         max_tokens: 4000,

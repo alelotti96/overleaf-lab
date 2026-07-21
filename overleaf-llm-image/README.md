@@ -188,6 +188,12 @@ adjustments (plus host wiring in `config.env` / `scripts/`):
 - **Per-feature super-admin toggles** (chat / inline completion / compliance review),
   backend-enforced even against personal keys (a disabled feature is refused, not just
   hidden), with the editor and user-settings UI hidden to match.
+- **All AI prompts editable by super-admins** from `/admin/llm/settings`: the chat
+  system prompt, the Ask AI behavior prompt, the error-help prompt, the review system
+  prompt, and the 10 Ask AI action templates (paraphrase, academic, concise, punchy,
+  split, join, summarize, title, abstract, explain; each uses a `{{selection}}`
+  placeholder). Defaults are the shipped values; an empty field falls back to the
+  default. Frontend prompts are served via `GET /project/:id/llm/prompts`.
 - Opt-in packaging: layered build, anchor-based core patcher, one-variable enable/rollback.
 
 ## Credits

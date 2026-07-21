@@ -3,6 +3,13 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { expressify } from '@overleaf/promise-utils'
 import { encryptSecret, decryptSecret } from './LLMCrypto.mjs' // overleaf-lab: at-rest encryption of admin API key
+import {
+    DEFAULT_ASK_AI_SYSTEM_PROMPT,
+    DEFAULT_ERROR_PROMPT,
+    DEFAULT_REVIEW_SYSTEM_PROMPT,
+    DEFAULT_ASK_AI_ACTION_PROMPTS,
+    mergeActionPrompts,
+} from './LLMPrompts.mjs' // overleaf-lab: editable prompt defaults + merge helper
 
 // Persist admin LLM settings in the same volume used by Overleaf data
 const ADMIN_SETTINGS_PATH = process.env.LLM_ADMIN_SETTINGS_PATH ||
@@ -68,6 +75,19 @@ async function buildDisplaySettings() {
         chatEnabled: settings.chatEnabled !== false,
         completionEnabled: settings.completionEnabled !== false,
         reviewEnabled: settings.reviewEnabled !== false,
+        // overleaf-lab: editable prompt overrides. Show the EFFECTIVE value (the
+        // admin override when set, else the shipped default) plus the pristine
+        // defaults so the admin page can offer a reset-to-default button.
+        askAiSystemPrompt: settings.askAiSystemPrompt || DEFAULT_ASK_AI_SYSTEM_PROMPT,
+        errorPrompt: settings.errorPrompt || DEFAULT_ERROR_PROMPT,
+        reviewSystemPrompt: settings.reviewSystemPrompt || DEFAULT_REVIEW_SYSTEM_PROMPT,
+        askAiActionPrompts: mergeActionPrompts(settings.askAiActionPrompts),
+        promptDefaults: {
+            askAiSystemPrompt: DEFAULT_ASK_AI_SYSTEM_PROMPT,
+            errorPrompt: DEFAULT_ERROR_PROMPT,
+            reviewSystemPrompt: DEFAULT_REVIEW_SYSTEM_PROMPT,
+            askAiActionPrompts: DEFAULT_ASK_AI_ACTION_PROMPTS,
+        },
     }
 }
 
@@ -93,6 +113,11 @@ async function saveAdminSettings(req, res) {
         chatEnabled,
         completionEnabled,
         reviewEnabled,
+        // overleaf-lab: editable prompt overrides.
+        askAiSystemPrompt,
+        errorPrompt,
+        reviewSystemPrompt,
+        askAiActionPrompts,
     } = req.body
 
     if (typeof systemPrompt !== 'string') {
@@ -132,6 +157,37 @@ async function saveAdminSettings(req, res) {
         return res.status(400).json({ error: 'reviewEnabled must be a boolean' })
     }
 
+    // overleaf-lab: editable prompt overrides. Each scalar prompt, when provided,
+    // must be a string capped at 8000 chars. An empty string is allowed and means
+    // "fall back to default" (buildDisplaySettings/getLLMPrompts use `|| DEFAULT`).
+    if (askAiSystemPrompt !== undefined && typeof askAiSystemPrompt !== 'string') {
+        return res.status(400).json({ error: 'askAiSystemPrompt must be a string' })
+    }
+    if (typeof askAiSystemPrompt === 'string' && askAiSystemPrompt.length > 8000) {
+        return res.status(400).json({ error: 'askAiSystemPrompt must be 8000 characters or fewer' })
+    }
+    if (errorPrompt !== undefined && typeof errorPrompt !== 'string') {
+        return res.status(400).json({ error: 'errorPrompt must be a string' })
+    }
+    if (typeof errorPrompt === 'string' && errorPrompt.length > 8000) {
+        return res.status(400).json({ error: 'errorPrompt must be 8000 characters or fewer' })
+    }
+    if (reviewSystemPrompt !== undefined && typeof reviewSystemPrompt !== 'string') {
+        return res.status(400).json({ error: 'reviewSystemPrompt must be a string' })
+    }
+    if (typeof reviewSystemPrompt === 'string' && reviewSystemPrompt.length > 8000) {
+        return res.status(400).json({ error: 'reviewSystemPrompt must be 8000 characters or fewer' })
+    }
+    // overleaf-lab: action prompts, when provided, must be a plain (non-array) object.
+    if (
+        askAiActionPrompts !== undefined &&
+        (typeof askAiActionPrompts !== 'object' ||
+            askAiActionPrompts === null ||
+            Array.isArray(askAiActionPrompts))
+    ) {
+        return res.status(400).json({ error: 'askAiActionPrompts must be an object' })
+    }
+
     const existing = await readAdminSettings()
 
     // overleaf-lab: sanitize each rubric and cap the count. Entries without an id or
@@ -163,6 +219,27 @@ async function saveAdminSettings(req, res) {
         sanitizedMaxContextTokens = existing.maxContextTokens || 32000
     }
 
+    // overleaf-lab: sanitize the action prompt overrides. When provided, keep only
+    // known keys with string values, each capped at 4000 chars. When not provided,
+    // keep the existing object untouched.
+    let sanitizedActionPrompts
+    if (askAiActionPrompts !== undefined) {
+        sanitizedActionPrompts = {}
+        for (const key of Object.keys(DEFAULT_ASK_AI_ACTION_PROMPTS)) {
+            const val = askAiActionPrompts[key]
+            if (typeof val === 'string') {
+                sanitizedActionPrompts[key] = val.slice(0, 4000)
+            }
+        }
+    } else {
+        sanitizedActionPrompts =
+            existing.askAiActionPrompts &&
+            typeof existing.askAiActionPrompts === 'object' &&
+            !Array.isArray(existing.askAiActionPrompts)
+                ? existing.askAiActionPrompts
+                : {}
+    }
+
     const updatedSettings = {
         ...existing,
         systemPrompt,
@@ -176,6 +253,12 @@ async function saveAdminSettings(req, res) {
         chatEnabled: typeof chatEnabled === 'boolean' ? chatEnabled : (existing.chatEnabled !== false),
         completionEnabled: typeof completionEnabled === 'boolean' ? completionEnabled : (existing.completionEnabled !== false),
         reviewEnabled: typeof reviewEnabled === 'boolean' ? reviewEnabled : (existing.reviewEnabled !== false),
+        // overleaf-lab: editable prompt overrides. An empty string is stored as-is
+        // and later falls back to the default via `|| DEFAULT`.
+        askAiSystemPrompt: typeof askAiSystemPrompt === 'string' ? askAiSystemPrompt : (existing.askAiSystemPrompt || ''),
+        errorPrompt: typeof errorPrompt === 'string' ? errorPrompt : (existing.errorPrompt || ''),
+        reviewSystemPrompt: typeof reviewSystemPrompt === 'string' ? reviewSystemPrompt : (existing.reviewSystemPrompt || ''),
+        askAiActionPrompts: sanitizedActionPrompts,
     }
 
     if (typeof llmApiKey === 'string' && llmApiKey.trim().length > 0) {
@@ -241,6 +324,19 @@ export async function getLLMFeatureFlags() {
 export async function getComplianceRubrics() {
     const settings = await readAdminSettings()
     return Array.isArray(settings.complianceRubrics) ? settings.complianceRubrics : []
+}
+
+// overleaf-lab: resolve the EFFECTIVE editable prompts (admin override when set,
+// else the shipped default). Consumed by the compliance reviewer and the
+// project-scoped GET /llm/prompts endpoint so the frontend and backend agree.
+export async function getLLMPrompts() {
+    const s = await readAdminSettings()
+    return {
+        askAiSystemPrompt: s.askAiSystemPrompt || DEFAULT_ASK_AI_SYSTEM_PROMPT,
+        errorPrompt: s.errorPrompt || DEFAULT_ERROR_PROMPT,
+        reviewSystemPrompt: s.reviewSystemPrompt || DEFAULT_REVIEW_SYSTEM_PROMPT,
+        askAiActionPrompts: mergeActionPrompts(s.askAiActionPrompts),
+    }
 }
 
 async function checkAdminLLMConnection(req, res) {

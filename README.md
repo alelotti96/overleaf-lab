@@ -172,6 +172,10 @@ Each user also picks their **inline-completion model** (local shared, or their o
 
 A super-admin can enable or disable each AI feature independently (chat, inline completion, compliance review) from `/admin/llm/settings`. A disabled feature is refused by the backend for everyone, including users with their own key, and its UI is hidden (with chat off but review on, the Review panel stays available). If both chat and completion are disabled, the per-user AI Settings page is hidden too. All features are on by default.
 
+### Editable prompts
+
+Every AI prompt is editable by a super-admin in `/admin/llm/settings` (the "AI Prompts" section): the chat system prompt, the Ask AI behavior prompt, the error-help prompt, the review system prompt, and the 10 Ask AI action templates (paraphrase, abstract, title, and so on). Leave a field empty to use the built-in default.
+
 ### Document compliance review
 
 A super-admin defines named **rubrics** (writing guidelines for theses / internships) in `/admin/llm/settings`, along with the **review model** and its **max context tokens**. In the editor, users open the AI Assistant rail, switch to the **Review** tab, pick a rubric, and run: the whole project (all `.tex` files) is checked against the rubric and a per-requirement report is produced (status, evidence, suggestion), with a **Download report** button.

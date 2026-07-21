@@ -4,6 +4,7 @@ import getMeta from '@/utils/meta'
 import OLTooltip from '@/shared/components/ol/ol-tooltip'
 import OLIconButton from '@/shared/components/ol/ol-icon-button'
 import { useLLMChat } from '../hooks/use-llm-chat'
+import { useLLMPrompts } from '../hooks/use-llm-prompts'
 
 interface LogEntry {
     key?: string
@@ -23,6 +24,10 @@ interface AskAIButtonProps {
 function PdfLogEntryAskAIButton({ logEntry }: AskAIButtonProps) {
     const { t } = useTranslation()
     const { modelsLoaded, hasModels } = useLLMChat()
+    // overleaf-lab: admin-editable prompts. Called unconditionally at the top so
+    // the rules of hooks hold. Only the trailing instruction block is overridable;
+    // when absent the hardcoded block is used as the fallback.
+    const { prompts } = useLLMPrompts()
 
     const handleAskAI = useCallback(async () => {
         if (!logEntry) return
@@ -51,7 +56,11 @@ function PdfLogEntryAskAIButton({ logEntry }: AskAIButtonProps) {
                 }
             }
 
-            const errorMessage = formatErrorForLLM(logEntry, sourceSnippet)
+            const errorMessage = formatErrorForLLM(
+                logEntry,
+                sourceSnippet,
+                prompts?.errorPrompt
+            )
 
             // Open the LLM chat rail tab first
             window.dispatchEvent(
@@ -71,7 +80,7 @@ function PdfLogEntryAskAIButton({ logEntry }: AskAIButtonProps) {
         } catch (err) {
             console.error('[LLM] Failed to send error to AI:', err)
         }
-    }, [logEntry])
+    }, [logEntry, prompts?.errorPrompt])
 
     // logEntry may be undefined in certain contexts; only show for errors
     if (!logEntry || logEntry.level !== 'error') {
@@ -101,7 +110,11 @@ function PdfLogEntryAskAIButton({ logEntry }: AskAIButtonProps) {
     )
 }
 
-function formatErrorForLLM(logEntry: LogEntry, sourceSnippet?: string): string {
+function formatErrorForLLM(
+    logEntry: LogEntry,
+    sourceSnippet?: string,
+    errorPrompt?: string
+): string {
     const parts = [
         '🔴 **LaTeX Compilation Error**',
         '',
@@ -135,13 +148,20 @@ function formatErrorForLLM(logEntry: LogEntry, sourceSnippet?: string): string {
         parts.push('', '**Full Error Details:**', '```', logEntry.raw, '```', '')
     }
 
-    parts.push(
-        '**Please help me:**',
-        "1. Explain what this error means in simple terms",
-        "2. Show me exactly what's wrong in my code",
-        '3. Provide the corrected code',
-        '4. Explain how to avoid this error in the future'
-    )
+    // overleaf-lab: the trailing instruction block is admin-overridable. Use the
+    // admin errorPrompt when it is a non-empty string, else the hardcoded block
+    // (kept verbatim) as the fallback.
+    if (typeof errorPrompt === 'string' && errorPrompt.trim() !== '') {
+        parts.push(errorPrompt)
+    } else {
+        parts.push(
+            '**Please help me:**',
+            "1. Explain what this error means in simple terms",
+            "2. Show me exactly what's wrong in my code",
+            '3. Provide the corrected code',
+            '4. Explain how to avoid this error in the future'
+        )
+    }
 
     return parts.join('\n')
 }
