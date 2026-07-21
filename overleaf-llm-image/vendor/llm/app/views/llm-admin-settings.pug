@@ -13,6 +13,9 @@ block append meta
     meta(name='ol-allowedModels' data-type='string' content=(allowedModels || []).join(','))
     meta(name='ol-completionModel' data-type='string' content=completionModel)
     meta(name='ol-llmApiUrlFromEnv' data-type='string' content=llmApiUrlFromEnv ? 'true' : 'false')
+    meta(name='ol-complianceRubrics' data-type='json' content=JSON.stringify(complianceRubrics || []))
+    meta(name='ol-reviewModel' data-type='string' content=reviewModel)
+    meta(name='ol-maxContextTokens' data-type='string' content=String(maxContextTokens))
 
 block content
     main#main-content.content.content-alt

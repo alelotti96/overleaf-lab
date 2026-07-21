@@ -4,6 +4,7 @@ import AuthorizationMiddleware from '../../../../app/src/Features/Authorization/
 import LLMChatController from './LLMChatController.mjs'
 import LLMSettingsController from './LLMSettingsController.mjs'
 import LLMAdminController from './LLMAdminController.mjs'
+import LLMComplianceController from './LLMComplianceController.mjs'
 import Settings from '@overleaf/settings'
 import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
 import { db as _saDb, ObjectId as _saObjectId } from '../../../../app/src/infrastructure/mongodb.mjs'
@@ -64,6 +65,21 @@ export default {
             LLMChatController.completion
         )
         logger.debug({}, '[LLM] Route registered: POST /project/:id/llm/completion')
+
+        // overleaf-lab: document compliance review endpoints (project-scoped)
+        webRouter.get(
+            '/project/:Project_id/llm/compliance/rubrics',
+            AuthorizationMiddleware.ensureUserCanReadProject,
+            LLMComplianceController.getRubrics
+        )
+        logger.debug({}, '[LLM] Route registered: GET /project/:id/llm/compliance/rubrics')
+
+        webRouter.post(
+            '/project/:Project_id/llm/compliance',
+            AuthorizationMiddleware.ensureUserCanReadProject,
+            LLMComplianceController.runCompliance
+        )
+        logger.debug({}, '[LLM] Route registered: POST /project/:id/llm/compliance')
 
         // User LLM settings (only if allowed)
         if (Settings.llm && Settings.llm.allowUserSettings) {

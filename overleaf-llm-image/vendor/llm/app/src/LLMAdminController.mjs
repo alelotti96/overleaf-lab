@@ -59,6 +59,10 @@ async function buildDisplaySettings() {
         llmApiUrlFromEnv: !settings.llmApiUrl && !!process.env.LLM_API_URL,
         hasApiKeyFromEnv: !settings.llmApiKey && !!process.env.LLM_API_KEY,
         allowedModelsFromEnv: !jsonHasModels && envModels.length > 0,
+        // overleaf-lab: document compliance review settings
+        complianceRubrics: Array.isArray(settings.complianceRubrics) ? settings.complianceRubrics : [],
+        reviewModel: settings.reviewModel || '',
+        maxContextTokens: settings.maxContextTokens || 32000,
     }
 }
 
@@ -72,7 +76,16 @@ async function getAdminSettings(req, res) {
 }
 
 async function saveAdminSettings(req, res) {
-    const { systemPrompt, llmApiUrl, llmApiKey, allowedModels, completionModel } = req.body
+    const {
+        systemPrompt,
+        llmApiUrl,
+        llmApiKey,
+        allowedModels,
+        completionModel,
+        complianceRubrics,
+        reviewModel,
+        maxContextTokens,
+    } = req.body
 
     if (typeof systemPrompt !== 'string') {
         return res.status(400).json({ error: 'systemPrompt must be a string' })
@@ -91,13 +104,54 @@ async function saveAdminSettings(req, res) {
         return res.status(400).json({ error: 'allowedModels must be an array' })
     }
 
+    // overleaf-lab: validate the document compliance review settings.
+    if (complianceRubrics !== undefined && !Array.isArray(complianceRubrics)) {
+        return res.status(400).json({ error: 'complianceRubrics must be an array' })
+    }
+    if (reviewModel !== undefined && typeof reviewModel !== 'string') {
+        return res.status(400).json({ error: 'reviewModel must be a string' })
+    }
+
     const existing = await readAdminSettings()
+
+    // overleaf-lab: sanitize each rubric and cap the count. Entries without an id or
+    // name are dropped; text fields are length-capped. When not provided, keep the
+    // existing rubrics untouched.
+    let sanitizedRubrics
+    if (Array.isArray(complianceRubrics)) {
+        sanitizedRubrics = complianceRubrics
+            .map(r => ({
+                id: String((r && r.id) || ''),
+                name: String((r && r.name) || '').slice(0, 200),
+                guidelines: String((r && r.guidelines) || '').slice(0, 20000),
+            }))
+            .filter(r => r.id && r.name)
+            .slice(0, 50)
+    } else {
+        sanitizedRubrics = Array.isArray(existing.complianceRubrics) ? existing.complianceRubrics : []
+    }
+
+    // overleaf-lab: clamp the context window to a sane range; keep existing (or the
+    // 32000 default) when not provided.
+    let sanitizedMaxContextTokens
+    if (maxContextTokens !== undefined) {
+        const parsed = parseInt(maxContextTokens, 10)
+        sanitizedMaxContextTokens = Number.isNaN(parsed)
+            ? existing.maxContextTokens || 32000
+            : Math.min(1000000, Math.max(2000, parsed))
+    } else {
+        sanitizedMaxContextTokens = existing.maxContextTokens || 32000
+    }
+
     const updatedSettings = {
         ...existing,
         systemPrompt,
         llmApiUrl: typeof llmApiUrl === 'string' ? llmApiUrl : (existing.llmApiUrl || ''),
         allowedModels: Array.isArray(allowedModels) ? allowedModels : existing.allowedModels || [],
         completionModel: typeof completionModel === 'string' ? completionModel : (existing.completionModel || ''),
+        complianceRubrics: sanitizedRubrics,
+        reviewModel: typeof reviewModel === 'string' ? reviewModel : (existing.reviewModel || ''),
+        maxContextTokens: sanitizedMaxContextTokens,
     }
 
     if (typeof llmApiKey === 'string' && llmApiKey.trim().length > 0) {
@@ -135,7 +189,17 @@ export async function getAdminLLMSettings() {
         llmApiKey: jsonKey || process.env.LLM_API_KEY || null,
         allowedModels: jsonHasModels ? settings.allowedModels : envModelList(),
         completionModel: settings.completionModel || '',
+        // overleaf-lab: document compliance review settings
+        reviewModel: settings.reviewModel || '',
+        maxContextTokens: settings.maxContextTokens || 32000,
     }
+}
+
+// overleaf-lab: exposed so the compliance controller can load the configured
+// rubrics (readAdminSettings already handles the missing-file case).
+export async function getComplianceRubrics() {
+    const settings = await readAdminSettings()
+    return Array.isArray(settings.complianceRubrics) ? settings.complianceRubrics : []
 }
 
 async function checkAdminLLMConnection(req, res) {

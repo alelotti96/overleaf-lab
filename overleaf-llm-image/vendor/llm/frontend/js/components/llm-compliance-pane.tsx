@@ -1,0 +1,301 @@
+import React from 'react'
+import { useTranslation } from 'react-i18next'
+import MaterialIcon from '@/shared/components/material-icon'
+import OLButton from '@/shared/components/ol/ol-button'
+import { useLLMCompliance } from '../hooks/use-llm-compliance'
+import type {
+    ComplianceItem,
+    ComplianceStatus,
+} from '../hooks/use-llm-compliance'
+
+// overleaf-lab: visual mapping for each requirement status. Colours reuse the
+// app's design tokens with hard-coded fallbacks so the pane still reads well if
+// a token is missing.
+const STATUS_STYLE: Record<
+    ComplianceStatus,
+    { icon: string; color: string }
+> = {
+    ok: { icon: 'check_circle', color: 'var(--green-60, #198754)' },
+    partial: { icon: 'warning', color: 'var(--yellow-60, #f59e0b)' },
+    missing: { icon: 'cancel', color: 'var(--red-60, #dc3545)' },
+    na: { icon: 'remove', color: 'var(--content-secondary, #6c757d)' },
+}
+
+const MUTED = 'var(--content-secondary, #6c757d)'
+
+function ComplianceReportItem({ item }: { item: ComplianceItem }) {
+    const { t } = useTranslation()
+    const statusStyle = STATUS_STYLE[item.status] || STATUS_STYLE.na
+
+    return (
+        <div
+            style={{
+                display: 'flex',
+                gap: 8,
+                padding: '8px 0',
+                borderTop: '1px solid var(--border-divider, rgba(125,125,125,0.2))',
+                minWidth: 0,
+            }}
+        >
+            <MaterialIcon
+                type={statusStyle.icon}
+                style={{ color: statusStyle.color, flexShrink: 0, marginTop: 2 }}
+            />
+            <div style={{ minWidth: 0, flex: 1, overflowWrap: 'anywhere' }}>
+                <div style={{ fontWeight: 'bold' }}>{item.requirement}</div>
+                {item.evidence && (
+                    <div style={{ color: MUTED, fontSize: '0.85em', marginTop: 2 }}>
+                        {t('evidence', 'Evidence')}: {item.evidence}
+                    </div>
+                )}
+                {item.suggestion && (
+                    <div style={{ fontStyle: 'italic', fontSize: '0.9em', marginTop: 2 }}>
+                        {t('suggestion', 'Suggestion')}: {item.suggestion}
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
+function LLMCompliancePane() {
+    const { t } = useTranslation()
+    const {
+        rubrics,
+        rubricsLoaded,
+        selectedRubricId,
+        setSelectedRubricId,
+        isRunning,
+        result,
+        errorInfo,
+        runReview,
+        hasRubrics,
+    } = useLLMCompliance()
+
+    if (!rubricsLoaded) {
+        return (
+            <div style={{ padding: 12, color: MUTED }}>
+                {t('loading', 'Loading')}…
+            </div>
+        )
+    }
+
+    if (!hasRubrics) {
+        return (
+            <div style={{ padding: 12, color: MUTED }}>
+                {t(
+                    'compliance_no_rubrics',
+                    'No review rubrics have been configured. Ask your administrator to add one in the LLM settings.'
+                )}
+            </div>
+        )
+    }
+
+    // overleaf-lab: map the fixed backend error codes to friendly copy.
+    const renderError = (): React.ReactNode => {
+        if (!errorInfo) return null
+
+        let message: string
+        switch (errorInfo.error) {
+            case 'too_long':
+                message = t(
+                    'review_too_long',
+                    'The document is too long for a single-pass review with the configured context window.'
+                )
+                break
+            case 'busy':
+                message = t(
+                    'review_busy',
+                    'A review is already running. Please try again in a moment.'
+                )
+                break
+            case 'model_unavailable':
+                message = t(
+                    'review_model_unavailable',
+                    'The review model is not available on the backend right now.'
+                )
+                break
+            case 'not_configured':
+                message = t(
+                    'review_not_configured',
+                    'The LLM backend is not configured. Contact your administrator.'
+                )
+                break
+            case 'empty_document':
+                message = t('review_empty', 'This project has no text to review.')
+                break
+            case 'disabled':
+                message = t('review_disabled', 'The AI service is disabled.')
+                break
+            default:
+                message =
+                    errorInfo.message ||
+                    t('review_failed', 'The review failed. Please try again.')
+        }
+
+        const showTokens =
+            errorInfo.error === 'too_long' &&
+            errorInfo.documentTokensEstimate != null &&
+            errorInfo.maxContextTokens != null
+
+        return (
+            <div
+                style={{
+                    marginTop: 12,
+                    padding: 10,
+                    borderRadius: 6,
+                    color: 'var(--red-60, #dc3545)',
+                    border: '1px solid var(--red-60, #dc3545)',
+                    background: 'rgba(220,53,69,0.08)',
+                    overflowWrap: 'anywhere',
+                }}
+            >
+                <div>{message}</div>
+                {showTokens && (
+                    <div style={{ color: MUTED, fontSize: '0.85em', marginTop: 4 }}>
+                        ~{errorInfo.documentTokensEstimate} /{' '}
+                        {errorInfo.maxContextTokens} tokens
+                    </div>
+                )}
+            </div>
+        )
+    }
+
+    const renderResult = (): React.ReactNode => {
+        if (!result) return null
+
+        const counts = result.items.reduce(
+            (acc, item) => {
+                acc[item.status] = (acc[item.status] || 0) + 1
+                return acc
+            },
+            {} as Record<ComplianceStatus, number>
+        )
+
+        return (
+            <div
+                style={{
+                    marginTop: 12,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minHeight: 0,
+                    flex: 1,
+                }}
+            >
+                {/* overleaf-lab: compact counts summary */}
+                <div
+                    style={{
+                        display: 'flex',
+                        gap: 12,
+                        flexWrap: 'wrap',
+                        fontSize: '0.85em',
+                        marginBottom: 8,
+                    }}
+                >
+                    <span style={{ color: STATUS_STYLE.ok.color }}>
+                        {t('status_ok', 'OK')}: {counts.ok || 0}
+                    </span>
+                    <span style={{ color: STATUS_STYLE.partial.color }}>
+                        {t('status_partial', 'Partial')}: {counts.partial || 0}
+                    </span>
+                    <span style={{ color: STATUS_STYLE.missing.color }}>
+                        {t('status_missing', 'Missing')}: {counts.missing || 0}
+                    </span>
+                    <span style={{ color: MUTED }}>
+                        {t('status_na', 'N/A')}: {counts.na || 0}
+                    </span>
+                </div>
+
+                {/* Summary block */}
+                <div
+                    style={{
+                        padding: 10,
+                        borderRadius: 6,
+                        background: 'var(--bg-light-secondary, rgba(125,125,125,0.08))',
+                        overflowWrap: 'anywhere',
+                    }}
+                >
+                    {result.summary}
+                </div>
+
+                <div style={{ color: MUTED, fontSize: '0.85em', marginTop: 6 }}>
+                    {t('model_label', 'Model')}: {result.model} · ~
+                    {result.documentTokensEstimate} {t('tokens', 'tokens')}
+                </div>
+
+                {/* Scrollable requirements list */}
+                <div
+                    style={{
+                        marginTop: 8,
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        minHeight: 0,
+                        flex: 1,
+                    }}
+                >
+                    {result.items.map((item, idx) => (
+                        <ComplianceReportItem key={idx} item={item} />
+                    ))}
+                </div>
+            </div>
+        )
+    }
+
+    return (
+        <div
+            style={{
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                flex: 1,
+                padding: 12,
+                overflow: 'hidden',
+            }}
+        >
+            {/* Header row: rubric selector + run button */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <select
+                    className="form-select"
+                    value={selectedRubricId}
+                    onChange={e => setSelectedRubricId(e.target.value)}
+                    disabled={isRunning}
+                    aria-label={t('review_rubric', 'Review rubric')}
+                    style={{ flex: 1, minWidth: 0 }}
+                >
+                    {rubrics.map(rubric => (
+                        <option key={rubric.id} value={rubric.id}>
+                            {rubric.name}
+                        </option>
+                    ))}
+                </select>
+                <OLButton
+                    variant="primary"
+                    type="button"
+                    onClick={runReview}
+                    disabled={isRunning || !selectedRubricId}
+                    isLoading={isRunning}
+                    loadingLabel={t('run_review', 'Run review')}
+                >
+                    <MaterialIcon type="fact_check" /> {t('run_review', 'Run review')}
+                </OLButton>
+            </div>
+
+            {isRunning && (
+                <div style={{ marginTop: 12, color: MUTED, display: 'flex', gap: 8 }}>
+                    <MaterialIcon type="hourglass_empty" />
+                    <span>
+                        {t(
+                            'review_in_progress',
+                            'Review in progress. This can take a few minutes for a long document.'
+                        )}
+                    </span>
+                </div>
+            )}
+
+            {!isRunning && renderError()}
+            {!isRunning && renderResult()}
+        </div>
+    )
+}
+
+export default LLMCompliancePane

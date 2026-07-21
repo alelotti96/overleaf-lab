@@ -133,6 +133,13 @@ export default function LLMAdminSettingsPage() {
     const [completionModel, setCompletionModel] = useState<string>(
         (getMeta('ol-completionModel') as string) || ''
     )
+    // overleaf-lab: compliance review settings. Rubrics come from a data-type='json'
+    // meta tag, so getMeta returns the parsed value; guard in case it is not an array.
+    const rubricsFromMeta = getMeta('ol-complianceRubrics') as Array<{ id: string; name: string; guidelines: string }>
+    const initialRubrics = Array.isArray(rubricsFromMeta) ? rubricsFromMeta : []
+    const [complianceRubrics, setComplianceRubrics] = useState<Array<{ id: string; name: string; guidelines: string }>>(initialRubrics)
+    const [reviewModel, setReviewModel] = useState<string>((getMeta('ol-reviewModel') as string) || '')
+    const [maxContextTokens, setMaxContextTokens] = useState<number>(parseInt((getMeta('ol-maxContextTokens') as string) || '32000', 10) || 32000)
     const [scanStatus, setScanStatus] = useState<string | null>(null)
     const [testStatus, setTestStatus] = useState<string | null>(null)
 
@@ -168,6 +175,9 @@ export default function LLMAdminSettingsPage() {
                     llmApiKey,
                     allowedModels,
                     completionModel,
+                    complianceRubrics,
+                    reviewModel,
+                    maxContextTokens,
                 },
             })
         ).catch(() => { })
@@ -221,6 +231,23 @@ export default function LLMAdminSettingsPage() {
                 ? prev.filter(m => m !== model)
                 : [...prev, model]
         )
+    }
+
+    // overleaf-lab: compliance rubric editing helpers. Each rubric keeps a stable
+    // client-generated id so React keys and immutable updates stay correct.
+    const addRubric = () => {
+        const id = `rubric-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        setComplianceRubrics(prev => [...prev, { id, name: '', guidelines: '' }])
+    }
+
+    const updateRubric = (id: string, field: 'name' | 'guidelines', value: string) => {
+        setComplianceRubrics(prev =>
+            prev.map(r => (r.id === id ? { ...r, [field]: value } : r))
+        )
+    }
+
+    const removeRubric = (id: string) => {
+        setComplianceRubrics(prev => prev.filter(r => r.id !== id))
     }
 
     const allModels = Array.from(new Set([...availableModels, ...allowedModels]))
@@ -464,6 +491,10 @@ export default function LLMAdminSettingsPage() {
                                         <option value="">
                                             {t('auto_first_allowed_model', 'Auto (first allowed model)')}
                                         </option>
+                                        {/* overleaf-lab: turn off shared autocomplete; users can still use their own API key */}
+                                        <option value="__disabled__">
+                                            {t('completion_disabled_shared', 'Disabled (only users with their own API key)')}
+                                        </option>
                                         {allModels.map(model => (
                                             <option key={model} value={model}>
                                                 {model}
@@ -473,7 +504,7 @@ export default function LLMAdminSettingsPage() {
                                     <OLFormText>
                                         {t(
                                             'inline_completion_model_admin_help',
-                                            'Model used for inline autocomplete on the shared backend. Can differ from the chat models.'
+                                            'Model used for inline autocomplete on the shared backend. Can differ from the chat models. Set to Disabled to turn off shared autocomplete (users with their own API key still get it).'
                                         )}
                                     </OLFormText>
                                 </OLFormGroup>
@@ -524,6 +555,146 @@ export default function LLMAdminSettingsPage() {
                                         {t('reset_to_default', 'Reset to default')}
                                     </OLButton>
                                 </div>
+                            </div>
+
+                            {/* ── Section 4: Compliance Review ── */}
+                            <div style={sectionStyle}>
+                                <div style={sectionHeaderStyle}>
+                                    <span style={stepNumberStyle}>4</span>
+                                    <MaterialIcon type="fact_check" />
+                                    {t('compliance_review', 'Compliance Review')}
+                                </div>
+                                <p style={sectionDescStyle}>
+                                    {t(
+                                        'compliance_review_desc',
+                                        'Configure the document compliance review: the guideline rubrics users can check against, the model that runs the review, and the maximum context size.'
+                                    )}
+                                </p>
+
+                                {/* overleaf-lab: (a) rubrics editor */}
+                                {complianceRubrics.length === 0 && (
+                                    <p style={{ color: 'var(--content-secondary, #6c757d)', fontSize: '0.875rem', marginBottom: '1rem' }}>
+                                        {t('no_rubrics_yet', 'No rubrics yet. Add one to enable the compliance review for users.')}
+                                    </p>
+                                )}
+                                {complianceRubrics.map(rubric => (
+                                    <div
+                                        key={rubric.id}
+                                        style={{
+                                            border: '1px solid var(--border-color-01, #dee2e6)',
+                                            borderRadius: '6px',
+                                            padding: '1rem',
+                                            marginBottom: '0.75rem',
+                                        }}
+                                    >
+                                        <OLFormGroup controlId={`rubric-name-${rubric.id}`}>
+                                            <OLFormLabel>
+                                                {t('rubric_name', 'Rubric name')}
+                                            </OLFormLabel>
+                                            <OLFormControl
+                                                type="text"
+                                                value={rubric.name}
+                                                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                                                    updateRubric(rubric.id, 'name', e.target.value)
+                                                }
+                                                placeholder={t('rubric_name_placeholder', 'e.g. Thesis writing guidelines')}
+                                            />
+                                        </OLFormGroup>
+                                        <OLFormGroup controlId={`rubric-guidelines-${rubric.id}`} style={{ marginBottom: '0.5rem' }}>
+                                            <OLFormLabel>
+                                                {t('rubric_guidelines', 'Guidelines')}
+                                            </OLFormLabel>
+                                            <OLFormControl
+                                                as="textarea"
+                                                rows={6}
+                                                value={rubric.guidelines}
+                                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                                                    updateRubric(rubric.id, 'guidelines', e.target.value)
+                                                }
+                                                style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
+                                            />
+                                        </OLFormGroup>
+                                        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                            <OLButton
+                                                variant="danger"
+                                                size="sm"
+                                                type="button"
+                                                onClick={() => removeRubric(rubric.id)}
+                                            >
+                                                <MaterialIcon type="delete" className="me-1" style={{ fontSize: '1rem' }} />
+                                                {t('remove', 'Remove')}
+                                            </OLButton>
+                                        </div>
+                                    </div>
+                                ))}
+                                <div style={{ marginBottom: '0.5rem' }}>
+                                    <OLButton
+                                        variant="secondary"
+                                        size="sm"
+                                        type="button"
+                                        onClick={addRubric}
+                                    >
+                                        <MaterialIcon type="add" className="me-1" style={{ fontSize: '1rem' }} />
+                                        {t('add_rubric', 'Add rubric')}
+                                    </OLButton>
+                                </div>
+                                <OLFormText>
+                                    {t(
+                                        'compliance_rubrics_help',
+                                        'Paste your thesis or internship writing guidelines. The AI checks the whole document against each rubric and returns a report.'
+                                    )}
+                                </OLFormText>
+
+                                {/* overleaf-lab: (b) review model selector */}
+                                <OLFormGroup controlId="llm-review-model" style={{ marginTop: '1.25rem' }}>
+                                    <OLFormLabel>
+                                        {t('review_model', 'Review model')}
+                                    </OLFormLabel>
+                                    <select
+                                        id="llm-review-model"
+                                        className="form-select"
+                                        value={reviewModel}
+                                        onChange={e => setReviewModel(e.target.value)}
+                                    >
+                                        <option value="">
+                                            {t('review_model_shared_default', 'Shared chat model (default)')}
+                                        </option>
+                                        {allModels.map(model => (
+                                            <option key={model} value={model}>
+                                                {model}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <OLFormText>
+                                        {t(
+                                            'review_model_help',
+                                            'Model used to run the compliance review. Pick a large-context model. Defaults to the shared chat model.'
+                                        )}
+                                    </OLFormText>
+                                </OLFormGroup>
+
+                                {/* overleaf-lab: (c) max context tokens */}
+                                <OLFormGroup controlId="llm-max-context-tokens" style={{ marginTop: '1rem', marginBottom: 0 }}>
+                                    <OLFormLabel>
+                                        {t('max_context_tokens', 'Max context tokens')}
+                                    </OLFormLabel>
+                                    <OLFormControl
+                                        type="number"
+                                        value={maxContextTokens}
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                            const parsed = parseInt(e.target.value, 10)
+                                            if (!isNaN(parsed)) {
+                                                setMaxContextTokens(parsed)
+                                            }
+                                        }}
+                                    />
+                                    <OLFormText>
+                                        {t(
+                                            'max_context_tokens_help',
+                                            'The context window (in tokens) of the review model, as configured on your llama.cpp server (the -c value, divided by --parallel). The review refuses documents that would not fit. No auto-detection.'
+                                        )}
+                                    </OLFormText>
+                                </OLFormGroup>
                             </div>
 
                             {/* ── Notifications ── */}

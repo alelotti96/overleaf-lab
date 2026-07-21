@@ -384,6 +384,12 @@ async function completion(req, res) {
     let llmApiUrl = adminLlmSettings.llmApiUrl || process.env.LLM_API_URL
     let llmApiKey = adminLlmSettings.llmApiKey || process.env.LLM_API_KEY
 
+    // overleaf-lab: the admin can disable shared inline completion (a sentinel value
+    // for the completion model). When disabled, only users with their own completion
+    // route get suggestions; everyone else gets none. This keeps a self-hosted CPU
+    // backend free from the high-frequency autocomplete load.
+    const sharedCompletionDisabled = adminLlmSettings.completionModel === '__disabled__'
+
     // overleaf-lab: default completion model for the shared backend. Prefer the
     // admin-chosen completion model, then the env override, then the first env
     // model. May be overridden below by the user's personal completion settings.
@@ -420,13 +426,15 @@ async function completion(req, res) {
         }
     }
 
-    // Try the user's own settings only when NO shared server URL is configured.
+    // Try the user's own settings when NO shared server URL is configured, OR when
+    // the admin disabled shared completion (so a user with their own API still gets
+    // suggestions from their own endpoint).
     // overleaf-lab: gate on the URL alone (not the key). A keyless shared endpoint
     // is valid, so an empty key must NOT hijack completion onto the user's personal
     // endpoint while the shared one is fine. When we do fall back, also switch
     // completionModel to the user's own model, otherwise the env-derived 'default'
     // is sent to their endpoint (e.g. OpenAI 404s on model 'default').
-    if (!usingPersonalCompletion && !llmApiUrl && userId) {
+    if (!usingPersonalCompletion && (!llmApiUrl || sharedCompletionDisabled) && userId) {
         try {
             const user = await User.findById(
                 userId,
@@ -442,6 +450,13 @@ async function completion(req, res) {
         } catch (error) {
             logger.warn({ userId, err: error }, '[LLM] Error loading user settings for completion')
         }
+    }
+
+    // overleaf-lab: shared completion disabled and no personal route resolved (the
+    // completion model is still the sentinel) -> return an empty suggestion so the
+    // editor simply shows nothing, with no error.
+    if (completionModel === '__disabled__') {
+        return res.json({ success: true, data: '' })
     }
 
     if (!llmApiUrl) {
