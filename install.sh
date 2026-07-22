@@ -151,11 +151,13 @@ if [ ! -f config.env.local ]; then
     echo "  - Overleaf users (create, activate, manage)"
     echo "  - Zotero integration (add/remove user bibliographies)"
     echo ""
-    echo "This is SEPARATE from Overleaf login (which you'll create via /launchpad)."
+    echo "This is SEPARATE from the Overleaf login (which you'll create via /launchpad)."
+    echo "TIP: use the SAME email below and at /launchpad - that Overleaf user is then"
+    echo "     automatically promoted to super_admin (full admin), with no extra step."
     echo ""
 
-    # Dashboard admin email
-    read -p "Dashboard admin email: " ADMIN_EMAIL
+    # Admin email: dashboard login AND the Overleaf user auto-promoted to super_admin.
+    read -p "Admin email (use this same email at /launchpad too): " ADMIN_EMAIL
     ADMIN_EMAIL=${ADMIN_EMAIL:-"admin@example.com"}
 
     # Dashboard admin password
@@ -866,7 +868,8 @@ echo "Next steps:"
 echo ""
 echo "  1. Create Overleaf admin user:"
 echo "     Visit: ${OVERLEAF_URL:-http://localhost}/launchpad"
-echo "     Register your first Overleaf admin account"
+echo "     Register with email: ${ADMIN_EMAIL}"
+echo "     (use exactly this email so it is auto-promoted to super_admin)"
 echo ""
 echo "  2. Access dashboard (already configured):"
 echo "     Visit: http://localhost:${FLASK_PORT:-5000}"
