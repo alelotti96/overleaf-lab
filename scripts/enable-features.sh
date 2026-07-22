@@ -129,31 +129,41 @@ if [ -f "$PATCH_SCRIPT" ]; then
     cd /overleaf/services/web && node "$PATCH_SCRIPT"
     echo "Super admin route patches: done"
 
-    # Set adminRoles for the super_admin user in MongoDB
+    # Set adminRoles for the super_admin user in MongoDB. The launchpad user may not
+    # exist yet at container startup, so run this as a short background watcher: it
+    # promotes immediately if the user already exists, otherwise polls until the user
+    # is created (e.g. via /launchpad) and promotes it without needing a restart.
+    # Bounded to 15 min so it never lingers; self-exits on success; idempotent.
     if [ -n "$SUPER_ADMIN_EMAIL" ]; then
-        echo "Setting super_admin role for: $SUPER_ADMIN_EMAIL"
-        node -e "
+        echo "Ensuring super_admin role for: $SUPER_ADMIN_EMAIL (background watcher)"
+        nohup node -e "
 const { MongoClient } = require('mongodb');
-async function main() {
+const EMAIL = '$SUPER_ADMIN_EMAIL';
+const DEADLINE = Date.now() + 15 * 60 * 1000;
+async function promoteOnce() {
   const client = new MongoClient(process.env.MONGO_CONNECTION_STRING || 'mongodb://mongo:27017');
   try {
     await client.connect();
-    const db = client.db('sharelatex');
-    const result = await db.collection('users').updateOne(
-      { email: '$SUPER_ADMIN_EMAIL' },
+    const r = await client.db('sharelatex').collection('users').updateOne(
+      { email: EMAIL },
       { \$set: { adminRoles: ['super_admin'] } }
     );
-    if (result.matchedCount > 0) {
-      console.log('[Super Admin] adminRoles set for $SUPER_ADMIN_EMAIL');
-    } else {
-      console.log('[Super Admin] User $SUPER_ADMIN_EMAIL not found in DB (will be set when user exists)');
-    }
+    return r.matchedCount > 0;
   } finally {
     await client.close();
   }
 }
-main().catch(err => console.error('[Super Admin] MongoDB error:', err));
-" 2>&1 || echo "Super admin MongoDB setup: failed (non-critical, can be set via dashboard)"
+(async () => {
+  for (;;) {
+    let ok = false;
+    try { ok = await promoteOnce(); } catch (e) { console.error('[Super Admin] retry error:', e.message); }
+    if (ok) { console.log('[Super Admin] adminRoles set for ' + EMAIL); process.exit(0); }
+    if (Date.now() > DEADLINE) { console.log('[Super Admin] ' + EMAIL + ' still not created after 15 min; create it then restart to promote'); process.exit(0); }
+    await new Promise(r => setTimeout(r, 15000));
+  }
+})();
+" &
+        echo "  super_admin watcher started (promotes the user as soon as it exists)"
     else
         echo "Super admin: SUPER_ADMIN_EMAIL not set, skipping MongoDB role setup"
     fi
