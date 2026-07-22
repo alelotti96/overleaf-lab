@@ -63,29 +63,46 @@ fi
 
 # Check Docker permissions
 if ! docker ps &> /dev/null; then
-    echo -e "${YELLOW}Docker permission denied. Checking if you're in the docker group...${NC}"
-
-    if groups | grep -q docker; then
-        # User is in docker group but needs to activate it
-        echo "You're in the docker group but it's not active in this session."
-        echo "Re-launching installer with correct permissions..."
-        echo ""
-        exec sg docker -c "$0 $*"
-    else
-        # User is not in docker group
-        echo -e "${RED}You're not in the docker group.${NC}"
-        echo "Adding you to the docker group now..."
-        sudo groupadd -f docker   # some installs (static binary, rootless) lack it
-        sudo usermod -aG docker $USER
-        echo ""
-        echo -e "${GREEN}Added to docker group!${NC}"
-        echo "Re-launching installer with correct permissions..."
-        echo ""
-        exec sg docker -c "$0 $*"
+    # overleaf-lab: `docker ps` can fail for two very different reasons: the daemon is
+    # stopped, or the daemon runs but this user is not in the docker group. They need
+    # different fixes, and treating a stopped daemon as a group problem causes an
+    # infinite `sg docker` re-exec loop (re-launching never helps a dead daemon). Use
+    # `sudo docker ps` to tell them apart: if sudo reaches the daemon, it is running.
+    if ! sudo docker ps &> /dev/null; then
+        echo -e "${YELLOW}Docker daemon is not running. Starting it...${NC}"
+        if ! sudo systemctl start docker; then
+            echo -e "${RED}Could not start the Docker daemon.${NC}"
+            echo "Start it manually (sudo systemctl start docker), then re-run this installer."
+            exit 1
+        fi
+        sleep 2  # let dockerd recreate /var/run/docker.sock
     fi
-else
-    echo -e "${GREEN}✓ Docker permissions OK${NC}"
+
+    # Daemon is up; make sure this user can reach the socket via the docker group.
+    if ! docker ps &> /dev/null; then
+        if groups | grep -q docker; then
+            echo "You're in the docker group but it's not active in this session."
+        else
+            echo -e "${RED}You're not in the docker group.${NC}"
+            echo "Adding you to the docker group now..."
+            sudo groupadd -f docker   # some installs (static binary, rootless) lack it
+            sudo usermod -aG docker $USER
+        fi
+        # overleaf-lab: re-launch once with the docker group active, guarding against
+        # an infinite loop: if we have already re-exec'd and docker still fails, the
+        # group is not the cause, so stop with a clear message instead of looping.
+        if [ -z "$OVERLEAF_DOCKER_REEXEC" ]; then
+            echo "Re-launching installer with docker group active..."
+            echo ""
+            exec sg docker -c "OVERLEAF_DOCKER_REEXEC=1 $0 $*"
+        fi
+        echo -e "${RED}Docker is running but still not reachable after adding the group.${NC}"
+        echo "The docker.sock group likely differs from the 'docker' group. Log out and"
+        echo "back in (or run: newgrp docker && docker ps), then re-run this installer."
+        exit 1
+    fi
 fi
+echo -e "${GREEN}✓ Docker permissions OK${NC}"
 
 # Check internet connection
 if ! ping -c 1 google.com &> /dev/null; then
