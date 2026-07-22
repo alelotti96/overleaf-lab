@@ -45,7 +45,7 @@ The install script reads `config.env.local` and edits the appropriate config fil
 
 ## Branding: Footer & Header
 
-The footer links are native (set via env vars read by Overleaf). The dashboard header color is injected as CSS by `scripts/nginx-customizations.sh` — Overleaf 6.2 ships a white header and offers no env var for the navbar color.
+The footer links are native (set via env vars read by Overleaf). The header and footer colors are injected as CSS by `scripts/nginx-customizations.sh`: Overleaf 6.2 ships a white header, offers no env var for the navbar color, and its footer has no dark-theme styling (it stays a white strip under the dark dashboard). Setting `HEADER_BG_COLOR` colors both bars, so the page gets a matching band at the top and at the bottom in either theme.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -54,8 +54,8 @@ The footer links are native (set via env vars read by Overleaf). The dashboard h
 | `FOOTER_CREDIT_TEXT` | "Maintained by …" | Bottom-left credit (leave empty to omit) |
 | `FOOTER_CREDIT_URL` | maintainer URL | Link target for the credit |
 | `HIDE_POWERED_BY` | "false" | Hide the "© 2025 Powered by Overleaf" line |
-| `HEADER_BG_COLOR` | "#1b222c" | Dashboard header background (empty = keep the default white header) |
-| `HEADER_TEXT_COLOR` | "#ffffff" | Header text/link color |
+| `HEADER_BG_COLOR` | "#1b222c" | Header and footer background (empty = keep Overleaf's default white header and footer) |
+| `HEADER_TEXT_COLOR` | "#ffffff" | Header and footer text/link color |
 
 ## GitHub Synchronization [optional]
 

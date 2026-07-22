@@ -11,7 +11,7 @@ if [ -f "$NGINX_CONF" ]; then
     if grep -q "OVERLEAF_LAB_NGINX_PATCH" "$NGINX_CONF"; then
         echo "Nginx customizations: already applied"
     else
-        echo "Applying nginx customizations (hide signup + fix logout redirect + header color)..."
+        echo "Applying nginx customizations (hide signup + fix logout redirect + header/footer color)..."
 
         # -------------------------------------------------------------------
         # Build the CSS injected into every page's <head>
@@ -33,7 +33,18 @@ if [ -f "$NGINX_CONF" ]; then
             # colour with a subtle hover, so submenu items are always readable
             # regardless of Overleaf's default (no dark-on-dark, no white-on-white).
             CUSTOM_CSS="${CUSTOM_CSS}nav.navbar-main,nav.website-redesign-navbar,.navbar-container{background-color:${HEADER_BG_COLOR}!important;}.navbar-container a,.navbar-container .navbar-title,.navbar-container .navbar-brand,.navbar-container .nav-link,.navbar-container .dropdown-toggle{color:${HEADER_TEXT_COLOR}!important;}.navbar-container .dropdown-menu{--bs-dropdown-bg:${HEADER_BG_COLOR};--bs-dropdown-color:${HEADER_TEXT_COLOR};--bs-dropdown-link-color:${HEADER_TEXT_COLOR};--bs-dropdown-link-hover-color:${HEADER_TEXT_COLOR};--bs-dropdown-link-hover-bg:rgba(255,255,255,0.12);--bs-dropdown-link-active-color:${HEADER_TEXT_COLOR};--bs-dropdown-link-active-bg:rgba(255,255,255,0.2);--bs-dropdown-border-color:rgba(255,255,255,0.15);background-color:${HEADER_BG_COLOR}!important;border:1px solid rgba(255,255,255,0.15)!important;}.navbar-container .dropdown-menu .dropdown-item{color:${HEADER_TEXT_COLOR}!important;background-color:transparent!important;}.navbar-container .dropdown-menu .dropdown-item:hover,.navbar-container .dropdown-menu .dropdown-item:focus,.navbar-container .dropdown-menu .dropdown-item:active,.navbar-container .dropdown-menu .dropdown-item.active{background-color:rgba(255,255,255,0.12)!important;color:${HEADER_TEXT_COLOR}!important;}.navbar-container a:hover,.navbar-container a:focus,.navbar-container .nav-link:hover,.navbar-container .nav-link:focus,.navbar-container .dropdown-toggle:hover,.navbar-container .dropdown-toggle:focus,.navbar-container .dropdown-toggle.show,.navbar-container .dropdown-toggle[aria-expanded=true],.navbar-container .btn:hover,.navbar-container .btn:focus{background-color:transparent!important;color:${HEADER_TEXT_COLOR}!important;box-shadow:none!important;}"
-            echo "  Header color: ${HEADER_BG_COLOR} (text ${HEADER_TEXT_COLOR})"
+            # 3) Same treatment for the footer, which has no dark-theme styling and
+            #    stays a white strip with grey text under the dark dashboard. We
+            #    cannot make this conditional on the theme: layout-base.pug hardcodes
+            #    data-theme="light" on <body> even on the dark pages, so there is no
+            #    DOM marker to scope a dark-only rule on. Applying the header colours
+            #    unconditionally sidesteps that and gives a matching dark band top and
+            #    bottom in either theme. Both footer roots are covered (site-footer is
+            #    the thin footer used on app pages, fat-footer the marketing one) and
+            #    the descendants are reset wholesale, since the inner markup differs
+            #    between the pug and the React variants of each.
+            CUSTOM_CSS="${CUSTOM_CSS}footer.site-footer,footer.fat-footer{background-color:${HEADER_BG_COLOR}!important;border-top:1px solid rgba(255,255,255,0.1)!important;}footer.site-footer *,footer.fat-footer *{background-color:transparent!important;color:${HEADER_TEXT_COLOR}!important;}footer.site-footer .text-muted,footer.fat-footer .text-muted{opacity:0.75;}footer.site-footer a:hover,footer.site-footer a:focus,footer.fat-footer a:hover,footer.fat-footer a:focus{text-decoration:underline;}"
+            echo "  Header/footer color: ${HEADER_BG_COLOR} (text ${HEADER_TEXT_COLOR})"
         fi
 
         # Add sub_filter to inject the CSS and increase proxy buffers for OIDC.
