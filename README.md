@@ -15,7 +15,7 @@ Scripts have been tested on Ubuntu 24.
 - Project history with restore functionality
 - Import Microsoft Word and Markdown documents; export projects as Word, Markdown, or HTML (Pandoc, experimental upstream feature)
 - Optional GitHub two-way synchronization (requires a GitHub OAuth App)
-- Optional AI Assistant (LLM): in-editor chat + Ask-AI-on-selection + inline completion, backed by a local llama.cpp or any OpenAI-compatible API, with optional per-user OpenAI/Anthropic keys (encrypted at rest)
+- Optional AI Assistant (LLM): in-editor chat + Ask-AI-on-selection + inline completion + document compliance review (checks the whole project against admin-defined rubrics), backed by a local llama.cpp or any OpenAI-compatible API, with optional per-user OpenAI/Anthropic keys (encrypted at rest)
 
 **Full TeXLive + Microsoft Fonts**:
 
@@ -119,7 +119,12 @@ Overleaf Lab distinguishes between two admin levels:
 
 Only Super Admins can access other users' projects (by URL or from Manage Projects). Normal admins are treated like regular users on projects they are not members of - the upstream behavior (any `isAdmin` user gets owner access to every project, via `ADMIN_PRIVILEGE_AVAILABLE=true` baked into the CEP image) is patched out at container startup.
 
-The user set as `ADMIN_EMAIL` during installation is automatically promoted to Super Admin at each container startup. Additional Super Admins can be assigned from the dashboard via the lock-shield button next to admin users.
+The user whose email matches `ADMIN_EMAIL` (asked during installation) is promoted to Super
+Admin automatically: at container startup if the account already exists, and otherwise as
+soon as it is created, so the account you register at `/launchpad` is promoted within
+seconds. **Use that same email at `/launchpad`**, otherwise there is no match and the
+account stays a normal admin. Additional Super Admins can be assigned from the dashboard
+via the lock-shield button next to admin users.
 
 ## Zotero Integration
 
