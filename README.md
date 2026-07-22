@@ -15,6 +15,7 @@ Scripts have been tested on Ubuntu 24.
 - Project history with restore functionality
 - Import Microsoft Word and Markdown documents; export projects as Word, Markdown, or HTML (Pandoc, experimental upstream feature)
 - Optional GitHub two-way synchronization (requires a GitHub OAuth App)
+- Optional AI Assistant (LLM): in-editor chat + Ask-AI-on-selection + inline completion, backed by a local llama.cpp or any OpenAI-compatible API, with optional per-user OpenAI/Anthropic keys (encrypted at rest)
 
 **Full TeXLive + Microsoft Fonts**:
 
@@ -76,7 +77,6 @@ Email is required for password resets and notifications. For Gmail:
 ```bash
 git clone https://github.com/alelotti96/overleaf-lab.git
 cd overleaf-lab
-chmod +x *.sh scripts/*.sh
 ./install.sh
 ```
 
@@ -88,6 +88,13 @@ The script asks for:
 - Public Zotero signup (yes/no)
 - OIDC single sign-on (optional)
 - GitHub synchronization (optional, needs a GitHub OAuth App client ID/secret)
+- AI assistant / local LLM (optional)
+
+**Requirements.** Docker, and a CPU with AVX (MongoDB 8.0+ needs it). On Linux kernel
+`>= 6.19` the installer auto-pins MongoDB to `8.0.4`: MongoDB `8.0.5+` crash-loops on
+those kernels (a tcmalloc/rseq bug, MongoDB SERVER-121912). Older kernels keep the
+rolling `8.0` tag. Overleaf 6.x requires a MongoDB server `>= 8.0`, and `8.0.4` satisfies
+it, so there is no version conflict.
 
 ## After Installation
 
@@ -110,7 +117,7 @@ Overleaf Lab distinguishes between two admin levels:
 | **Admin** (`isAdmin: true`) | Manage Users (`/admin/user`) | Full access |
 | **Super Admin** (`isAdmin: true` + `adminRoles: ["super_admin"]`) | Manage Users + Manage Site (`/admin`) + Manage Projects (`/admin/project`) + can open any project by URL | Full access |
 
-Only Super Admins can access other users' projects (by URL or from Manage Projects). Normal admins are treated like regular users on projects they are not members of — the upstream behavior (any `isAdmin` user gets owner access to every project, via `ADMIN_PRIVILEGE_AVAILABLE=true` baked into the CEP image) is patched out at container startup.
+Only Super Admins can access other users' projects (by URL or from Manage Projects). Normal admins are treated like regular users on projects they are not members of - the upstream behavior (any `isAdmin` user gets owner access to every project, via `ADMIN_PRIVILEGE_AVAILABLE=true` baked into the CEP image) is patched out at container startup.
 
 The user set as `ADMIN_EMAIL` during installation is automatically promoted to Super Admin at each container startup. Additional Super Admins can be assigned from the dashboard via the lock-shield button next to admin users.
 
@@ -126,6 +133,164 @@ http://zotero-username:5000/collection  → Specific collection
 In Overleaf: **New File → From External URL** → paste the URL as `references.bib`
 
 > **Technical Note:** The installation automatically configures Overleaf to whitelist internal `zotero-*` container URLs, bypassing SSRF (Server-Side Request Forgery) protection for these trusted internal services.
+
+## AI Assistant (LLM)
+
+An optional in-editor AI assistant: a chat panel, "Ask AI" on a text selection, "Ask AI about this error" on compile-log entries, inline completion, and a **document compliance review** that checks the whole project against admin-defined rubrics. It is backed by any OpenAI-compatible LLM: a local llama.cpp server, a hosted API, or each user's own key.
+
+It is **opt-in** and ships **off** by default. Enabling it requires **building a custom Docker image** (`overleaf-lab/sharelatex-llm`, layered `FROM` the stock Overleaf image), because the editor frontend is bundled at build time and cannot be added to a running container:
+
+```bash
+./scripts/build-llm-image.sh   # ~15-30 min, needs Docker + >=8 GB RAM + network
+```
+
+### Enabling
+
+Via the install wizard: answer "yes" to the AI assistant question and fill in the endpoint / key / model. Then build the image and start the stack.
+
+Or manually, on an existing install, set these in `config.env.local`:
+
+```bash
+ENABLE_LLM_MODULE="true"
+LLM_API_URL="http://172.17.0.1:18080/v1"   # OpenAI-compatible, include /v1
+LLM_API_KEY=""                            # empty for a local no-auth server
+LLM_MODEL_NAME=""                         # comma-separated; empty = scan from the admin page
+LLM_ALLOW_USER_SETTINGS="true"            # let users bring their own keys
+```
+
+then build the image and apply:
+
+```bash
+./scripts/build-llm-image.sh
+./scripts/configure.sh
+./scripts/stop.sh && ./scripts/start.sh
+```
+
+`configure.sh` swaps `OVERLEAF_IMAGE` to the custom image and auto-generates `LLM_KEY_SECRET` (the key that encrypts per-user API keys at rest); do not set that secret by hand.
+
+### Bring-your-own keys
+
+With `LLM_ALLOW_USER_SETTINGS=true`, each user can add their own provider in their **AI Settings**: an OpenAI endpoint (`https://api.openai.com/v1`) or an Anthropic endpoint (`https://api.anthropic.com/v1`), plus their key and model. A "Personal" model then appears in the chat picker and routes to their account. User keys are **AES-256-GCM encrypted at rest** in MongoDB. The admin LLM settings page (`/admin/llm/settings`) is **super-admin only**.
+
+Each user also picks their **inline-completion model** (local shared, or their own cheap cloud model). A super-admin can set the shared completion model to **Disabled**, so autocomplete runs only for users with their own key, keeping the high-frequency load off a self-hosted backend.
+
+### Feature toggles
+
+A super-admin can enable or disable each AI feature independently (chat, inline completion, compliance review) from `/admin/llm/settings`. A disabled feature is refused by the backend for everyone, including users with their own key, and its UI is hidden (with chat off but review on, the Review panel stays available). If both chat and completion are disabled, the per-user AI Settings page is hidden too. All features are on by default.
+
+### Editable prompts
+
+Every AI prompt is editable by a super-admin in `/admin/llm/settings` (the "AI Prompts" section): the chat system prompt, the Ask AI behavior prompt, the error-help prompt, the review system prompt, and the 10 Ask AI action templates (paraphrase, abstract, title, and so on). Leave a field empty to use the built-in default.
+
+### Document compliance review
+
+A super-admin defines named **rubrics** (writing guidelines for theses / internships) in `/admin/llm/settings`, along with the **review model** and its **max context tokens**. In the editor, users open the AI Assistant rail, switch to the **Review** tab, pick a rubric, and run: the whole project (all `.tex` files) is checked against the rubric and a per-requirement report is produced (status, evidence, suggestion), with a **Download report** button.
+
+Reviews are long, so they run **one at a time** with a queue: the UI shows the queue position, a running or queued review can be **cancelled** (and is cancelled automatically on page refresh), and a project too large for the review model's context window is refused rather than truncated. Point the review model at a large-context server (see the router below to run a separate review backend).
+
+### Updating
+
+With the LLM module on, `./scripts/update-overleaf.sh` offers to rebuild the custom image on the new base (the image is `FROM overleafcep/sharelatex:<new version>`) before the new image is started. The rebuild re-validates the core patches against the new source and fails loudly if upstream drifted; if that happens, update `overleaf-llm-image/patches/apply-core-patches.mjs` and rebuild before deploying.
+
+### Local LLM with llama.cpp
+
+The cheapest backend is a local [llama.cpp](https://github.com/ggml-org/llama.cpp) server on the same host.
+
+1. Build llama.cpp (see its README).
+2. Run `llama-server`, for example:
+
+   ```bash
+   llama-server -hf ggml-org/gpt-oss-120b-GGUF -c 8192 --jinja --host 0.0.0.0 --port 18080
+   ```
+
+   - `--jinja` applies the model's chat template (required for chat).
+   - `-ngl 99 -fa 1` offloads all layers to a GPU with flash attention.
+   - `numactl --interleave=all llama-server ...` spreads memory across sockets on a multi-socket CPU box.
+   - Model examples: **Qwen3-Coder-30B-A3B** (fast, good for LaTeX / markup) or **gpt-oss-120b** (max quality, needs ~59 GB RAM).
+
+3. Point Overleaf at it in `config.env.local`:
+
+   ```bash
+   LLM_API_URL="http://172.17.0.1:18080/v1"
+   ```
+
+   `172.17.0.1` is the Docker bridge host IP, so the Overleaf container can reach a `llama-server` running on the host.
+
+**Keep it always running.** Run llama-server as a systemd service so it starts on boot and restarts on crash. Save this to `/etc/systemd/system/llama-server.service` (edit `<user>`, the model, and the flags):
+
+```
+[Unit]
+Description=llama.cpp server (Overleaf LLM backend)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<user>
+WorkingDirectory=/home/<user>/llama.cpp/build/bin
+ExecStart=/usr/bin/numactl --interleave=all /home/<user>/llama.cpp/build/bin/llama-server -hf ggml-org/gpt-oss-120b-GGUF -c 8192 -t 24 --jinja --host 0.0.0.0 --port 18080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+then:
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now llama-server
+```
+
+This starts llama-server on boot and restarts it if it crashes.
+
+### Multiple local models (router)
+
+`llama-server` serves one model per process, so running N models means N servers on N ports (for example port 18080 for a big chat model and 18081 for a small fast completion model). `scripts/llama-router.py` is a small, standard-library-only, OpenAI-compatible router that merges those backends behind a single endpoint: it combines every backend's `GET /v1/models` and dispatches each `POST /chat/completions` to the backend that serves the requested model.
+
+Configure it via environment variables:
+
+- `LLAMA_BACKENDS`: comma-separated backend base URLs, each ending in `/v1` (default `http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1`).
+- `ROUTER_PORT`: the router's listen port (default `18090`).
+
+The install wizard can set this up automatically: answer "yes" to the router question during the AI assistant step and it installs a systemd service named `llama-router` and points `LLM_API_URL` at the router (`http://172.17.0.1:18090/v1`, the Docker bridge host IP).
+
+To set it up manually (or re-run it later):
+
+```bash
+./scripts/setup-llama-router.sh "http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1"
+```
+
+This installs and starts the `llama-router` systemd service. It does not start the `llama-server` backends themselves: run those yourself (one per model). Once they are up, a quick test lists every model from every backend:
+
+```bash
+curl http://127.0.0.1:18090/v1/models
+```
+
+This pairs with the admin model selection: pick the big model for chat and a small fast one as the inline-completion model, and the router dispatches each request to the server that holds that model.
+
+## Git Integration (Git Bridge)
+
+Overleaf's **Git Bridge** lets you clone, pull, and push an Overleaf project over git using a personal access token, so you can edit locally and sync changes.
+
+**How it is provided here.** Git Bridge is not a dedicated component of this repo: it comes from the underlying [Overleaf Toolkit](https://github.com/overleaf/toolkit). `scripts/configure.sh` writes `GIT_BRIDGE_ENABLED=true` into `overleaf-toolkit/config/overleaf.rc`, which makes the toolkit start the extra `git-bridge` container (from its `lib/docker-compose.git-bridge.yml`). The git-bridge image tag follows `overleaf-toolkit/config/version`, which `./scripts/update-overleaf.sh` keeps aligned with the Overleaf base version. So Git Bridge is **enabled by default** on a standard overleaf-lab install; there are no extra overleaf-lab config variables for it.
+
+**Using it:**
+
+1. In Overleaf, open **Account Settings** and create a **Git access token**.
+2. In a project, the git remote lives at `<OVERLEAF_URL>/git/<project-id>` (the project id is the last path segment of the project URL).
+3. Clone with the token as the password:
+
+   ```bash
+   git clone http://localhost/git/<project-id>
+   # username: git    password: <your token>
+   ```
+
+   Replace `http://localhost` with your `OVERLEAF_URL`, then `git pull` / `git push` as usual.
+
+For the authoritative, version-specific steps see the toolkit docs: [Git Bridge (CE)](https://github.com/overleaf/toolkit/blob/master/doc/ce-git-bridge.md).
+
+**Troubleshooting.** If token authentication fails after a base-version update, check that `GIT_BRIDGE_OAUTH2_SERVER` in `overleaf-toolkit/lib/docker-compose.git-bridge.yml` points at the internal API (`http://sharelatex:3000`), then restart the stack.
 
 ## Public Access
 
@@ -179,7 +344,7 @@ The script will:
 
 Your projects, users, and settings are preserved. MongoDB and Redis remain untouched.
 
-> **Note (6.2.x):** upstream made the redesigned editor mandatory — after
+> **Note (6.2.x):** upstream made the redesigned editor mandatory - after
 > updating, all users get the new editor UI.
 
 ## License

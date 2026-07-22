@@ -1,0 +1,663 @@
+import logger from '@overleaf/logger'
+import fetch from 'node-fetch'
+import { AbortController } from 'abort-controller'
+import { expressify } from '@overleaf/promise-utils'
+import SessionManager from '../../../../app/src/Features/Authentication/SessionManager.mjs'
+import { User } from '../../../../app/src/models/User.mjs'
+import ProjectEntityHandler from '../../../../app/src/Features/Project/ProjectEntityHandler.mjs' // overleaf-lab: read project docs for error source context
+import Settings from '@overleaf/settings'
+import { getSystemPrompt, getAdminLLMSettings, getLLMFeatureFlags, getLLMPrompts } from './LLMAdminController.mjs'
+import { decryptSecret } from './LLMCrypto.mjs' // overleaf-lab: decrypt user API keys stored at rest
+
+// Helper function to remove <think> tags (for DeepSeek, Qwen and similar models)
+// Handles both closed <think>...</think> and unclosed <think>... at end of string
+function stripThinkTags(content) {
+    let cleaned = content.replace(/<think>[\s\S]*?<\/think>\s*/gi, '')
+    cleaned = cleaned.replace(/<think>[\s\S]*/gi, '')
+    return cleaned.trim()
+}
+
+// Parse available models from admin settings or environment variable
+async function getAvailableModels() {
+    if (Settings.llm && !Settings.llm.enabled) {
+        logger.debug({ llmEnabled: Settings.llm.enabled }, '[LLM] getAvailableModels: LLM disabled')
+        return []
+    }
+
+    const adminSettings = await getAdminLLMSettings()
+    let modelsList = Array.isArray(adminSettings.allowedModels)
+        ? adminSettings.allowedModels.filter(m => typeof m === 'string' && m.trim().length > 0)
+        : []
+
+    if (modelsList.length === 0) {
+        const modelsEnv = process.env.LLM_AVAILABLE_MODELS || process.env.LLM_MODEL_NAME
+        logger.debug(
+            {
+                LLM_AVAILABLE_MODELS: process.env.LLM_AVAILABLE_MODELS,
+                LLM_MODEL_NAME: process.env.LLM_MODEL_NAME,
+                resolved: modelsEnv,
+            },
+            '[LLM] getAvailableModels: reading env'
+        )
+
+        if (modelsEnv) {
+            modelsList = modelsEnv
+                .split(',')
+                .map(m => m.trim())
+                .filter(m => m.length > 0)
+        }
+    }
+
+    if (modelsList.length === 0) {
+        return []
+    }
+
+    const result = modelsList.map((id, index) => ({
+        id,
+        name: id.replace(/-/g, ' ').toUpperCase(),
+        isDefault: index === 0,
+    }))
+
+    logger.debug({ count: result.length, models: result.map(m => m.id) }, '[LLM] getAvailableModels: parsed models')
+    return result
+}
+
+async function getModels(req, res) {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+    const projectId = req.params.Project_id
+
+    logger.debug(
+        { projectId, userId, llmSettings: Settings.llm },
+        '[LLM] getModels: request received'
+    )
+
+    try {
+        if (Settings.llm && !Settings.llm.enabled) {
+            logger.debug({}, '[LLM] getModels: LLM disabled, returning empty')
+            return res.json({ models: [] })
+        }
+
+        // overleaf-lab: chat feature disabled by admin -> no models to select.
+        const flags = await getLLMFeatureFlags()
+        if (!flags.chatEnabled) {
+            return res.json({ models: [] })
+        }
+
+        const models = []
+
+        // 1. Add server-wide models from admin settings/env
+        const serverModels = await getAvailableModels()
+        models.push(...serverModels)
+
+        // 2. Add user's personal LLM model if configured and activated
+        if (userId && Settings.llm && Settings.llm.allowUserSettings) {
+            try {
+                const user = await User.findById(
+                    userId,
+                    'useOwnLLMSettings llmModelName llmApiUrl llmApiKey'
+                )
+
+                if (
+                    user &&
+                    user.useOwnLLMSettings &&
+                    user.llmModelName &&
+                    user.llmApiUrl
+                ) {
+                    // overleaf-lab: llmModelName may be a comma-separated list of
+                    // personal chat models; expose one selectable entry per id.
+                    const personalModelIds = user.llmModelName
+                        .split(',')
+                        .map(id => id.trim())
+                        .filter(id => id.length > 0)
+                    for (const modelId of personalModelIds) {
+                        models.push({
+                            id: `personal-${modelId}`,
+                            name: `${modelId} (🔒 Personal)`,
+                            isDefault: false,
+                            isPersonal: true,
+                            label: 'Private',
+                        })
+                    }
+                }
+            } catch (error) {
+                logger.warn(
+                    { userId, projectId, err: error },
+                    '[LLM] Error fetching user LLM settings'
+                )
+            }
+        }
+
+        logger.debug(
+            { count: models.length, modelIds: models.map(m => m.id) },
+            '[LLM] getModels: returning models'
+        )
+        res.json({ models })
+    } catch (error) {
+        logger.error(
+            { userId, projectId, err: error },
+            '[LLM] Error fetching available models'
+        )
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch available models',
+        })
+    }
+}
+
+async function chat(req, res) {
+    const { messages, model } = req.body
+    const projectId = req.params.Project_id
+    const userId = SessionManager.getLoggedInUserId(req.session)
+
+    logger.debug(
+        {
+            projectId,
+            userId,
+            model,
+            messageCount: Array.isArray(messages) ? messages.length : 'invalid',
+            isPersonalModel: model?.startsWith('personal-'),
+        },
+        '[LLM] chat: request received'
+    )
+
+    if (!messages || !Array.isArray(messages)) {
+        return res.status(400).json({ error: 'Invalid messages format' })
+    }
+
+    if (Settings.llm && !Settings.llm.enabled) {
+        return res.status(503).json({ error: 'LLM service is disabled' })
+    }
+
+    // overleaf-lab: chat feature disabled by admin. Enforced for everyone, including
+    // users with personal API keys, before any personal-settings resolution.
+    const flags = await getLLMFeatureFlags()
+    if (!flags.chatEnabled) {
+        return res.status(403).json({ error: 'feature_disabled', message: 'The chat feature is disabled' })
+    }
+
+    const isPersonalModel = model && model.startsWith('personal-')
+    // overleaf-lab: when the request carries NO model (the selection toolbar /
+    // "Ask AI" sends only messages), honor the user's personal LLM settings if they
+    // have them, so those features use the user's own key/model just like the chat
+    // does. Falls back to the shared backend when no personal settings exist.
+    const tryPersonalNoModel =
+        !model && userId && Settings.llm && Settings.llm.allowUserSettings
+
+    const adminLlmSettings = await getAdminLLMSettings()
+    let llmApiUrl = adminLlmSettings.llmApiUrl || process.env.LLM_API_URL
+    let llmApiKey = adminLlmSettings.llmApiKey || process.env.LLM_API_KEY
+    let personalModelName = null
+
+    if ((isPersonalModel || tryPersonalNoModel) && userId) {
+        try {
+            const user = await User.findById(
+                userId,
+                'useOwnLLMSettings llmApiUrl llmApiKey llmModelName'
+            )
+            if (
+                user &&
+                user.useOwnLLMSettings &&
+                user.llmApiUrl &&
+                (isPersonalModel || user.llmModelName)
+            ) {
+                llmApiUrl = user.llmApiUrl
+                llmApiKey = user.llmApiKey ? decryptSecret(user.llmApiKey) : '' // overleaf-lab: decrypt stored key at rest (empty when keyless)
+                personalModelName = isPersonalModel
+                    ? model.substring('personal-'.length)
+                    : user.llmModelName.split(',')[0].trim() // overleaf-lab: no model sent -> use the user's first (default) model
+            } else if (isPersonalModel) {
+                return res.status(400).json({
+                    error:
+                        'Your LLM settings are incomplete. Please configure API URL, API Key, and Model Name in your account settings.',
+                })
+            }
+            // A no-model request with incomplete personal settings falls through to
+            // the shared backend checked below.
+        } catch (error) {
+            if (isPersonalModel) {
+                return res.status(500).json({
+                    error: 'Failed to retrieve user LLM settings',
+                })
+            }
+        }
+    }
+
+    if (!llmApiUrl) {
+        return res.status(503).json({
+            error:
+                'LLM service is not configured. Please contact your administrator or configure your own LLM settings.',
+        })
+    }
+
+    const modelNameForApi = personalModelName
+        ? personalModelName
+        : model || ((process.env.LLM_MODEL_NAME || process.env.LLM_AVAILABLE_MODELS || 'default').split(',')[0].trim()) // overleaf-lab: env-configurable fallback instead of hardcoded 'qwen3-32b'
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => {
+        controller.abort()
+    }, 300000) // 5 minutes
+
+    try {
+        const llmApiFullUrl = `${llmApiUrl}/chat/completions`
+
+        // Prepend the admin-configured system prompt (if any) plus an always-on
+        // instruction to reply in the user's language, then merge any client
+        // system message. This keeps replies in the input language regardless of
+        // whether an admin prompt is set.
+        const languageInstruction = `Reply in the same language as the user's latest message (for example, answer in Italian if the user writes in Italian).`
+        const adminSystemPrompt = await getSystemPrompt()
+        const systemPreamble = adminSystemPrompt
+            ? `${adminSystemPrompt}\n\n${languageInstruction}`
+            : languageInstruction
+        const hasSystemMessage = messages.length > 0 && messages[0].role === 'system'
+        const finalMessages = hasSystemMessage
+            ? [
+                  { role: 'system', content: `${systemPreamble}\n\n${messages[0].content}` },
+                  ...messages.slice(1),
+              ]
+            : [{ role: 'system', content: systemPreamble }, ...messages]
+
+        const requestBody = {
+            model: modelNameForApi,
+            messages: finalMessages,
+            max_tokens: 8192,
+            temperature: 0.7,
+        }
+
+        const startTime = Date.now()
+
+        logger.info(
+            {
+                projectId,
+                model: modelNameForApi,
+                url: llmApiFullUrl,
+                isPersonalModel,
+                maxTokens: 8192,
+            },
+            '[LLM] chat: sending request to LLM API'
+        )
+
+        // overleaf-lab: send Authorization only when a non-empty key exists, so a
+        // keyless local server is not sent a malformed empty Bearer header.
+        const chatHeaders = { 'Content-Type': 'application/json' }
+        if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
+            chatHeaders.Authorization = `Bearer ${llmApiKey}`
+        }
+
+        const response = await fetch(llmApiFullUrl, {
+            method: 'POST',
+            headers: chatHeaders,
+            body: JSON.stringify(requestBody),
+            signal: controller.signal,
+        })
+
+        clearTimeout(timeout)
+        const duration = Date.now() - startTime
+
+        logger.info(
+            { projectId, status: response.status, duration: `${duration}ms` },
+            '[LLM] chat: LLM API responded'
+        )
+
+        if (!response.ok) {
+            const errorText = await response.text()
+            logger.error(
+                {
+                    projectId,
+                    userId,
+                    status: response.status,
+                    error: errorText,
+                    duration: `${duration}ms`,
+                },
+                '[LLM] API error response'
+            )
+            return res.status(response.status).json({
+                error: 'LLM API error',
+                details: errorText,
+                status: response.status,
+            })
+        }
+
+        const data = await response.json()
+
+        // Strip <think> tags from the response content
+        if (
+            data.choices &&
+            data.choices[0] &&
+            data.choices[0].message &&
+            data.choices[0].message.content
+        ) {
+            const originalLength = data.choices[0].message.content.length
+            data.choices[0].message.content = stripThinkTags(
+                data.choices[0].message.content
+            )
+            const strippedLength = data.choices[0].message.content.length
+            if (originalLength !== strippedLength) {
+                logger.debug(
+                    { originalLength, strippedLength },
+                    '[LLM] chat: stripped <think> tags'
+                )
+            }
+        }
+
+        logger.info(
+            { projectId, duration: `${Date.now() - startTime}ms`, model: modelNameForApi },
+            '[LLM] chat: response sent successfully'
+        )
+        res.json(data)
+    } catch (error) {
+        clearTimeout(timeout)
+
+        if (error.name === 'AbortError') {
+            return res.status(504).json({
+                error: 'LLM service timeout',
+                details: 'The LLM API did not respond within 5 minutes',
+            })
+        }
+
+        logger.error(
+            { projectId, userId, err: error },
+            '[LLM] Error communicating with LLM service'
+        )
+
+        res.status(500).json({
+            error: 'Failed to communicate with LLM service',
+            details: error.message,
+        })
+    }
+}
+
+async function completion(req, res) {
+    const projectId = req.params.Project_id
+    const userId = SessionManager.getLoggedInUserId(req.session)
+    const { cursorOffset, leftContext, rightContext, language, maxLength } =
+        req.body
+
+    logger.debug(
+        {
+            projectId,
+            userId,
+            language,
+            maxLength,
+            leftContextLen: leftContext?.length,
+            rightContextLen: rightContext?.length,
+        },
+        '[LLM] completion: request received'
+    )
+
+    if (!leftContext && !rightContext) {
+        return res.status(400).json({ success: false, error: 'No context provided' })
+    }
+
+    if (Settings.llm && !Settings.llm.enabled) {
+        return res.status(503).json({ success: false, error: 'LLM service is disabled' })
+    }
+
+    // overleaf-lab: inline completion disabled by admin. Enforced before any
+    // personal-settings resolution so a personal key cannot re-enable completion.
+    // Return an empty suggestion so the editor simply shows nothing, with no error.
+    const flags = await getLLMFeatureFlags()
+    if (!flags.completionEnabled) {
+        return res.json({ success: true, data: '' })
+    }
+
+    const adminLlmSettings = await getAdminLLMSettings()
+    let llmApiUrl = adminLlmSettings.llmApiUrl || process.env.LLM_API_URL
+    let llmApiKey = adminLlmSettings.llmApiKey || process.env.LLM_API_KEY
+
+    // overleaf-lab: the admin can disable shared inline completion (a sentinel value
+    // for the completion model). When disabled, only users with their own completion
+    // route get suggestions; everyone else gets none. This keeps a self-hosted CPU
+    // backend free from the high-frequency autocomplete load.
+    const sharedCompletionDisabled = adminLlmSettings.completionModel === '__disabled__'
+
+    // overleaf-lab: default completion model for the shared backend. Prefer the
+    // admin-chosen completion model, then the env override, then the first env
+    // model. May be overridden below by the user's personal completion settings.
+    let completionModel =
+        adminLlmSettings.completionModel ||
+        process.env.LLM_COMPLETION_MODEL ||
+        (process.env.LLM_MODEL_NAME || 'default').split(',')[0].trim() // 'default' instead of hardcoded 'qwen3-32b'
+
+    // overleaf-lab: per-user inline-completion override (highest precedence). When
+    // the user opted into their own provider AND explicitly picked a completion
+    // model, route completion to their personal endpoint+key+model, overriding the
+    // shared/local server. Incomplete personal creds -> silently fall back to shared.
+    let usingPersonalCompletion = false
+    if (userId) {
+        try {
+            const user = await User.findById(
+                userId,
+                'useOwnLLMSettings llmApiUrl llmApiKey llmCompletionModel'
+            )
+            if (
+                user &&
+                user.useOwnLLMSettings &&
+                user.llmCompletionModel &&
+                user.llmApiUrl &&
+                user.llmApiKey
+            ) {
+                llmApiUrl = user.llmApiUrl
+                llmApiKey = decryptSecret(user.llmApiKey) // decrypt stored key at rest
+                completionModel = user.llmCompletionModel
+                usingPersonalCompletion = true
+            }
+        } catch (error) {
+            logger.warn({ userId, err: error }, '[LLM] Error loading user completion settings')
+        }
+    }
+
+    // Try the user's own settings when NO shared server URL is configured, OR when
+    // the admin disabled shared completion (so a user with their own API still gets
+    // suggestions from their own endpoint).
+    // overleaf-lab: gate on the URL alone (not the key). A keyless shared endpoint
+    // is valid, so an empty key must NOT hijack completion onto the user's personal
+    // endpoint while the shared one is fine. When we do fall back, also switch
+    // completionModel to the user's own model, otherwise the env-derived 'default'
+    // is sent to their endpoint (e.g. OpenAI 404s on model 'default').
+    if (!usingPersonalCompletion && (!llmApiUrl || sharedCompletionDisabled) && userId) {
+        try {
+            const user = await User.findById(
+                userId,
+                'useOwnLLMSettings llmApiUrl llmApiKey llmModelName'
+            )
+            if (user && user.useOwnLLMSettings && user.llmApiUrl) {
+                llmApiUrl = user.llmApiUrl
+                llmApiKey = user.llmApiKey ? decryptSecret(user.llmApiKey) : '' // decrypt stored key at rest (empty when keyless)
+                if (user.llmModelName) {
+                    completionModel = user.llmModelName.split(',')[0].trim()
+                }
+            }
+        } catch (error) {
+            logger.warn({ userId, err: error }, '[LLM] Error loading user settings for completion')
+        }
+    }
+
+    // overleaf-lab: shared completion disabled and no personal route resolved (the
+    // completion model is still the sentinel) -> return an empty suggestion so the
+    // editor simply shows nothing, with no error.
+    if (completionModel === '__disabled__') {
+        return res.json({ success: true, data: '' })
+    }
+
+    if (!llmApiUrl) {
+        return res.status(503).json({ success: false, error: 'LLM service is not configured' })
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => {
+        controller.abort()
+    }, 30000) // 30 seconds for completions
+
+    try {
+        const systemPrompt = `/no_think\nYou are a text completion engine. Output ONLY the missing text, in the same language as the surrounding text. No thinking, no explanation, no markdown, no code fences, no tags. Just the raw continuation characters.`
+
+        const userPrompt = `Complete the text at [CURSOR]. Output only the few words that replace [CURSOR]:
+
+${leftContext}[CURSOR]${rightContext}`
+
+        // overleaf-lab: send Authorization only when a non-empty key exists.
+        const completionHeaders = { 'Content-Type': 'application/json' }
+        if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
+            completionHeaders.Authorization = `Bearer ${llmApiKey}`
+        }
+
+        const response = await fetch(`${llmApiUrl}/chat/completions`, {
+            method: 'POST',
+            headers: completionHeaders,
+            body: JSON.stringify({
+                model: completionModel,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt },
+                ],
+                max_tokens: maxLength || 60,
+                temperature: 0.1,
+            }),
+            signal: controller.signal,
+        })
+
+        clearTimeout(timeout)
+
+        if (!response.ok) {
+            return res
+                .status(response.status)
+                .json({ success: false, error: 'Completion request failed' })
+        }
+
+        const data = await response.json()
+        const completionText =
+            data.choices?.[0]?.message?.content?.trim() || ''
+
+        // Strip any think tags and clean up
+        const cleaned = stripThinkTags(completionText)
+
+        res.json({ success: true, data: cleaned })
+    } catch (error) {
+        clearTimeout(timeout)
+
+        if (error.name === 'AbortError') {
+            return res
+                .status(504)
+                .json({ success: false, error: 'Completion timeout' })
+        }
+
+        logger.error(
+            { projectId, userId, err: error },
+            '[LLM] Completion error'
+        )
+        res
+            .status(500)
+            .json({ success: false, error: 'Completion failed' })
+    }
+}
+
+// overleaf-lab: expose the per-feature enable flags to the project UI so it can hide
+// disabled features. allowUserSettings tells the client whether personal settings
+// are available at all.
+async function getFeatures(req, res) {
+    const flags = await getLLMFeatureFlags()
+    res.json({ ...flags, allowUserSettings: !!(Settings.llm && Settings.llm.allowUserSettings) })
+}
+
+// overleaf-lab: return a window of source lines around a compile-error line, so the
+// "Ask AI about this error" prompt can include the actual code (not just the log
+// message). Works for any project file via getAllDocs, so an error inside an
+// \input-ed file that is not open in the editor is still covered.
+async function getSourceContext(req, res) {
+    const flags = await getLLMFeatureFlags()
+    if (!flags.chatEnabled) {
+        return res.json({ ok: false, error: 'feature_disabled' })
+    }
+
+    const projectId = req.params.Project_id
+    const rawFile = String(req.query.file || '')
+    const line = parseInt(req.query.line, 10)
+    let radius = parseInt(req.query.radius, 10)
+    if (!Number.isFinite(radius) || radius < 0) {
+        radius = 15
+    }
+    radius = Math.min(radius, 40) // overleaf-lab: cap the snippet size
+
+    if (!rawFile || !Number.isFinite(line) || line < 1) {
+        return res.json({ ok: false, error: 'bad_request' })
+    }
+
+    // overleaf-lab: normalize a log file path (may be /compile/x, ./x, or /x) to the
+    // project doc path key used by getAllDocs.
+    const norm = p =>
+        String(p || '')
+            .replace(/^\/?compile\//, '')
+            .replace(/^\.\//, '')
+            .replace(/^\//, '')
+
+    try {
+        const docsByPath = await ProjectEntityHandler.promises.getAllDocs(projectId)
+        const target = norm(rawFile)
+        const targetBase = target.split('/').pop()
+        let match = null
+        let baseMatch = null
+        for (const [docPath, value] of Object.entries(docsByPath || {})) {
+            if (!value) {
+                continue
+            }
+            const np = norm(docPath)
+            if (np === target || np.endsWith('/' + target) || target.endsWith('/' + np)) {
+                match = { path: docPath, lines: value.lines || [] }
+                break
+            }
+            if (!baseMatch && np.split('/').pop() === targetBase) {
+                baseMatch = { path: docPath, lines: value.lines || [] }
+            }
+        }
+        match = match || baseMatch
+        if (!match) {
+            return res.json({ ok: false, error: 'not_found' })
+        }
+
+        const lines = match.lines
+        const idx = line - 1
+        const start = Math.max(0, idx - radius)
+        const end = Math.min(lines.length, idx + radius + 1)
+        const numbered = []
+        for (let i = start; i < end; i++) {
+            // overleaf-lab: a leading '>' marks the line the compiler flagged.
+            const marker = i === idx ? '>' : ' '
+            numbered.push(`${marker} ${i + 1}: ${lines[i]}`)
+        }
+
+        return res.json({
+            ok: true,
+            file: match.path,
+            line,
+            startLine: start + 1,
+            snippet: numbered.join('\n'),
+        })
+    } catch (err) {
+        logger.warn({ projectId, err }, '[LLM] source-context failed')
+        return res.json({ ok: false, error: 'failed' })
+    }
+}
+
+// overleaf-lab: expose the EFFECTIVE editable prompts (admin override or default) to
+// the project UI so the "Ask AI" toolbar and the "Ask AI about this error" button use
+// the admin-tuned system prompt, action templates, and error instruction block. The
+// review system prompt stays server-side and is not returned here.
+async function getPrompts(req, res) {
+    const prompts = await getLLMPrompts()
+    res.json({
+        askAiSystemPrompt: prompts.askAiSystemPrompt,
+        errorPrompt: prompts.errorPrompt,
+        askAiActionPrompts: prompts.askAiActionPrompts,
+    })
+}
+
+export default {
+    chat: expressify(chat),
+    getModels: expressify(getModels),
+    completion: expressify(completion),
+    getFeatures: expressify(getFeatures),
+    getSourceContext: expressify(getSourceContext),
+    getPrompts: expressify(getPrompts),
+}

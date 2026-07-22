@@ -63,28 +63,46 @@ fi
 
 # Check Docker permissions
 if ! docker ps &> /dev/null; then
-    echo -e "${YELLOW}Docker permission denied. Checking if you're in the docker group...${NC}"
-
-    if groups | grep -q docker; then
-        # User is in docker group but needs to activate it
-        echo "You're in the docker group but it's not active in this session."
-        echo "Re-launching installer with correct permissions..."
-        echo ""
-        exec sg docker -c "$0 $*"
-    else
-        # User is not in docker group
-        echo -e "${RED}You're not in the docker group.${NC}"
-        echo "Adding you to the docker group now..."
-        sudo usermod -aG docker $USER
-        echo ""
-        echo -e "${GREEN}Added to docker group!${NC}"
-        echo "Re-launching installer with correct permissions..."
-        echo ""
-        exec sg docker -c "$0 $*"
+    # overleaf-lab: `docker ps` can fail for two very different reasons: the daemon is
+    # stopped, or the daemon runs but this user is not in the docker group. They need
+    # different fixes, and treating a stopped daemon as a group problem causes an
+    # infinite `sg docker` re-exec loop (re-launching never helps a dead daemon). Use
+    # `sudo docker ps` to tell them apart: if sudo reaches the daemon, it is running.
+    if ! sudo docker ps &> /dev/null; then
+        echo -e "${YELLOW}Docker daemon is not running. Starting it...${NC}"
+        if ! sudo systemctl start docker; then
+            echo -e "${RED}Could not start the Docker daemon.${NC}"
+            echo "Start it manually (sudo systemctl start docker), then re-run this installer."
+            exit 1
+        fi
+        sleep 2  # let dockerd recreate /var/run/docker.sock
     fi
-else
-    echo -e "${GREEN}✓ Docker permissions OK${NC}"
+
+    # Daemon is up; make sure this user can reach the socket via the docker group.
+    if ! docker ps &> /dev/null; then
+        if groups | grep -q docker; then
+            echo "You're in the docker group but it's not active in this session."
+        else
+            echo -e "${RED}You're not in the docker group.${NC}"
+            echo "Adding you to the docker group now..."
+            sudo groupadd -f docker   # some installs (static binary, rootless) lack it
+            sudo usermod -aG docker $USER
+        fi
+        # overleaf-lab: re-launch once with the docker group active, guarding against
+        # an infinite loop: if we have already re-exec'd and docker still fails, the
+        # group is not the cause, so stop with a clear message instead of looping.
+        if [ -z "$OVERLEAF_DOCKER_REEXEC" ]; then
+            echo "Re-launching installer with docker group active..."
+            echo ""
+            exec sg docker -c "OVERLEAF_DOCKER_REEXEC=1 $0 $*"
+        fi
+        echo -e "${RED}Docker is running but still not reachable after adding the group.${NC}"
+        echo "The docker.sock group likely differs from the 'docker' group. Log out and"
+        echo "back in (or run: newgrp docker && docker ps), then re-run this installer."
+        exit 1
+    fi
 fi
+echo -e "${GREEN}✓ Docker permissions OK${NC}"
 
 # Check internet connection
 if ! ping -c 1 google.com &> /dev/null; then
@@ -133,11 +151,13 @@ if [ ! -f config.env.local ]; then
     echo "  - Overleaf users (create, activate, manage)"
     echo "  - Zotero integration (add/remove user bibliographies)"
     echo ""
-    echo "This is SEPARATE from Overleaf login (which you'll create via /launchpad)."
+    echo "This is SEPARATE from the Overleaf login (which you'll create via /launchpad)."
+    echo "TIP: use the SAME email below and at /launchpad - that Overleaf user is then"
+    echo "     automatically promoted to super_admin (full admin), with no extra step."
     echo ""
 
-    # Dashboard admin email
-    read -p "Dashboard admin email: " ADMIN_EMAIL
+    # Admin email: dashboard login AND the Overleaf user auto-promoted to super_admin.
+    read -p "Admin email (use this same email at /launchpad too): " ADMIN_EMAIL
     ADMIN_EMAIL=${ADMIN_EMAIL:-"admin@example.com"}
 
     # Dashboard admin password
@@ -365,6 +385,58 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         GITHUB_SYNC_CLIENT_SECRET=""
     fi
 
+    # AI Assistant (LLM)
+    echo ""
+    echo "==============================================================================="
+    echo "AI ASSISTANT (LLM) (optional)"
+    echo "==============================================================================="
+    echo "An in-editor AI assistant (chat, Ask-AI on a selection, inline completion)"
+    echo "backed by an OpenAI-compatible LLM: a local llama.cpp, a hosted API, or per-user keys."
+    echo ""
+    echo "Note: enabling this requires a custom Docker image. install.sh builds it"
+    echo "automatically before starting the stack (~15-30 min, needs >=8 GB RAM + network)."
+    echo ""
+    read -p "Enable the AI assistant (LLM)? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        ENABLE_LLM_MODULE="true"
+        read -p "Shared LLM endpoint URL (OpenAI-compatible, include /v1; e.g. local llama.cpp http://172.17.0.1:18080/v1; empty = configure later or rely on per-user keys): " LLM_API_URL
+        read -p "API key (leave empty for a local server with no auth): " LLM_API_KEY
+        read -p "Default model name(s), comma-separated (empty = scan later from the admin page): " LLM_MODEL_NAME
+        read -p "Let users bring their own OpenAI/Anthropic API keys? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            LLM_ALLOW_USER_SETTINGS="true"
+        else
+            LLM_ALLOW_USER_SETTINGS="false"
+        fi
+
+        # Optional: a local multi-model router in front of several llama-server backends
+        echo ""
+        echo "Note: this only applies if llama.cpp runs on THIS machine. If llama runs on another box, skip this and point LLM_API_URL at that box's router yourself."
+        read -p "Run a local multi-model LLM router on THIS host (bundles multiple local llama-server backends behind one endpoint)? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            SETUP_LLAMA_ROUTER="true"
+            read -p "Backend llama-server endpoints (comma-separated, each incl. /v1) [http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1]: " LLAMA_BACKENDS
+            LLAMA_BACKENDS=${LLAMA_BACKENDS:-"http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1"}
+            # Point Overleaf at the router (docker-bridge host IP) instead of a single backend
+            LLM_API_URL="http://172.17.0.1:18090/v1"
+            echo -e "${GREEN}The multi-model router will be installed as a systemd service (llama-router).${NC}"
+        else
+            SETUP_LLAMA_ROUTER="false"
+        fi
+
+        echo -e "${GREEN}AI assistant (LLM) will be enabled${NC}"
+    else
+        ENABLE_LLM_MODULE="false"
+        LLM_API_URL=""
+        LLM_API_KEY=""
+        LLM_MODEL_NAME=""
+        LLM_ALLOW_USER_SETTINGS="false"
+        SETUP_LLAMA_ROUTER="false"
+    fi
+
     # Create config.env.local
     cp config.env config.env.local
 
@@ -411,8 +483,24 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         sed -i "s|OIDC_ALLOWED_GROUPS=.*|OIDC_ALLOWED_GROUPS=\"${OIDC_ALLOWED_GROUPS}\"|" config.env.local
     fi
 
+    # Set AI assistant (LLM) configuration
+    # (LLM_KEY_SECRET is intentionally NOT written here - configure.sh manages it)
+    sed -i "s|ENABLE_LLM_MODULE=.*|ENABLE_LLM_MODULE=\"${ENABLE_LLM_MODULE}\"|" config.env.local
+    if [ "$ENABLE_LLM_MODULE" = "true" ]; then
+        sed -i "s|LLM_API_URL=.*|LLM_API_URL=\"${LLM_API_URL}\"|" config.env.local
+        sed -i "s|LLM_API_KEY=.*|LLM_API_KEY=\"${LLM_API_KEY}\"|" config.env.local
+        sed -i "s|LLM_MODEL_NAME=.*|LLM_MODEL_NAME=\"${LLM_MODEL_NAME}\"|" config.env.local
+        sed -i "s|LLM_ALLOW_USER_SETTINGS=.*|LLM_ALLOW_USER_SETTINGS=\"${LLM_ALLOW_USER_SETTINGS}\"|" config.env.local
+    fi
+
     echo ""
     echo -e "${GREEN}✓ Configuration created${NC}"
+
+    if [ "$ENABLE_LLM_MODULE" = "true" ]; then
+        echo ""
+        echo -e "${YELLOW}AI assistant (LLM) enabled: the custom image is built automatically${NC}"
+        echo "  in step 6 before the stack starts (~15-30 min, needs >=8 GB RAM + network)."
+    fi
 else
     echo -e "${GREEN}✓ Configuration file found, skipping wizard${NC}"
 
@@ -575,6 +663,31 @@ if [ "${ENABLE_PANDOC_CONVERSIONS:-true}" = "true" ]; then
     fi
 fi
 
+# Build the AI assistant (LLM) custom image when the module is enabled. The stack's
+# OVERLEAF_IMAGE points at this custom image, so it MUST exist before `bin/up` or the
+# sharelatex container fails to start. Skip the (15-30 min) rebuild if already present,
+# so re-running install.sh is cheap and a pre-loaded image is honoured.
+if [ "${ENABLE_LLM_MODULE:-false}" = "true" ]; then
+    LLM_IMAGE_REF="${OVERLEAF_IMAGE:-overleaf-lab/sharelatex-llm}:${OVERLEAF_IMAGE_TAG:-6.2.0-ext-v5.0}"
+    echo ""
+    if docker image inspect "$LLM_IMAGE_REF" >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ AI assistant (LLM) image already present ($LLM_IMAGE_REF), skipping build${NC}"
+    else
+        echo "Building the AI assistant (LLM) custom image ($LLM_IMAGE_REF)..."
+        echo "One-time build, ~15-30 min (webpack + npm, needs >=8 GB RAM + network)."
+        chmod +x ./scripts/build-llm-image.sh
+        if ./scripts/build-llm-image.sh; then
+            echo -e "${GREEN}✓ AI assistant (LLM) image built${NC}"
+        else
+            echo -e "${RED}ERROR: Failed to build the AI assistant (LLM) image.${NC}"
+            echo "The stack is configured to use $LLM_IMAGE_REF and cannot start without it."
+            echo "Fix the cause (network / disk / RAM), then finish with:"
+            echo "  ./scripts/build-llm-image.sh && cd overleaf-toolkit && bin/up -d"
+            exit 1
+        fi
+    fi
+fi
+
 # -----------------------------------------------------------------------------
 # 6. Start Overleaf
 # -----------------------------------------------------------------------------
@@ -712,6 +825,19 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Optional: local multi-model LLM router (systemd service)
+# -----------------------------------------------------------------------------
+# If the user opted in during the LLM wizard, install the llama-router service
+# now (systemd is usable at this point). A failure here must warn but NOT abort
+# the install, so it is guarded with '|| echo'.
+if [ "${SETUP_LLAMA_ROUTER:-false}" = "true" ]; then
+    echo ""
+    echo "Setting up the local multi-model LLM router (llama-router systemd service)..."
+    chmod +x ./scripts/setup-llama-router.sh
+    ./scripts/setup-llama-router.sh "$LLAMA_BACKENDS" || echo -e "${YELLOW}WARNING: llama-router setup failed; you can run ./scripts/setup-llama-router.sh manually later${NC}"
+fi
+
+# -----------------------------------------------------------------------------
 # Installation Complete
 # -----------------------------------------------------------------------------
 echo ""
@@ -742,7 +868,8 @@ echo "Next steps:"
 echo ""
 echo "  1. Create Overleaf admin user:"
 echo "     Visit: ${OVERLEAF_URL:-http://localhost}/launchpad"
-echo "     Register your first Overleaf admin account"
+echo "     Register with email: ${ADMIN_EMAIL}"
+echo "     (use exactly this email so it is auto-promoted to super_admin)"
 echo ""
 echo "  2. Access dashboard (already configured):"
 echo "     Visit: http://localhost:${FLASK_PORT:-5000}"
