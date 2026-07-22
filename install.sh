@@ -391,9 +391,8 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
     echo "An in-editor AI assistant (chat, Ask-AI on a selection, inline completion)"
     echo "backed by an OpenAI-compatible LLM: a local llama.cpp, a hosted API, or per-user keys."
     echo ""
-    echo "WARNING: enabling this requires BUILDING a custom Docker image with"
-    echo "  ./scripts/build-llm-image.sh   (~15-30 min, needs Docker + at least 8 GB RAM + network)."
-    echo "install.sh does NOT build it automatically; run that script before starting the stack."
+    echo "Note: enabling this requires a custom Docker image. install.sh builds it"
+    echo "automatically before starting the stack (~15-30 min, needs >=8 GB RAM + network)."
     echo ""
     read -p "Enable the AI assistant (LLM)? (y/N): " -n 1 -r
     echo
@@ -497,9 +496,8 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
 
     if [ "$ENABLE_LLM_MODULE" = "true" ]; then
         echo ""
-        echo -e "${YELLOW}AI assistant (LLM) enabled: build the custom image BEFORE starting the stack.${NC}"
-        echo "  Run: ./scripts/build-llm-image.sh   (~15-30 min, needs Docker + >=8 GB RAM + network)"
-        echo "  Until that image exists, the Overleaf container will fail to start."
+        echo -e "${YELLOW}AI assistant (LLM) enabled: the custom image is built automatically${NC}"
+        echo "  in step 6 before the stack starts (~15-30 min, needs >=8 GB RAM + network)."
     fi
 else
     echo -e "${GREEN}✓ Configuration file found, skipping wizard${NC}"
@@ -660,6 +658,31 @@ if [ "${ENABLE_PANDOC_CONVERSIONS:-true}" = "true" ]; then
         echo -e "${YELLOW}Warning: Could not pull Pandoc image${NC}"
         echo "Word/Markdown import-export will not work until you pull it manually:"
         echo "  docker pull ${PANDOC_IMAGE:-overleafcep/pandoc-ol:3.10.0.0}"
+    fi
+fi
+
+# Build the AI assistant (LLM) custom image when the module is enabled. The stack's
+# OVERLEAF_IMAGE points at this custom image, so it MUST exist before `bin/up` or the
+# sharelatex container fails to start. Skip the (15-30 min) rebuild if already present,
+# so re-running install.sh is cheap and a pre-loaded image is honoured.
+if [ "${ENABLE_LLM_MODULE:-false}" = "true" ]; then
+    LLM_IMAGE_REF="${OVERLEAF_IMAGE:-overleaf-lab/sharelatex-llm}:${OVERLEAF_IMAGE_TAG:-6.2.0-ext-v5.0}"
+    echo ""
+    if docker image inspect "$LLM_IMAGE_REF" >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ AI assistant (LLM) image already present ($LLM_IMAGE_REF), skipping build${NC}"
+    else
+        echo "Building the AI assistant (LLM) custom image ($LLM_IMAGE_REF)..."
+        echo "One-time build, ~15-30 min (webpack + npm, needs >=8 GB RAM + network)."
+        chmod +x ./scripts/build-llm-image.sh
+        if ./scripts/build-llm-image.sh; then
+            echo -e "${GREEN}✓ AI assistant (LLM) image built${NC}"
+        else
+            echo -e "${RED}ERROR: Failed to build the AI assistant (LLM) image.${NC}"
+            echo "The stack is configured to use $LLM_IMAGE_REF and cannot start without it."
+            echo "Fix the cause (network / disk / RAM), then finish with:"
+            echo "  ./scripts/build-llm-image.sh && cd overleaf-toolkit && bin/up -d"
+            exit 1
+        fi
     fi
 fi
 
