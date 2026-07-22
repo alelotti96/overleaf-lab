@@ -90,6 +90,12 @@ The script asks for:
 - GitHub synchronization (optional, needs a GitHub OAuth App client ID/secret)
 - AI assistant / local LLM (optional)
 
+**Requirements.** Docker, and a CPU with AVX (MongoDB 8.0+ needs it). On Linux kernel
+`>= 6.19` the installer auto-pins MongoDB to `8.0.4`: MongoDB `8.0.5+` crash-loops on
+those kernels (a tcmalloc/rseq bug, MongoDB SERVER-121912). Older kernels keep the
+rolling `8.0` tag. Overleaf 6.x requires a MongoDB server `>= 8.0`, and `8.0.4` satisfies
+it, so there is no version conflict.
+
 ## After Installation
 
 1. **Create Overleaf admin**: http://localhost/launchpad

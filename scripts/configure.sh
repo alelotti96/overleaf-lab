@@ -288,6 +288,19 @@ if [ -d "overleaf-toolkit" ]; then
         HEADER_EXTRAS='[{"text":"Admin Dashboard","url":"'"${DASHBOARD_URL}"'"},{"text":"LaTeX Tutorial","url":"https://www.overleaf.com/learn/latex/Learn_LaTeX_in_30_minutes","class":"subdued"}]'
     fi
 
+    # overleaf-lab: MongoDB 8.0.5+ refuses to start on Linux kernel >= 6.19 (a tcmalloc
+    # rseq bug, MongoDB SERVER-121912) and crash-loops. 8.0.4 is the last unaffected 8.0
+    # patch, and Overleaf 6.x still accepts it (it requires a server >= 8.0). Pin to 8.0.4
+    # only on affected kernels and only when the rolling "8.0" tag is in use, so hosts on
+    # older kernels keep getting 8.0.x patch updates. Drop the pin once MongoDB ships a
+    # fixed 8.0.x (SERVER-125742).
+    _kver=$(uname -r 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+')
+    if [ -n "$_kver" ] && [ "$(printf '%s\n6.19\n' "$_kver" | sort -V | head -1)" = "6.19" ] \
+       && [ "${MONGO_VERSION:-8.0}" = "8.0" ]; then
+        echo "  Kernel $(uname -r): pinning MONGO_VERSION=8.0.4 (SERVER-121912, kernel >= 6.19)"
+        MONGO_VERSION="8.0.4"
+    fi
+
     # Create overleaf.rc if it doesn't exist or update it
     cat > overleaf-toolkit/config/overleaf.rc <<EOF
 #### Overleaf RC ####
