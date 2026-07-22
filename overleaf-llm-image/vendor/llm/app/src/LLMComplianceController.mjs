@@ -11,9 +11,10 @@ import { getAdminLLMSettings, getComplianceRubrics, getLLMFeatureFlags, getLLMPr
 const jobs = new Map() // jobId -> job
 const queue = [] // array of jobId, FIFO
 let running = false // one review at a time
-// overleaf-lab: keep finished jobs for 15 min so a re-poll after a tab switch
-// still returns the result instead of a not_found.
-const JOB_TTL_MS = 15 * 60 * 1000
+// overleaf-lab: keep finished jobs for 30 min so a re-poll after a tab switch still
+// returns the result instead of a not_found. A large review can finish long after the
+// user last looked at the panel, so the retention must be generous.
+const JOB_TTL_MS = 30 * 60 * 1000
 
 // overleaf-lab: the compliance reviewer system prompt now lives in LLMPrompts.mjs as
 // DEFAULT_REVIEW_SYSTEM_PROMPT and is resolved per review via getLLMPrompts() so a
@@ -108,7 +109,7 @@ function jobsAhead(jobId) {
 // outcome: { type: 'done', result } on success, or { type: 'error', errorCode,
 // message, ... } for a logical failure (too_long / model_unavailable /
 // empty_document). Throws on an HTTP/parse failure or an abort (cancel or the
-// 570s timeout); processQueue maps those to the 'cancelled' or 'failed' state.
+// review timeout); processQueue maps those to the 'cancelled' or 'failed' state.
 async function performReview(job) {
     const { projectId, userId } = job
 
@@ -189,7 +190,7 @@ async function performReview(job) {
     // answer. The rubric can be large, so it must count too, otherwise the document
     // could pass here and the full prompt still overflow.
     const documentTokensEstimate = estimateTokens(assembled)
-    const OUTPUT_RESERVE = 4000 // overleaf-lab: max_tokens for the review answer
+    const OUTPUT_RESERVE = 6000 // overleaf-lab: max_tokens for the review answer
     const promptTokensEstimate =
         documentTokensEstimate +
         estimateTokens(rubric.guidelines) +
@@ -250,18 +251,21 @@ async function performReview(job) {
             { role: 'system', content: prompts.reviewSystemPrompt },
             { role: 'user', content: userContent },
         ],
-        max_tokens: 4000,
+        max_tokens: 6000,
         temperature: 0.2,
     }
 
-    // overleaf-lab: 570s timeout, just under the nginx 600s limit. It aborts the
-    // job's own AbortController, the same signal the cancel endpoint uses, so both
-    // a timeout and a user cancel abort the in-flight fetch.
+    // overleaf-lab: 60 min timeout. The review is async (the client polls the job
+    // status), so this web->LLM fetch does NOT pass through nginx and is not bound by
+    // its 600s proxy limit. A single-pass review of a large thesis (up to ~200 pages)
+    // is dominated by prefill of the whole document, which can take tens of minutes on
+    // a CPU backend. It aborts the job's own AbortController, the same signal the cancel
+    // endpoint uses, so both a timeout and a user cancel abort the in-flight fetch.
     const timeout = setTimeout(() => {
         if (job.controller) {
             job.controller.abort()
         }
-    }, 570000)
+    }, 3600000)
 
     try {
         // overleaf-lab: send Authorization only when a non-empty key exists, so a
@@ -275,7 +279,7 @@ async function performReview(job) {
             method: 'POST',
             headers: chatHeaders,
             body: JSON.stringify(requestBody),
-            // overleaf-lab: pass the job signal so cancel (and the 570s timeout) abort it.
+            // overleaf-lab: pass the job signal so cancel (and the review timeout) abort it.
             signal: job.controller.signal,
         })
 
@@ -324,7 +328,7 @@ async function performReview(job) {
     } catch (err) {
         clearTimeout(timeout)
         // overleaf-lab: rethrow so processQueue can tell a cancel (job already
-        // 'cancelled') from the 570s timeout or a real failure.
+        // 'cancelled') from the review timeout or a real failure.
         throw err
     }
 }
@@ -367,7 +371,7 @@ async function processQueue() {
         }
     } catch (err) {
         // overleaf-lab: cancel aborts the controller after setting status
-        // 'cancelled', so keep that; any other throw (the 570s timeout abort or an
+        // 'cancelled', so keep that; any other throw (the review timeout abort or an
         // HTTP/parse failure) becomes a generic 'failed'.
         if (job.status !== 'cancelled') {
             job.status = 'error'
