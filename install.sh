@@ -75,6 +75,7 @@ if ! docker ps &> /dev/null; then
         # User is not in docker group
         echo -e "${RED}You're not in the docker group.${NC}"
         echo "Adding you to the docker group now..."
+        sudo groupadd -f docker   # some installs (static binary, rootless) lack it
         sudo usermod -aG docker $USER
         echo ""
         echo -e "${GREEN}Added to docker group!${NC}"
