@@ -15,6 +15,15 @@ import {
 const ADMIN_SETTINGS_PATH = process.env.LLM_ADMIN_SETTINGS_PATH ||
     '/var/lib/overleaf/data/llm-admin-settings.json'
 
+// overleaf-lab: fallback for the review answer budget when the admin has not set one.
+// Mirrors LLMComplianceController's REVIEW_MAX_TOKENS default (env override, else
+// 12000). Duplicated here on purpose: importing it would make the two controllers
+// import each other, since the compliance one already imports this module.
+const DEFAULT_REVIEW_MAX_TOKENS =
+    Number.parseInt(process.env.LLM_REVIEW_MAX_TOKENS, 10) > 0
+        ? Number.parseInt(process.env.LLM_REVIEW_MAX_TOKENS, 10)
+        : 12000
+
 async function readAdminSettings() {
     try {
         const raw = await fs.readFile(ADMIN_SETTINGS_PATH, 'utf8')
@@ -70,6 +79,7 @@ async function buildDisplaySettings() {
         complianceRubrics: Array.isArray(settings.complianceRubrics) ? settings.complianceRubrics : [],
         reviewModel: settings.reviewModel || '',
         maxContextTokens: settings.maxContextTokens || 32000,
+        reviewMaxTokens: settings.reviewMaxTokens || DEFAULT_REVIEW_MAX_TOKENS,
         // overleaf-lab: per-feature enable flags; absent field defaults to true so
         // existing installs keep every feature on.
         chatEnabled: settings.chatEnabled !== false,
@@ -110,6 +120,7 @@ async function saveAdminSettings(req, res) {
         complianceRubrics,
         reviewModel,
         maxContextTokens,
+        reviewMaxTokens,
         chatEnabled,
         completionEnabled,
         reviewEnabled,
@@ -219,6 +230,19 @@ async function saveAdminSettings(req, res) {
         sanitizedMaxContextTokens = existing.maxContextTokens || 32000
     }
 
+    // overleaf-lab: clamp the review answer budget. This is the model's max_tokens for
+    // the report AND the room reserved for it in the context check, so it is bounded
+    // well below any real context window.
+    let sanitizedReviewMaxTokens
+    if (reviewMaxTokens !== undefined) {
+        const parsed = parseInt(reviewMaxTokens, 10)
+        sanitizedReviewMaxTokens = Number.isNaN(parsed)
+            ? existing.reviewMaxTokens || DEFAULT_REVIEW_MAX_TOKENS
+            : Math.min(128000, Math.max(500, parsed))
+    } else {
+        sanitizedReviewMaxTokens = existing.reviewMaxTokens || DEFAULT_REVIEW_MAX_TOKENS
+    }
+
     // overleaf-lab: sanitize the action prompt overrides. When provided, keep only
     // known keys with string values, each capped at 4000 chars. When not provided,
     // keep the existing object untouched.
@@ -249,6 +273,7 @@ async function saveAdminSettings(req, res) {
         complianceRubrics: sanitizedRubrics,
         reviewModel: typeof reviewModel === 'string' ? reviewModel : (existing.reviewModel || ''),
         maxContextTokens: sanitizedMaxContextTokens,
+        reviewMaxTokens: sanitizedReviewMaxTokens,
         // overleaf-lab: omitted flag keeps the existing value (default true).
         chatEnabled: typeof chatEnabled === 'boolean' ? chatEnabled : (existing.chatEnabled !== false),
         completionEnabled: typeof completionEnabled === 'boolean' ? completionEnabled : (existing.completionEnabled !== false),
@@ -299,6 +324,7 @@ export async function getAdminLLMSettings() {
         // overleaf-lab: document compliance review settings
         reviewModel: settings.reviewModel || '',
         maxContextTokens: settings.maxContextTokens || 32000,
+        reviewMaxTokens: settings.reviewMaxTokens || DEFAULT_REVIEW_MAX_TOKENS,
         // overleaf-lab: per-feature enable flags (absent field defaults to true).
         chatEnabled: settings.chatEnabled !== false,
         completionEnabled: settings.completionEnabled !== false,

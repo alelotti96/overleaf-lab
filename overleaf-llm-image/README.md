@@ -58,10 +58,10 @@ Runtime env (written by `configure.sh` from `config.env`):
 | `LLM_API_KEY` | bearer token (empty for a no-auth local server) |
 | `LLM_MODEL_NAME` | comma-separated; first = default |
 | `LLM_COMPLETION_MODEL` | optional model for shared inline completion |
-| `LLM_REVIEW_MAX_TOKENS` | review answer budget (max_tokens + reserved room); empty = 12000 |
+| `LLM_REVIEW_MAX_TOKENS` | fallback review answer budget when the admin page has none set (default 12000) |
 | `LLM_REVIEW_CHARS_PER_TOKEN` | chars/token for the pre-flight size estimate; LaTeX-tuned (default 2.5) |
-| `LLM_REVIEW_PREFILL_TPS` | prefill tokens/sec, only for the review progress estimate (default 80) |
-| `LLM_REVIEW_GEN_TPS` | generation tokens/sec, only for the review progress estimate (default 4) |
+| `LLM_REVIEW_PREFILL_TPS` | pin the prefill tokens/sec used by the progress bar (normally auto-measured) |
+| `LLM_REVIEW_GEN_TPS` | pin the generation tokens/sec used by the progress bar (normally auto-measured) |
 | `LLM_ALLOW_USER_SETTINGS` | `true` = users may bring their own key (below) |
 | `LLM_KEY_SECRET` | auto-generated/persisted by `configure.sh`; encrypts user keys |
 | `LLM_ADMIN_SETTINGS_PATH` | admin-settings JSON path (persistent volume) |
@@ -120,9 +120,10 @@ report.
 
 - **Admin setup** (super-admin, `/admin/llm/settings`, "Compliance Review" section):
   add one or more named **rubrics** (name + guidelines text), pick the **review
-  model** (defaults to the shared chat model; point it at a large-context model), and
-  set **Max context tokens** to the review model's context window (no auto-detection,
-  it is only a setting).
+  model** (defaults to the shared chat model; point it at a large-context model), set
+  **Max context tokens** to the review model's context window (no auto-detection, it is
+  only a setting), and optionally raise the **Review answer budget** if reports come out
+  truncated with a large rubric.
 - **Users** open the AI Assistant rail, switch to the **Review** tab, choose a rubric
   and run. Each item shows a status (ok / partial / missing / n.a.), the evidence, and
   a suggestion, with a **Download report** button (Markdown) so the result survives
@@ -133,9 +134,14 @@ report.
   the Chat/Review tab does **not** cancel it (both panes stay mounted).
 - **Progress.** While running, the pane shows a phase label ("Reading the document"
   then "Writing the report") and an estimated progress bar with elapsed time. The
-  review is one blocking call with no exact percentage, so the bar is an estimate
-  from the backend throughput (`LLM_REVIEW_PREFILL_TPS` / `LLM_REVIEW_GEN_TPS`);
-  elapsed time is exact. A wrong estimate only skews the bar, never the result.
+  review is one blocking call with no exact percentage, so the bar is an estimate from
+  the backend throughput; elapsed time is exact, and a wrong estimate only skews the
+  bar, never the result. The throughput is **measured, not guessed**: llama.cpp returns
+  `timings.prompt_per_second` / `predicted_per_second` on every response, so each review
+  calibrates the next one, and a small probe before the very first review seeds it (the
+  probe is lazy, not at boot, so it never delays startup or fails on a backend that is
+  not up yet). Backends that report no timings, and `LLM_REVIEW_PREFILL_TPS` /
+  `LLM_REVIEW_GEN_TPS` when set, override the measurement.
 - **Guards.** The whole prompt (document + rubric + system + output room) is budgeted
   against Max context tokens; an over-long project is refused (`too_long`) instead of
   silently truncated. The size check is an ESTIMATE (`LLM_REVIEW_CHARS_PER_TOKEN`,
@@ -143,9 +149,10 @@ report.
   let a borderline document through: in that case the backend's own context rejection
   is parsed and reported as `too_long` with the REAL prompt and context token counts,
   which is the number to act on. The output room reserved (and the model's
-  `max_tokens`) is `LLM_REVIEW_MAX_TOKENS` (default 12000). Any other backend refusal
-  surfaces as `backend_error` with the backend's own message instead of a misleading
-  timeout. If a specific review model is configured,
+  `max_tokens`) is the admin **Review answer budget** (falling back to
+  `LLM_REVIEW_MAX_TOKENS`, default 12000). Any other backend refusal surfaces as
+  `backend_error` with the backend's own message instead of a misleading timeout. If a
+  specific review model is configured,
   its presence is verified against the backend `/models` before running
   (`model_unavailable` otherwise). One-shot only for now; section chunking for very
   long theses is a possible v2.

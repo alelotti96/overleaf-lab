@@ -190,6 +190,9 @@ export default function LLMAdminSettingsPage() {
     const [complianceRubrics, setComplianceRubrics] = useState<Array<{ id: string; name: string; guidelines: string }>>(initialRubrics)
     const [reviewModel, setReviewModel] = useState<string>((getMeta('ol-reviewModel') as string) || '')
     const [maxContextTokens, setMaxContextTokens] = useState<number>(parseInt((getMeta('ol-maxContextTokens') as string) || '32000', 10) || 32000)
+    // overleaf-lab: budget for the review's JSON answer (the model's max_tokens and
+    // the room reserved for it in the context check).
+    const [reviewMaxTokens, setReviewMaxTokens] = useState<number>(parseInt((getMeta('ol-reviewMaxTokens') as string) || '12000', 10) || 12000)
     // overleaf-lab: per-feature enable/disable toggles. The metas use data-type='json'
     // so getMeta returns the parsed boolean; default to true when missing/undefined.
     const [chatEnabled, setChatEnabled] = useState<boolean>(getMeta('ol-chatEnabled') !== false)
@@ -243,6 +246,7 @@ export default function LLMAdminSettingsPage() {
                     complianceRubrics,
                     reviewModel,
                     maxContextTokens,
+                    reviewMaxTokens,
                     chatEnabled,
                     completionEnabled,
                     reviewEnabled,
@@ -811,6 +815,29 @@ export default function LLMAdminSettingsPage() {
                                         {t(
                                             'max_context_tokens_help',
                                             'The context window (in tokens) of the review model, as configured on your llama.cpp server (the -c value, divided by --parallel). The review refuses documents that would not fit. No auto-detection.'
+                                        )}
+                                    </OLFormText>
+                                </OLFormGroup>
+
+                                {/* overleaf-lab: budget for the review answer itself */}
+                                <OLFormGroup controlId="llm-review-max-tokens" style={{ marginTop: '1rem', marginBottom: 0 }}>
+                                    <OLFormLabel>
+                                        {t('review_max_tokens', 'Review answer budget (tokens)')}
+                                    </OLFormLabel>
+                                    <OLFormControl
+                                        type="number"
+                                        value={reviewMaxTokens}
+                                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                            const parsed = parseInt(e.target.value, 10)
+                                            if (!isNaN(parsed)) {
+                                                setReviewMaxTokens(parsed)
+                                            }
+                                        }}
+                                    />
+                                    <OLFormText>
+                                        {t(
+                                            'review_max_tokens_help',
+                                            'Maximum length of the review report. Raise it if reports come out truncated with a large rubric. It is also the room reserved inside Max context tokens, so raising it lowers the longest document that still fits, and on a slow backend it makes the review take longer to write.'
                                         )}
                                     </OLFormText>
                                 </OLFormGroup>

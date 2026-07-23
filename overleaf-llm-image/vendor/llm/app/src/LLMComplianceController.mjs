@@ -16,11 +16,11 @@ let running = false // one review at a time
 // user last looked at the panel, so the retention must be generous.
 const JOB_TTL_MS = 30 * 60 * 1000
 
-// overleaf-lab: token budget for the review's JSON answer. It is BOTH the hard
-// max_tokens sent to the model AND the room the context-window guard reserves for the
-// answer (so raising it slightly lowers the largest single-pass document). A thorough
-// review of a big rubric emits many structured items, so the default is generous;
-// tune it via LLM_REVIEW_MAX_TOKENS without an image rebuild.
+// overleaf-lab: FALLBACK token budget for the review's JSON answer, used when the
+// admin has not set one in the LLM settings page (which is the normal way to change
+// it). The effective value is BOTH the hard max_tokens sent to the model AND the room
+// the context-window guard reserves for the answer, so raising it slightly lowers the
+// largest single-pass document and lengthens the worst-case review.
 const REVIEW_MAX_TOKENS =
     Number.parseInt(process.env.LLM_REVIEW_MAX_TOKENS, 10) > 0
         ? Number.parseInt(process.env.LLM_REVIEW_MAX_TOKENS, 10)
@@ -32,15 +32,96 @@ const REVIEW_MAX_TOKENS =
 // part) and generation (it writes the report). Defaults are measured on the reference
 // CPU backend; override with LLM_REVIEW_PREFILL_TPS / LLM_REVIEW_GEN_TPS if yours
 // differs (a wrong estimate only skews the bar, never the result).
-const REVIEW_PREFILL_TPS =
-    Number.parseInt(process.env.LLM_REVIEW_PREFILL_TPS, 10) > 0
-        ? Number.parseInt(process.env.LLM_REVIEW_PREFILL_TPS, 10)
-        : 80
-const REVIEW_GEN_TPS =
-    Number.parseInt(process.env.LLM_REVIEW_GEN_TPS, 10) > 0
-        ? Number.parseInt(process.env.LLM_REVIEW_GEN_TPS, 10)
-        : 4
+// An explicit env value always wins (an operator pinning a number), otherwise we use
+// what we MEASURED from the backend, otherwise these last-resort fallbacks. The
+// fallbacks are CPU-era numbers and are wrong by ~2 orders of magnitude on a GPU, so
+// they must never be the normal path: see measuredPrefillTps below.
+const ENV_PREFILL_TPS =
+    Number.parseFloat(process.env.LLM_REVIEW_PREFILL_TPS) > 0
+        ? Number.parseFloat(process.env.LLM_REVIEW_PREFILL_TPS)
+        : null
+const ENV_GEN_TPS =
+    Number.parseFloat(process.env.LLM_REVIEW_GEN_TPS) > 0
+        ? Number.parseFloat(process.env.LLM_REVIEW_GEN_TPS)
+        : null
+const FALLBACK_PREFILL_TPS = 80
+const FALLBACK_GEN_TPS = 4
 const REVIEW_EST_OUTPUT_TOKENS = 1500 // typical size of a structured JSON report
+
+// overleaf-lab: throughput measured from the backend, so the progress bar calibrates
+// itself instead of asking an admin to guess tokens/sec. llama.cpp reports
+// timings.prompt_per_second / predicted_per_second on every response, so a real review
+// gives the exact numbers for free; a small probe seeds them before the FIRST review.
+// Process-local on purpose: it is a display estimate, not state worth persisting, and
+// one review (or one probe) re-learns it after a restart.
+let measuredPrefillTps = null
+let measuredGenTps = null
+let ratesProbed = false
+
+function effectiveRates() {
+    return {
+        prefillTps: ENV_PREFILL_TPS || measuredPrefillTps || FALLBACK_PREFILL_TPS,
+        genTps: ENV_GEN_TPS || measuredGenTps || FALLBACK_GEN_TPS,
+    }
+}
+
+// overleaf-lab: learn the rates from a llama.cpp `timings` block. Ignored silently for
+// backends that do not report it (OpenAI and friends), which keep env/fallback.
+function recordTimings(timings) {
+    if (!timings || typeof timings !== 'object') {
+        return
+    }
+    const prefill = Number(timings.prompt_per_second)
+    const gen = Number(timings.predicted_per_second)
+    if (Number.isFinite(prefill) && prefill > 0) {
+        measuredPrefillTps = prefill
+    }
+    if (Number.isFinite(gen) && gen > 0) {
+        measuredGenTps = gen
+    }
+}
+
+// overleaf-lab: one cheap request whose only purpose is to read `timings`, so even the
+// first review shows a sensible bar. Deliberately lazy (right before the first review)
+// rather than at boot: at boot the backend may not be up yet, and a probe would add a
+// network call plus retries to Overleaf startup for no gain. Best-effort: any failure
+// leaves the fallbacks in place, and the first real review corrects them anyway.
+// The prompt is padded so prompt_per_second is measured on a non-trivial prefill.
+async function probeBackendRates(llmApiUrl, llmApiKey, model) {
+    ratesProbed = true
+    try {
+        const headers = { 'Content-Type': 'application/json' }
+        if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
+            headers.Authorization = `Bearer ${llmApiKey}`
+        }
+        const filler = 'The quick brown fox jumps over the lazy dog. '.repeat(60)
+        const response = await fetch(`${llmApiUrl}/chat/completions`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                model,
+                messages: [{ role: 'user', content: `${filler}\n\nReply with: ok` }],
+                max_tokens: 8,
+                temperature: 0,
+            }),
+        })
+        if (!response.ok) {
+            return
+        }
+        const data = await response.json()
+        recordTimings(data && data.timings)
+        if (measuredPrefillTps || measuredGenTps) {
+            logger.debug(
+                { prefillTps: measuredPrefillTps, genTps: measuredGenTps },
+                '[LLM] compliance: measured backend throughput for the progress estimate'
+            )
+        }
+    } catch (err) {
+        logger.debug({ err }, '[LLM] compliance: throughput probe failed, using fallbacks')
+    }
+}
+// overleaf-lab: floor for the review timeout (the value it used to be fixed at).
+const REVIEW_MIN_TIMEOUT_MS = 60 * 60 * 1000
 
 // overleaf-lab: JSON Schema for the review answer, enforced by the backend via
 // response_format so the model is CONSTRAINED to emit exactly this shape (llama.cpp
@@ -259,6 +340,8 @@ async function performReview(job) {
         throw new Error('LLM backend is not configured')
     }
     const maxContextTokens = admin.maxContextTokens || 32000
+    // overleaf-lab: the admin-set answer budget wins; fall back to the env default.
+    const reviewMaxTokens = admin.reviewMaxTokens || REVIEW_MAX_TOKENS
     // overleaf-lab: prefer the admin-chosen review model, then the first allowed
     // model, then the env-derived default (mirrors the chat model fallback).
     const reviewModel =
@@ -326,7 +409,7 @@ async function performReview(job) {
         estimateTokens(prompts.reviewSystemPrompt)
     // overleaf-lab: expose the size so the status endpoint can estimate progress.
     job.documentTokensEstimate = documentTokensEstimate
-    if (promptTokensEstimate + REVIEW_MAX_TOKENS > maxContextTokens) {
+    if (promptTokensEstimate + reviewMaxTokens > maxContextTokens) {
         return {
             type: 'error',
             errorCode: 'too_long',
@@ -382,7 +465,7 @@ async function performReview(job) {
             { role: 'system', content: prompts.reviewSystemPrompt },
             { role: 'user', content: userContent },
         ],
-        max_tokens: REVIEW_MAX_TOKENS,
+        max_tokens: reviewMaxTokens,
         temperature: 0.2,
         // overleaf-lab: constrain the answer to the review JSON shape (see
         // REVIEW_JSON_SCHEMA). Guarantees parseable output and, because prose is
@@ -399,17 +482,37 @@ async function performReview(job) {
         },
     }
 
-    // overleaf-lab: 60 min timeout. The review is async (the client polls the job
-    // status), so this web->LLM fetch does NOT pass through nginx and is not bound by
-    // its 600s proxy limit. A single-pass review of a large thesis (up to ~200 pages)
-    // is dominated by prefill of the whole document, which can take tens of minutes on
-    // a CPU backend. It aborts the job's own AbortController, the same signal the cancel
+    // overleaf-lab: the review is async (the client polls the job status), so this
+    // web->LLM fetch does NOT pass through nginx and is not bound by its 600s proxy
+    // limit. It aborts the job's own AbortController, the same signal the cancel
     // endpoint uses, so both a timeout and a user cancel abort the in-flight fetch.
+    //
+    // The timeout is SIZED FROM THE WORK instead of being a fixed hour: prefill of the
+    // whole document plus a full-budget generation is the worst case. With a large
+    // answer budget on a slow CPU backend that worst case exceeds an hour, and a fixed
+    // 60 min would kill a review that was still legitimately writing. The old fixed
+    // value stays as the floor, so short reviews are unaffected.
+    // overleaf-lab: before the first review, spend one cheap request learning the
+    // backend's real speed, so the bar is not off by orders of magnitude on hardware
+    // that differs from the fallbacks. Skipped when an operator pinned the rates.
+    if (!ratesProbed && !(ENV_PREFILL_TPS && ENV_GEN_TPS)) {
+        await probeBackendRates(llmApiUrl, llmApiKey, reviewModel)
+    }
+    const rates = effectiveRates()
+    const estimatedPrefillMs = Math.round(
+        (promptTokensEstimate / rates.prefillTps) * 1000
+    )
+    const worstCaseMs =
+        estimatedPrefillMs + Math.round((reviewMaxTokens / rates.genTps) * 1000)
+    const reviewTimeoutMs = Math.max(
+        REVIEW_MIN_TIMEOUT_MS,
+        Math.round(worstCaseMs * 1.5)
+    )
     const timeout = setTimeout(() => {
         if (job.controller) {
             job.controller.abort()
         }
-    }, 3600000)
+    }, reviewTimeoutMs)
 
     try {
         // overleaf-lab: send Authorization only when a non-empty key exists, so a
@@ -423,12 +526,12 @@ async function performReview(job) {
         // status endpoint reports: prefill (reading the whole prompt) is the long,
         // output-less phase, then generation writes the report.
         job.progressStartedAt = Date.now()
-        job.estimatedPrefillMs = Math.round(
-            (promptTokensEstimate / REVIEW_PREFILL_TPS) * 1000
-        )
+        job.estimatedPrefillMs = estimatedPrefillMs
+        // The bar uses the TYPICAL report size, not the full budget: the budget is a
+        // cap the model rarely fills, so using it here would make the bar crawl.
         job.estimatedTotalMs =
-            job.estimatedPrefillMs +
-            Math.round((REVIEW_EST_OUTPUT_TOKENS / REVIEW_GEN_TPS) * 1000)
+            estimatedPrefillMs +
+            Math.round((REVIEW_EST_OUTPUT_TOKENS / rates.genTps) * 1000)
 
         const response = await fetch(`${llmApiUrl}/chat/completions`, {
             method: 'POST',
@@ -478,6 +581,9 @@ async function performReview(job) {
         }
 
         const data = await response.json()
+        // overleaf-lab: the real review is the most representative measurement there
+        // is (a full-size prefill), so let it refine the rates for the next one.
+        recordTimings(data && data.timings)
         const content = stripThinkTags(data?.choices?.[0]?.message?.content || '')
 
         let parsed
