@@ -26,6 +26,22 @@ const REVIEW_MAX_TOKENS =
         ? Number.parseInt(process.env.LLM_REVIEW_MAX_TOKENS, 10)
         : 12000
 
+// overleaf-lab: rough backend throughput, used ONLY to show a progress estimate in
+// the UI (the review is one long blocking call, there is no exact percentage). The
+// two phases are prefill (the model reads the whole document, the long output-less
+// part) and generation (it writes the report). Defaults are measured on the reference
+// CPU backend; override with LLM_REVIEW_PREFILL_TPS / LLM_REVIEW_GEN_TPS if yours
+// differs (a wrong estimate only skews the bar, never the result).
+const REVIEW_PREFILL_TPS =
+    Number.parseInt(process.env.LLM_REVIEW_PREFILL_TPS, 10) > 0
+        ? Number.parseInt(process.env.LLM_REVIEW_PREFILL_TPS, 10)
+        : 80
+const REVIEW_GEN_TPS =
+    Number.parseInt(process.env.LLM_REVIEW_GEN_TPS, 10) > 0
+        ? Number.parseInt(process.env.LLM_REVIEW_GEN_TPS, 10)
+        : 4
+const REVIEW_EST_OUTPUT_TOKENS = 1500 // typical size of a structured JSON report
+
 // overleaf-lab: JSON Schema for the review answer, enforced by the backend via
 // response_format so the model is CONSTRAINED to emit exactly this shape (llama.cpp
 // and OpenAI both support json_schema). This removes the "No JSON object found"
@@ -37,6 +53,7 @@ const REVIEW_JSON_SCHEMA = {
     type: 'object',
     additionalProperties: false,
     properties: {
+        summary: { type: 'string' },
         items: {
             type: 'array',
             items: {
@@ -52,7 +69,7 @@ const REVIEW_JSON_SCHEMA = {
             },
         },
     },
-    required: ['items'],
+    required: ['summary', 'items'],
 }
 
 // overleaf-lab: the compliance reviewer system prompt now lives in LLMPrompts.mjs as
@@ -233,6 +250,8 @@ async function performReview(job) {
         documentTokensEstimate +
         estimateTokens(rubric.guidelines) +
         estimateTokens(prompts.reviewSystemPrompt)
+    // overleaf-lab: expose the size so the status endpoint can estimate progress.
+    job.documentTokensEstimate = documentTokensEstimate
     if (promptTokensEstimate + REVIEW_MAX_TOKENS > maxContextTokens) {
         return {
             type: 'error',
@@ -326,6 +345,17 @@ async function performReview(job) {
             chatHeaders.Authorization = `Bearer ${llmApiKey}`
         }
 
+        // overleaf-lab: the model call starts now. Seed the progress estimate the
+        // status endpoint reports: prefill (reading the whole prompt) is the long,
+        // output-less phase, then generation writes the report.
+        job.progressStartedAt = Date.now()
+        job.estimatedPrefillMs = Math.round(
+            (promptTokensEstimate / REVIEW_PREFILL_TPS) * 1000
+        )
+        job.estimatedTotalMs =
+            job.estimatedPrefillMs +
+            Math.round((REVIEW_EST_OUTPUT_TOKENS / REVIEW_GEN_TPS) * 1000)
+
         const response = await fetch(`${llmApiUrl}/chat/completions`, {
             method: 'POST',
             headers: chatHeaders,
@@ -401,6 +431,7 @@ async function processQueue() {
 
     running = true
     job.status = 'running'
+    job.startedAt = Date.now()
     job.controller = new AbortController()
 
     try {
@@ -507,7 +538,12 @@ async function startReview(req, res) {
         maxContextTokens: null,
         controller: null,
         createdAt: Date.now(),
+        startedAt: null,
         finishedAt: null,
+        // overleaf-lab: progress estimate, filled in when the model call starts.
+        progressStartedAt: null,
+        estimatedPrefillMs: null,
+        estimatedTotalMs: null,
     }
     jobs.set(job.id, job)
     queue.push(job.id)
@@ -535,8 +571,28 @@ async function statusReview(req, res) {
     switch (job.status) {
         case 'queued':
             return res.json({ ok: true, status: 'queued', position: jobsAhead(job.id) })
-        case 'running':
-            return res.json({ ok: true, status: 'running' })
+        case 'running': {
+            // overleaf-lab: report an estimated progress so the UI can show a bar
+            // instead of an open-ended spinner. Before the model call starts we are
+            // still assembling the document (no estimate yet): report 'preparing'.
+            if (!job.progressStartedAt || !job.estimatedTotalMs) {
+                return res.json({ ok: true, status: 'running', phase: 'preparing' })
+            }
+            const elapsedMs = Date.now() - job.progressStartedAt
+            const phase = elapsedMs < job.estimatedPrefillMs ? 'reading' : 'writing'
+            const progress = Math.max(
+                0,
+                Math.min(0.95, elapsedMs / job.estimatedTotalMs)
+            )
+            return res.json({
+                ok: true,
+                status: 'running',
+                phase,
+                elapsedMs,
+                estimatedTotalMs: job.estimatedTotalMs,
+                progress,
+            })
+        }
         case 'done':
             return res.json({ ok: true, status: 'done', result: job.result })
         case 'error':

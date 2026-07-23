@@ -29,6 +29,14 @@ const STATUS_STYLE: Record<
 const MUTED =
     'color-mix(in srgb, var(--content-primary-themed) 72%, transparent)'
 
+// overleaf-lab: mm:ss for the progress readout.
+function formatDuration(ms: number): string {
+    const totalSeconds = Math.max(0, Math.round(ms / 1000))
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+    return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
 function ComplianceReportItem({ item }: { item: ComplianceItem }) {
     const { t } = useTranslation()
     const statusStyle = STATUS_STYLE[item.status] || STATUS_STYLE.na
@@ -73,6 +81,7 @@ function LLMCompliancePane() {
         setSelectedRubricId,
         phase,
         position,
+        progress,
         result,
         errorInfo,
         runReview,
@@ -365,18 +374,94 @@ function LLMCompliancePane() {
                 </div>
             )}
 
-            {/* overleaf-lab: running state - in-progress note + cancel */}
+            {/* overleaf-lab: running state - phase label + estimated progress bar + cancel */}
             {phase === 'running' && (
-                <div style={{ marginTop: 12, color: MUTED }}>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <MaterialIcon type="hourglass_empty" />
+                <div style={{ marginTop: 12 }}>
+                    <div
+                        style={{
+                            display: 'flex',
+                            gap: 8,
+                            alignItems: 'center',
+                            color: MUTED,
+                        }}
+                    >
+                        <MaterialIcon
+                            type={
+                                progress?.phase === 'writing'
+                                    ? 'edit_note'
+                                    : progress?.phase === 'reading'
+                                      ? 'menu_book'
+                                      : 'hourglass_empty'
+                            }
+                        />
                         <span>
-                            {t(
-                                'review_in_progress',
-                                'Review in progress. This can take a few minutes for a long document.'
-                            )}
+                            {progress?.phase === 'writing'
+                                ? t('review_writing', 'Writing the report...')
+                                : progress?.phase === 'reading'
+                                  ? t('review_reading', 'Reading the document...')
+                                  : t(
+                                        'review_preparing',
+                                        'Preparing the document...'
+                                    )}
                         </span>
                     </div>
+
+                    {/* overleaf-lab: bar appears once the model call started and we
+                        have an estimate. It is an estimate, not exact progress. */}
+                    {progress && progress.estimatedTotalMs > 0 && (
+                        <>
+                            <div
+                                style={{
+                                    marginTop: 8,
+                                    height: 8,
+                                    borderRadius: 4,
+                                    background: 'rgba(125,125,125,0.2)',
+                                    overflow: 'hidden',
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        height: '100%',
+                                        width: `${Math.round(progress.fraction * 100)}%`,
+                                        background: 'var(--green-60, #198754)',
+                                        transition: 'width 1s linear',
+                                    }}
+                                />
+                            </div>
+                            <div
+                                style={{
+                                    marginTop: 4,
+                                    fontSize: '0.8em',
+                                    color: MUTED,
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    gap: 8,
+                                }}
+                            >
+                                <span>
+                                    {formatDuration(progress.elapsedMs)} /{' '}
+                                    {formatDuration(progress.estimatedTotalMs)}{' '}
+                                    {t('review_estimate', '(estimate)')}
+                                </span>
+                                <span>{Math.round(progress.fraction * 100)}%</span>
+                            </div>
+                        </>
+                    )}
+
+                    <div
+                        style={{
+                            marginTop: 8,
+                            fontSize: '0.8em',
+                            color: MUTED,
+                            overflowWrap: 'anywhere',
+                        }}
+                    >
+                        {t(
+                            'review_in_progress',
+                            'A full review can take several minutes on a long document.'
+                        )}
+                    </div>
+
                     <div style={{ marginTop: 8 }}>
                         <OLButton
                             variant="secondary"

@@ -59,6 +59,8 @@ Runtime env (written by `configure.sh` from `config.env`):
 | `LLM_MODEL_NAME` | comma-separated; first = default |
 | `LLM_COMPLETION_MODEL` | optional model for shared inline completion |
 | `LLM_REVIEW_MAX_TOKENS` | review answer budget (max_tokens + reserved room); empty = 12000 |
+| `LLM_REVIEW_PREFILL_TPS` | prefill tokens/sec, only for the review progress estimate (default 80) |
+| `LLM_REVIEW_GEN_TPS` | generation tokens/sec, only for the review progress estimate (default 4) |
 | `LLM_ALLOW_USER_SETTINGS` | `true` = users may bring their own key (below) |
 | `LLM_KEY_SECRET` | auto-generated/persisted by `configure.sh`; encrypts user keys |
 | `LLM_ADMIN_SETTINGS_PATH` | admin-settings JSON path (persistent volume) |
@@ -128,6 +130,11 @@ report.
   extra requests queue and the UI shows the position. A queued or running review can
   be **cancelled**, and is cancelled automatically on page refresh/close. Switching
   the Chat/Review tab does **not** cancel it (both panes stay mounted).
+- **Progress.** While running, the pane shows a phase label ("Reading the document"
+  then "Writing the report") and an estimated progress bar with elapsed time. The
+  review is one blocking call with no exact percentage, so the bar is an estimate
+  from the backend throughput (`LLM_REVIEW_PREFILL_TPS` / `LLM_REVIEW_GEN_TPS`);
+  elapsed time is exact. A wrong estimate only skews the bar, never the result.
 - **Guards.** The whole prompt (document + rubric + system + output room) is budgeted
   against Max context tokens; an over-long project is refused (`too_long`) instead of
   silently truncated. The output room reserved (and the model's `max_tokens`) is

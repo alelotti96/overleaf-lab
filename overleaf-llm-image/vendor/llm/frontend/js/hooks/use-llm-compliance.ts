@@ -53,6 +53,18 @@ export interface ComplianceError {
 // overleaf-lab: the phase drives the whole pane UI.
 export type CompliancePhase = 'idle' | 'queued' | 'running' | 'done' | 'error'
 
+// overleaf-lab: live progress estimate for a running review. The review is one long
+// blocking model call, so there is no exact percentage: elapsedMs is exact, but the
+// total is an estimate from the backend's throughput. 'reading' is the prefill phase
+// (the model reads the whole document, the long output-less part), 'writing' is when
+// it produces the report. The pane renders this as a moving bar with a phase label.
+export interface ReviewProgress {
+    phase: 'preparing' | 'reading' | 'writing'
+    fraction: number // 0..1
+    elapsedMs: number
+    estimatedTotalMs: number
+}
+
 // overleaf-lab: normalized error info the pane renders. The code lives in
 // `errorCode` (from either the start body's `error` or the status body's
 // `errorCode`), so the pane reads a single field.
@@ -169,6 +181,7 @@ export const useLLMCompliance = () => {
     const [position, setPosition] = useState(0)
     const [result, setResult] = useState<ComplianceResult | null>(null)
     const [errorInfo, setErrorInfo] = useState<ComplianceErrorInfo | null>(null)
+    const [progress, setProgress] = useState<ReviewProgress | null>(null)
 
     // overleaf-lab: refs so async callbacks and the unload handler always see the
     // current values without re-subscribing.
@@ -180,6 +193,23 @@ export const useLLMCompliance = () => {
     // overleaf-lab: keep the phase ref in sync for the beforeunload handler.
     useEffect(() => {
         phaseRef.current = phase
+    }, [phase])
+
+    // overleaf-lab: advance the progress bar smoothly between the 2s status polls so
+    // it does not jump. Each poll re-syncs elapsedMs from the server (authoritative);
+    // between polls we tick it forward locally. Capped just under 100% until 'done'.
+    useEffect(() => {
+        if (phase !== 'running') return undefined
+        const id = window.setInterval(() => {
+            setProgress(prev => {
+                if (!prev || prev.estimatedTotalMs <= 0) return prev
+                const elapsedMs = prev.elapsedMs + 1000
+                // Same 0.95 cap the server uses, so a poll never snaps the bar back.
+                const fraction = Math.min(0.95, elapsedMs / prev.estimatedTotalMs)
+                return { ...prev, elapsedMs, fraction }
+            })
+        }, 1000)
+        return () => window.clearInterval(id)
     }, [phase])
 
     const stopPolling = useCallback(() => {
@@ -271,15 +301,41 @@ export const useLLMCompliance = () => {
                     case 'queued':
                         setPhase('queued')
                         setPosition(typeof json.position === 'number' ? json.position : 0)
+                        setProgress(null)
                         break
                     case 'running':
                         setPhase('running')
+                        if (
+                            typeof json.estimatedTotalMs === 'number' &&
+                            json.estimatedTotalMs > 0
+                        ) {
+                            setProgress({
+                                phase:
+                                    json.phase === 'writing' || json.phase === 'reading'
+                                        ? json.phase
+                                        : 'reading',
+                                fraction:
+                                    typeof json.progress === 'number' ? json.progress : 0,
+                                elapsedMs:
+                                    typeof json.elapsedMs === 'number' ? json.elapsedMs : 0,
+                                estimatedTotalMs: json.estimatedTotalMs,
+                            })
+                        } else {
+                            // Still assembling the document: no estimate yet.
+                            setProgress({
+                                phase: 'preparing',
+                                fraction: 0,
+                                elapsedMs: 0,
+                                estimatedTotalMs: 0,
+                            })
+                        }
                         break
                     case 'done':
                         stopPolling()
                         jobIdRef.current = null
                         setResult(json.result as ComplianceResult)
                         setErrorInfo(null)
+                        setProgress(null)
                         setPhase('done')
                         break
                     case 'error':
@@ -291,11 +347,13 @@ export const useLLMCompliance = () => {
                             documentTokensEstimate: json.documentTokensEstimate,
                             maxContextTokens: json.maxContextTokens,
                         })
+                        setProgress(null)
                         setPhase('error')
                         break
                     case 'cancelled':
                         stopPolling()
                         jobIdRef.current = null
+                        setProgress(null)
                         setPhase('idle')
                         break
                     default:
@@ -326,6 +384,7 @@ export const useLLMCompliance = () => {
         setResult(null)
         setErrorInfo(null)
         setPosition(0)
+        setProgress(null)
 
         try {
             const csrfToken = getMeta('ol-csrfToken')
@@ -369,6 +428,7 @@ export const useLLMCompliance = () => {
         stopPolling()
         setPhase('idle')
         setPosition(0)
+        setProgress(null)
         jobIdRef.current = null
         if (!jobId) return
 
@@ -451,6 +511,7 @@ export const useLLMCompliance = () => {
         setSelectedRubricId,
         phase,
         position,
+        progress,
         result,
         errorInfo,
         runReview,
