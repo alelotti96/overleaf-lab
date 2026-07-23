@@ -529,6 +529,9 @@ EOF
         if [ -n "${LLM_COMPLETION_MODEL}" ]; then
             echo "LLM_COMPLETION_MODEL=${LLM_COMPLETION_MODEL}" >> overleaf-toolkit/config/variables.env
         fi
+        if [ -n "${LLM_REVIEW_MAX_TOKENS}" ]; then
+            echo "LLM_REVIEW_MAX_TOKENS=${LLM_REVIEW_MAX_TOKENS}" >> overleaf-toolkit/config/variables.env
+        fi
     fi
 
     # Replace variables in variables.env

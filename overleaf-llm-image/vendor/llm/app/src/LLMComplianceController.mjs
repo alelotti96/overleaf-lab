@@ -16,6 +16,45 @@ let running = false // one review at a time
 // user last looked at the panel, so the retention must be generous.
 const JOB_TTL_MS = 30 * 60 * 1000
 
+// overleaf-lab: token budget for the review's JSON answer. It is BOTH the hard
+// max_tokens sent to the model AND the room the context-window guard reserves for the
+// answer (so raising it slightly lowers the largest single-pass document). A thorough
+// review of a big rubric emits many structured items, so the default is generous;
+// tune it via LLM_REVIEW_MAX_TOKENS without an image rebuild.
+const REVIEW_MAX_TOKENS =
+    Number.parseInt(process.env.LLM_REVIEW_MAX_TOKENS, 10) > 0
+        ? Number.parseInt(process.env.LLM_REVIEW_MAX_TOKENS, 10)
+        : 12000
+
+// overleaf-lab: JSON Schema for the review answer, enforced by the backend via
+// response_format so the model is CONSTRAINED to emit exactly this shape (llama.cpp
+// and OpenAI both support json_schema). This removes the "No JSON object found"
+// failure class by construction and, because prose is forbidden, also stops a
+// reasoning model from spending the whole answer budget on internal thinking.
+// extractJson below is kept only as a defensive fallback for a backend that ignores
+// the field. The fields mirror what the parser reads (see performReview).
+const REVIEW_JSON_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+        items: {
+            type: 'array',
+            items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    requirement: { type: 'string' },
+                    status: { type: 'string', enum: ['ok', 'partial', 'missing', 'na'] },
+                    evidence: { type: 'string' },
+                    suggestion: { type: 'string' },
+                },
+                required: ['requirement', 'status', 'evidence', 'suggestion'],
+            },
+        },
+    },
+    required: ['items'],
+}
+
 // overleaf-lab: the compliance reviewer system prompt now lives in LLMPrompts.mjs as
 // DEFAULT_REVIEW_SYSTEM_PROMPT and is resolved per review via getLLMPrompts() so a
 // super-admin override takes effect. See performReview below.
@@ -190,12 +229,11 @@ async function performReview(job) {
     // answer. The rubric can be large, so it must count too, otherwise the document
     // could pass here and the full prompt still overflow.
     const documentTokensEstimate = estimateTokens(assembled)
-    const OUTPUT_RESERVE = 6000 // overleaf-lab: max_tokens for the review answer
     const promptTokensEstimate =
         documentTokensEstimate +
         estimateTokens(rubric.guidelines) +
         estimateTokens(prompts.reviewSystemPrompt)
-    if (promptTokensEstimate + OUTPUT_RESERVE > maxContextTokens) {
+    if (promptTokensEstimate + REVIEW_MAX_TOKENS > maxContextTokens) {
         return {
             type: 'error',
             errorCode: 'too_long',
@@ -251,8 +289,21 @@ async function performReview(job) {
             { role: 'system', content: prompts.reviewSystemPrompt },
             { role: 'user', content: userContent },
         ],
-        max_tokens: 6000,
+        max_tokens: REVIEW_MAX_TOKENS,
         temperature: 0.2,
+        // overleaf-lab: constrain the answer to the review JSON shape (see
+        // REVIEW_JSON_SCHEMA). Guarantees parseable output and, because prose is
+        // forbidden, prevents a reasoning model from burning the budget on thinking.
+        // enable_thinking:false for a local reasoning model is handled at the router
+        // (llama-only), not here, so this stays portable to cloud backends.
+        response_format: {
+            type: 'json_schema',
+            json_schema: {
+                name: 'compliance_review',
+                strict: true,
+                schema: REVIEW_JSON_SCHEMA,
+            },
+        },
     }
 
     // overleaf-lab: 60 min timeout. The review is async (the client polls the job

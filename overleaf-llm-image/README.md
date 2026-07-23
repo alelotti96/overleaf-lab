@@ -58,6 +58,7 @@ Runtime env (written by `configure.sh` from `config.env`):
 | `LLM_API_KEY` | bearer token (empty for a no-auth local server) |
 | `LLM_MODEL_NAME` | comma-separated; first = default |
 | `LLM_COMPLETION_MODEL` | optional model for shared inline completion |
+| `LLM_REVIEW_MAX_TOKENS` | review answer budget (max_tokens + reserved room); empty = 12000 |
 | `LLM_ALLOW_USER_SETTINGS` | `true` = users may bring their own key (below) |
 | `LLM_KEY_SECRET` | auto-generated/persisted by `configure.sh`; encrypts user keys |
 | `LLM_ADMIN_SETTINGS_PATH` | admin-settings JSON path (persistent volume) |
@@ -129,10 +130,18 @@ report.
   the Chat/Review tab does **not** cancel it (both panes stay mounted).
 - **Guards.** The whole prompt (document + rubric + system + output room) is budgeted
   against Max context tokens; an over-long project is refused (`too_long`) instead of
-  silently truncated. If a specific review model is configured, its presence is
-  verified against the backend `/models` before running (`model_unavailable`
-  otherwise). One-shot only for now; section chunking for very long theses is a
-  possible v2.
+  silently truncated. The output room reserved (and the model's `max_tokens`) is
+  `LLM_REVIEW_MAX_TOKENS` (default 12000). If a specific review model is configured,
+  its presence is verified against the backend `/models` before running
+  (`model_unavailable` otherwise). One-shot only for now; section chunking for very
+  long theses is a possible v2.
+- **Structured output.** The request pins `response_format` to a JSON schema, so a
+  backend that supports it (llama.cpp, OpenAI) is constrained to emit exactly the
+  per-requirement shape. That guarantees parseable output and, since prose is
+  forbidden, keeps a reasoning model from spending the whole budget on internal
+  thinking. For a local reasoning model, also turn thinking off at the router
+  (`CHAT_TEMPLATE_KWARGS={"enable_thinking":false}`) since the two can otherwise
+  conflict in the chat template; validate once against your model after building.
 - **Routes** (all project-scoped, login required): `GET .../llm/compliance/rubrics`,
   `POST .../llm/compliance/start`, `GET .../llm/compliance/status/:jobId`,
   `POST .../llm/compliance/cancel/:jobId`. Rubrics + review model + max context live
