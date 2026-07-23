@@ -16,6 +16,11 @@
 #     backends: comma-separated base URLs, each ending in /v1
 #               (or set LLAMA_BACKENDS; default is two local llama-server ports)
 #     port:     router listen port (or set ROUTER_PORT; default 18090)
+#
+#   Optional tuning (exported before running; pinned into the unit only if set):
+#     PROXY_TIMEOUT        backend response cap in seconds (router default 3600)
+#     EARLY_RESPONSE_WAIT  seconds before the early "200 + chunked" (default 240)
+#     HEARTBEAT_INTERVAL   seconds between heartbeat chunks (default 30)
 #===============================================================================
 
 set -euo pipefail
@@ -46,11 +51,22 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
+# Optional tuning: only pin these in the unit if the operator set them in the
+# environment; otherwise the router uses its own defaults (3600 / 240 / 30). Keeps
+# long CPU compliance reviews from being cut and heartbeats the client while they run.
+EXTRA_ENV=""
+for _v in PROXY_TIMEOUT EARLY_RESPONSE_WAIT HEARTBEAT_INTERVAL; do
+    if [ -n "${!_v:-}" ]; then
+        EXTRA_ENV="${EXTRA_ENV}Environment=${_v}=${!_v}"$'\n'
+    fi
+done
+
 echo "Installing systemd service 'llama-router' with:"
 echo "  backends: ${LLAMA_BACKENDS}"
 echo "  port:     ${ROUTER_PORT}"
 echo "  user:     ${RUN_USER}"
 echo "  script:   ${REPO_DIR}/scripts/llama-router.py"
+[ -n "$EXTRA_ENV" ] && printf '  tuning:   %s' "${EXTRA_ENV//Environment=/}"
 echo ""
 
 # Write (or overwrite) the systemd unit. Idempotent: re-running just refreshes it.
@@ -65,7 +81,7 @@ Type=simple
 User=${RUN_USER}
 Environment=LLAMA_BACKENDS=${LLAMA_BACKENDS}
 Environment=ROUTER_PORT=${ROUTER_PORT}
-ExecStart=/usr/bin/python3 ${REPO_DIR}/scripts/llama-router.py
+${EXTRA_ENV}ExecStart=/usr/bin/python3 ${REPO_DIR}/scripts/llama-router.py
 Restart=always
 RestartSec=5
 

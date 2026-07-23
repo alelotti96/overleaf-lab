@@ -11,11 +11,20 @@ Point Overleaf at the router instead of a single server:
     LLM_API_URL=http://<router-host>:18090/v1
 
 Config via environment variables:
-    LLAMA_BACKENDS   comma-separated OpenAI-compatible base URLs, each ending in /v1
-                     default: http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1
-    ROUTER_HOST      bind address (default 0.0.0.0)
-    ROUTER_PORT      bind port    (default 18090)
-    MODELS_TTL       seconds to cache the model->backend map (default 30)
+    LLAMA_BACKENDS       comma-separated OpenAI-compatible base URLs, each ending in /v1
+                         default: http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1
+    ROUTER_HOST          bind address (default 0.0.0.0)
+    ROUTER_PORT          bind port    (default 18090)
+    MODELS_TTL           seconds to cache the model->backend map (default 30)
+    PROXY_TIMEOUT        seconds to wait for a backend response (default 3600). A
+                         CPU compliance review of a large document is dominated by
+                         prompt processing and can take tens of minutes.
+    EARLY_RESPONSE_WAIT  seconds to wait for the backend before committing an early
+                         "200 + chunked" response and starting the heartbeat
+                         (default 240). Must stay below the client's header timeout.
+    HEARTBEAT_INTERVAL   seconds between heartbeat chunks once the early response is
+                         committed (default 30). Must stay below the client's idle
+                         body timeout.
 
 Routing: the request's "model" field decides the backend. Unknown model names
 (and the placeholder "default") fall back to the first reachable backend, which
@@ -25,10 +34,22 @@ has loaded. Unreachable backends are skipped, not fatal.
 Note: requests are proxied as a single request/response (the Overleaf module is
 non-streaming). If a client sets stream=true the SSE body is returned in one shot
 rather than incrementally.
+
+Slow-response handling: Node/undici (the Overleaf module's fetch) aborts at 300s
+if it receives no response headers (HeadersTimeoutError), and again on an idle
+body, regardless of any longer server-side timeout. A plain blocking proxy sends
+nothing until the backend finishes, so long reviews die at 300s even with a large
+PROXY_TIMEOUT. To avoid that, if the backend has not answered within
+EARLY_RESPONSE_WAIT the router commits "200 + Transfer-Encoding: chunked" up front
+and emits a whitespace chunk every HEARTBEAT_INTERVAL until the real body is ready
+(leading whitespace is valid JSON, so it does not corrupt the parsed response).
+Fast requests (chat, inline completion, connection test) answer well within
+EARLY_RESPONSE_WAIT and take the verbatim path, status code included.
 """
 
 import json
 import os
+import queue
 import threading
 import time
 import urllib.error
@@ -46,7 +67,9 @@ BACKENDS = [
 HOST = os.environ.get("ROUTER_HOST", "0.0.0.0")
 PORT = int(os.environ.get("ROUTER_PORT", "18090"))
 TTL = int(os.environ.get("MODELS_TTL", "30"))
-PROXY_TIMEOUT = 300  # seconds; chat can be slow on CPU
+PROXY_TIMEOUT = int(os.environ.get("PROXY_TIMEOUT", "3600"))  # backend response cap
+EARLY_RESPONSE_WAIT = int(os.environ.get("EARLY_RESPONSE_WAIT", "240"))  # commit 200 by now
+HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "30"))  # between heartbeats
 SCAN_TIMEOUT = 10  # seconds; querying /models
 
 _lock = threading.Lock()
@@ -102,6 +125,23 @@ def _pick_backend(model):
     return None
 
 
+def _proxy_worker(url, raw, headers, q):
+    """Run the (blocking, non-streaming) backend call and post one result to q:
+    ("ok", status, ctype, body)  - a real HTTP response, including 4xx/5xx from the
+                                   backend (delivered with its own status on the fast
+                                   path; delivered as-is under the early 200 otherwise)
+    ("err", message)             - a connection-level failure (-> 502 on the fast path)
+    """
+    req = urllib.request.Request(url, data=raw, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=PROXY_TIMEOUT) as resp:
+            q.put(("ok", resp.status, resp.headers.get("Content-Type", "application/json"), resp.read()))
+    except urllib.error.HTTPError as exc:
+        q.put(("ok", exc.code, exc.headers.get("Content-Type", "application/json"), exc.read()))
+    except Exception as exc:
+        q.put(("err", str(exc)))
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -111,6 +151,31 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _begin_chunked(self, ctype="application/json"):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+
+    def _write_chunk(self, data):
+        # Returns False if the client has gone away, so the caller can stop.
+        if not data:
+            return True
+        try:
+            self.wfile.write(b"%X\r\n" % len(data) + data + b"\r\n")
+            self.wfile.flush()
+            return True
+        except (BrokenPipeError, ConnectionResetError):
+            print("[router] client disconnected during chunked response", flush=True)
+            return False
+
+    def _end_chunked(self):
+        try:
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_GET(self):
         if self.path.rstrip("/").endswith("/models"):
@@ -140,19 +205,45 @@ class Handler(BaseHTTPRequestHandler):
         if auth:  # forward auth so a keyless local + an authenticated remote can coexist
             headers["Authorization"] = auth
 
-        req = urllib.request.Request(url, data=raw, headers=headers, method="POST")
+        # Run the backend call in a worker thread so we can start heartbeating if it
+        # is slow. The worker posts exactly one result (the module is non-streaming).
+        q = queue.Queue()
+        threading.Thread(target=_proxy_worker, args=(url, raw, headers, q), daemon=True).start()
+
+        # Fast path: if the backend answers within EARLY_RESPONSE_WAIT, forward it
+        # verbatim (status code included), exactly as a plain proxy would.
         try:
-            with urllib.request.urlopen(req, timeout=PROXY_TIMEOUT) as resp:
-                return self._send(
-                    resp.status, resp.read(), resp.headers.get("Content-Type", "application/json")
-                )
-        except urllib.error.HTTPError as exc:
-            return self._send(
-                exc.code, exc.read(), exc.headers.get("Content-Type", "application/json")
-            )
-        except Exception as exc:
-            print(f"[router] proxy error to {url}: {exc}", flush=True)
-            return self._send(502, json.dumps({"error": str(exc)}).encode("utf-8"))
+            result = q.get(timeout=EARLY_RESPONSE_WAIT)
+        except queue.Empty:
+            result = None
+        if result is not None:
+            kind = result[0]
+            if kind == "ok":
+                _, status, ctype, body = result
+                return self._send(status, body, ctype)
+            print(f"[router] proxy error to {url}: {result[1]}", flush=True)
+            return self._send(502, json.dumps({"error": result[1]}).encode("utf-8"))
+
+        # Slow path: nothing yet. Commit "200 + chunked" now (so undici sees response
+        # headers before its 300s deadline) and heartbeat until the body is ready.
+        self._begin_chunked()
+        while True:
+            try:
+                result = q.get(timeout=HEARTBEAT_INTERVAL)
+            except queue.Empty:
+                if not self._write_chunk(b" "):  # heartbeat; leading whitespace is valid JSON
+                    return
+                continue
+            if result[0] == "ok":
+                _, status, _ctype, body = result
+                if status >= 400:
+                    print(f"[router] late backend error {status} from {url}", flush=True)
+                self._write_chunk(body)
+            else:
+                print(f"[router] late proxy error to {url}: {result[1]}", flush=True)
+                self._write_chunk(json.dumps({"error": result[1]}).encode("utf-8"))
+            self._end_chunked()
+            return
 
     def log_message(self, *args):
         pass  # silence the default per-request logging
