@@ -220,7 +220,16 @@ class Handler(BaseHTTPRequestHandler):
         # keep the path after /v1 (e.g. /chat/completions, /completions)
         idx = self.path.find("/v1/")
         suffix = self.path[idx + len("/v1"):] if idx >= 0 else self.path
-        url = backend + suffix
+
+        # llama.cpp serves /tokenize (and /detokenize) at the SERVER ROOT, not under
+        # /v1, but a client that only knows the OpenAI-style base URL can only address
+        # them as <base>/v1/tokenize. Map those two back to the root so the Overleaf
+        # module can ask for an exact token count without being taught a second URL.
+        if suffix in ("/tokenize", "/detokenize"):
+            root = backend[: -len("/v1")] if backend.endswith("/v1") else backend
+            url = root.rstrip("/") + suffix
+        else:
+            url = backend + suffix
 
         # Inject the default chat_template_kwargs into completion requests that do
         # not set their own, then re-serialize (urllib recomputes Content-Length).
