@@ -175,6 +175,20 @@ the rubric is written directly controls the review quality:
   little as one token and the reported "rate" is pure request overhead; small samples
   only ever seed an empty calibration. `LLM_REVIEW_PREFILL_TPS` /
   `LLM_REVIEW_GEN_TPS`, when set, override the measurement.
+- **Deterministic scan hints.** An LLM attends over the whole prompt, but a single
+  pass cannot be TRUSTED to have checked every line for an absence claim ("no first
+  person anywhere"): in practice it asserts the absence and quotes a few well-behaved
+  examples. Mechanical patterns are grepped in code instead, exhaustively, and the
+  results ride the cached document prefix into every pass: environment/caption/ref/
+  cite counts the model can rely on, plus candidate hits (first-person Italian forms,
+  "figura seguente"-style relative references, "wikipedia") that it must judge in
+  context; the regexes over-capture on purpose (the noun "richiamo" matches the
+  -iamo verb pattern), context judgement being the model's half of the bargain. A
+  "none found" in the hints is a real mechanical verification, not model attention.
+  Admins can add their own scans from the settings page (**Extra scan patterns**, one
+  `Label :: regex` per line, case-insensitive, validated at save time): use them
+  whenever a rubric requirement is pattern-like (words to avoid, forbidden
+  constructs), so its verification stops depending on the model's reading.
 - **Adversarial verification of negative findings.** A false "missing" is the most
   harmful thing a review can produce (it sends the author hunting for problems that
   do not exist, e.g. a quantity flagged as uncited whose `\cite` sits right next to

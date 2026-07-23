@@ -193,6 +193,9 @@ export default function LLMAdminSettingsPage() {
     // overleaf-lab: budget for the review's JSON answer (the model's max_tokens and
     // the room reserved for it in the context check).
     const [reviewMaxTokens, setReviewMaxTokens] = useState<number>(parseInt((getMeta('ol-reviewMaxTokens') as string) || '12000', 10) || 12000)
+    // overleaf-lab: admin-defined mechanical scans for the review ("Label :: regex",
+    // one per line), fed to the model as exhaustive ground truth (scan hints).
+    const [scanPatterns, setScanPatterns] = useState<string>((getMeta('ol-scanPatterns') as string) || '')
     // overleaf-lab: per-feature enable/disable toggles. The metas use data-type='json'
     // so getMeta returns the parsed boolean; default to true when missing/undefined.
     const [chatEnabled, setChatEnabled] = useState<boolean>(getMeta('ol-chatEnabled') !== false)
@@ -247,6 +250,7 @@ export default function LLMAdminSettingsPage() {
                     reviewModel,
                     maxContextTokens,
                     reviewMaxTokens,
+                    scanPatterns,
                     chatEnabled,
                     completionEnabled,
                     reviewEnabled,
@@ -838,6 +842,28 @@ export default function LLMAdminSettingsPage() {
                                         {t(
                                             'review_max_tokens_help',
                                             'Upper limit for the answer of each review pass. The actual room adapts to what the document leaves free inside Max context tokens, so a large value here never blocks a long document; it only allows more thorough per-requirement analyses when there is room.'
+                                        )}
+                                    </OLFormText>
+                                </OLFormGroup>
+
+                                {/* overleaf-lab: admin-defined mechanical scans (scan hints) */}
+                                <OLFormGroup controlId="llm-scan-patterns" style={{ marginTop: '1rem', marginBottom: 0 }}>
+                                    <OLFormLabel>
+                                        {t('scan_patterns', 'Extra scan patterns (one per line)')}
+                                    </OLFormLabel>
+                                    <OLFormControl
+                                        as="textarea"
+                                        rows={4}
+                                        value={scanPatterns}
+                                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                                            setScanPatterns(e.target.value)
+                                        }
+                                        placeholder={'Anglicismi :: \\b(performance|feedback|layout)\\b\nNumeri di figura a mano :: \\bFigura [0-9]'}
+                                    />
+                                    <OLFormText>
+                                        {t(
+                                            'scan_patterns_help',
+                                            'Each line adds a mechanical scan to the review, as "Label :: regex" (case-insensitive; a plain word works too). The whole LaTeX source is scanned in code, exhaustively, and the matches are handed to the review model as candidates to judge in context. Use it for pattern-like requirements (words to avoid, forbidden constructs): unlike the model\'s own reading, a scan cannot overlook an occurrence.'
                                         )}
                                     </OLFormText>
                                 </OLFormGroup>

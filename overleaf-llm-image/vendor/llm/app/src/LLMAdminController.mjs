@@ -80,6 +80,7 @@ async function buildDisplaySettings() {
         reviewModel: settings.reviewModel || '',
         maxContextTokens: settings.maxContextTokens || 32000,
         reviewMaxTokens: settings.reviewMaxTokens || DEFAULT_REVIEW_MAX_TOKENS,
+        scanPatterns: settings.scanPatterns || '',
         // overleaf-lab: per-feature enable flags; absent field defaults to true so
         // existing installs keep every feature on.
         chatEnabled: settings.chatEnabled !== false,
@@ -121,6 +122,7 @@ async function saveAdminSettings(req, res) {
         reviewModel,
         maxContextTokens,
         reviewMaxTokens,
+        scanPatterns,
         chatEnabled,
         completionEnabled,
         reviewEnabled,
@@ -243,6 +245,36 @@ async function saveAdminSettings(req, res) {
         sanitizedReviewMaxTokens = existing.reviewMaxTokens || DEFAULT_REVIEW_MAX_TOKENS
     }
 
+    // overleaf-lab: validate the extra scan patterns ("Label :: regex" per line) so
+    // the admin learns about a broken regex at save time, not from a silently
+    // hint-less review. The reviewer side skips invalid lines anyway (defense in
+    // depth for settings written by other means).
+    if (scanPatterns !== undefined && typeof scanPatterns !== 'string') {
+        return res.status(400).json({ error: 'scanPatterns must be a string' })
+    }
+    if (typeof scanPatterns === 'string') {
+        if (scanPatterns.length > 4000) {
+            return res.status(400).json({ error: 'scanPatterns must be 4000 characters or fewer' })
+        }
+        for (const rawLine of scanPatterns.split('\n')) {
+            const line = rawLine.trim()
+            if (!line) {
+                continue
+            }
+            const sep = line.indexOf('::')
+            const body = (sep === -1 ? line : line.slice(sep + 2)).trim()
+            if (!body) {
+                continue
+            }
+            try {
+                // eslint-disable-next-line no-new
+                new RegExp(body, 'i')
+            } catch (err) {
+                return res.status(400).json({ error: `Invalid scan pattern regex: ${body}` })
+            }
+        }
+    }
+
     // overleaf-lab: sanitize the action prompt overrides. When provided, keep only
     // known keys with string values, each capped at 4000 chars. When not provided,
     // keep the existing object untouched.
@@ -274,6 +306,7 @@ async function saveAdminSettings(req, res) {
         reviewModel: typeof reviewModel === 'string' ? reviewModel : (existing.reviewModel || ''),
         maxContextTokens: sanitizedMaxContextTokens,
         reviewMaxTokens: sanitizedReviewMaxTokens,
+        scanPatterns: typeof scanPatterns === 'string' ? scanPatterns : (existing.scanPatterns || ''),
         // overleaf-lab: omitted flag keeps the existing value (default true).
         chatEnabled: typeof chatEnabled === 'boolean' ? chatEnabled : (existing.chatEnabled !== false),
         completionEnabled: typeof completionEnabled === 'boolean' ? completionEnabled : (existing.completionEnabled !== false),
@@ -325,6 +358,7 @@ export async function getAdminLLMSettings() {
         reviewModel: settings.reviewModel || '',
         maxContextTokens: settings.maxContextTokens || 32000,
         reviewMaxTokens: settings.reviewMaxTokens || DEFAULT_REVIEW_MAX_TOKENS,
+        scanPatterns: settings.scanPatterns || '',
         // overleaf-lab: per-feature enable flags (absent field defaults to true).
         chatEnabled: settings.chatEnabled !== false,
         completionEnabled: settings.completionEnabled !== false,

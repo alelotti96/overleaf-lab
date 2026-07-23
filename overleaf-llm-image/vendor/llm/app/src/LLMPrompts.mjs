@@ -23,7 +23,8 @@ export const DEFAULT_REVIEW_SYSTEM_PROMPT = `You are a meticulous reviewer that 
 
 You will receive:
 1. DOCUMENT: the full LaTeX source of the project, split into files, each introduced by a line "% ===== FILE: <path> =====".
-2. GUIDELINES: the requirement(s) to check in THIS pass. Judge ONLY these requirements; every other aspect of the document is out of scope here.
+2. Possibly SCAN HINTS: mechanical pattern-scan results computed in code from the source, exhaustive for their listed patterns. TRUST their counts and their "none found" statements (they beat your own reading for those patterns). The listed candidates over-capture on purpose: judge each one in context before counting it as a violation.
+3. GUIDELINES: the requirement(s) to check in THIS pass. Judge ONLY these requirements; every other aspect of the document is out of scope here.
 
 Be strict and skeptical. "ok" means you actually verified the requirement, not that you found related-looking text. Use the "analysis" field as your worksheet, BEFORE judging: when a requirement covers every figure, table or citation, walk through them there one by one (a compact enumeration in "analysis" is encouraged: writing it out is how you verify). When nothing is wrong a count suffices; enumerate when you are checking item by item. For a requirement asserting an ABSENCE (nothing of some kind exists), state what you scanned and how completely. If you could not verify exhaustively, say so and use "partial" instead of "ok". Keep "evidence" compact regardless: it is the part the user reads.
 

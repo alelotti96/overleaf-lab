@@ -208,6 +208,104 @@ Then return ONE corrected item: keep only the violations that survive your check
 Return ONLY a JSON object, with no preamble and no code fences, in exactly this shape:
 {"items":[{"analysis":"what you re-checked and what you found","requirement":"the requirement, unchanged","status":"ok","evidence":"the surviving violations, or why the finding was rejected","suggestion":"a concrete suggestion (empty string when status is ok)"}]}`
 
+// overleaf-lab: deterministic scan hints, computed mechanically from the stripped
+// source and appended to the document in every pass. An LLM attends over the whole
+// prompt, but a single forward pass cannot be TRUSTED to have checked every line for
+// an absence claim ("no first person anywhere"): in practice it asserts the absence
+// and quotes a few well-behaved examples. These patterns are exactly greppable, so we
+// scan them in code (exhaustive by construction) and hand the model ground truth:
+// counts it can rely on, and candidate violations it must judge in context. The
+// regexes deliberately OVER-capture (e.g. the noun "richiamo" matches the -iamo verb
+// pattern): context judgement is the model's half of the bargain, exhaustiveness is
+// ours.
+function buildScanHints(strippedDocs, customPatterns = []) {
+    const count = re =>
+        strippedDocs.reduce((n, d) => n + (d.text.match(re) || []).length, 0)
+    const collect = (re, cap) => {
+        const hits = []
+        for (const d of strippedDocs) {
+            for (const line of d.text.split('\n')) {
+                if (hits.length >= cap) {
+                    return hits
+                }
+                if (re.test(line)) {
+                    hits.push(`${d.path}: "${line.trim().slice(0, 120)}"`)
+                }
+            }
+        }
+        return hits
+    }
+
+    const figures = count(/\\begin\{figure/g)
+    const tables = count(/\\begin\{(?:table|longtable)/g)
+    const captions = count(/\\caption/g)
+    const equations = count(/\\begin\{(?:equation|align|gather|multline)/g)
+    const refs = count(/\\ref\{/g)
+    const cites = count(/\\cite\{/g)
+    const listings = count(/\\begin\{(?:lstlisting|verbatim)/g)
+
+    const firstPerson = collect(
+        /\b(?:io|noi|mio|mia|miei|mie|nostro|nostra|nostri|nostre|ho)\b|\b[a-zA-Zà-ù]{2,}iamo\b/i,
+        25
+    )
+    const relativeRefs = collect(
+        /\b(?:figura|tabella|immagine|grafico)\s+(?:seguente|precedente|sottostante|soprastante|sopra|sotto)\b/i,
+        10
+    )
+    const wikipedia = collect(/wikipedia/i, 10)
+
+    const fmt = (label, hits) =>
+        hits.length === 0
+            ? `- ${label}: none found (mechanically verified over the whole source)`
+            : `- ${label} (${hits.length} candidate${
+                  hits.length === 1 ? '' : 's'
+              }, judge each in context): ${hits.join(' | ')}`
+
+    const lines = [
+        'SCAN HINTS (computed mechanically from the LaTeX source; exhaustive for the listed patterns):',
+        `- Counts: ${figures} figure environments, ${tables} table environments, ${captions} \\caption, ${equations} equation environments, ${refs} \\ref, ${cites} \\cite, ${listings} code listing environments.`,
+        fmt('First-person Italian forms (io/noi/ho/-iamo verbs/possessives)', firstPerson),
+        fmt('Relative figure/table references ("figura seguente" and similar)', relativeRefs),
+        fmt('Occurrences of "wikipedia"', wikipedia),
+    ]
+    // overleaf-lab: admin-defined extra scans (see parseScanPatterns), same contract
+    // as the built-ins: exhaustive scan by code, context judgement by the model.
+    for (const { label, regex } of customPatterns) {
+        lines.push(fmt(label, collect(regex, 15)))
+    }
+    return lines.join('\n')
+}
+
+// overleaf-lab: parse the admin-defined extra scan patterns from the settings page.
+// One per line, "Label :: regex" (case-insensitive); a line without "::" is used as
+// both label and pattern, so a plain word works as-is. The save endpoint already
+// refuses invalid regexes, but settings written by other means must not break a
+// review, so invalid lines are skipped here too. Capped to keep the hint block small.
+function parseScanPatterns(text) {
+    const patterns = []
+    for (const rawLine of String(text || '').split('\n')) {
+        if (patterns.length >= 20) {
+            break
+        }
+        const line = rawLine.trim()
+        if (!line) {
+            continue
+        }
+        const sep = line.indexOf('::')
+        const label = (sep === -1 ? line : line.slice(0, sep)).trim()
+        const body = (sep === -1 ? line : line.slice(sep + 2)).trim()
+        if (!body) {
+            continue
+        }
+        try {
+            patterns.push({ label: label || body, regex: new RegExp(body, 'i') })
+        } catch (err) {
+            logger.debug({ line }, '[LLM] compliance: skipping invalid scan pattern')
+        }
+    }
+    return patterns
+}
+
 // overleaf-lab: split the rubric guidelines into individually checkable requirements,
 // one model pass each. Rule (documented in the admin UI): one requirement per numbered
 // line ("1.", "2)", ...); continuation lines belong to the requirement above; text
@@ -478,11 +576,16 @@ async function performReview(job) {
     })
 
     // overleaf-lab: strip LaTeX comments per source doc BEFORE prefixing the FILE
-    // header, so the header lines (which themselves start with `%`) survive.
-    const parts = docs.map(
-        d => `% ===== FILE: ${d.path} =====\n${stripLatexComments(d.text)}`
-    )
+    // header, so the header lines (which themselves start with `%`) survive. Keep the
+    // stripped per-file texts: the deterministic scan hints are computed on exactly
+    // what the model will see.
+    const strippedDocs = docs.map(d => ({
+        path: d.path,
+        text: stripLatexComments(d.text),
+    }))
+    const parts = strippedDocs.map(d => `% ===== FILE: ${d.path} =====\n${d.text}`)
     const assembled = parts.join('\n\n')
+    const scanHints = buildScanHints(strippedDocs, parseScanPatterns(admin.scanPatterns))
 
     if (!assembled.trim()) {
         return {
@@ -506,12 +609,13 @@ async function performReview(job) {
     // it has no /tokenize (see countPromptTokens).
     const heuristicPromptTokens =
         estimateTokens(assembled) +
+        estimateTokens(scanHints) +
         estimateTokens(rubric.guidelines) +
         estimateTokens(prompts.reviewSystemPrompt)
     const exactPromptTokens = await countPromptTokens(
         llmApiUrl,
         llmApiKey,
-        `${prompts.reviewSystemPrompt}\n${rubric.guidelines}\n${assembled}`
+        `${prompts.reviewSystemPrompt}\n${rubric.guidelines}\n${assembled}\n${scanHints}`
     )
     const promptTokens = exactPromptTokens || heuristicPromptTokens
     logger.debug(
@@ -585,8 +689,9 @@ async function performReview(job) {
     // Build the per-pass request pieces. The document comes FIRST in the user message
     // so the llama.cpp prompt cache can reuse its prefill across passes: with the
     // requirement appended AFTER the document, passes 2..N only pay for their own few
-    // hundred tokens instead of re-reading the whole project.
-    const documentBlock = `DOCUMENT:\n${assembled}\n\n`
+    // hundred tokens instead of re-reading the whole project. The scan hints are
+    // constant per job, so they live in the shared cached prefix too.
+    const documentBlock = `DOCUMENT:\n${assembled}\n\n${scanHints}\n\n`
     const guidelinesFor = requirement =>
         `GUIDELINES (check ONLY these):\n${preamble ? `${preamble}\n` : ''}${requirement}`
 
