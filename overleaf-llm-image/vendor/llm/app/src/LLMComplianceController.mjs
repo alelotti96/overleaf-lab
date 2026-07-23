@@ -186,6 +186,28 @@ const REVIEW_SUMMARY_SCHEMA = {
     required: ['summary'],
 }
 
+// overleaf-lab: cap on how many negative findings get an adversarial verification
+// pass (each costs one cached-prefill model call; negatives are normally few).
+const VERIFY_MAX_FINDINGS = 8
+
+// overleaf-lab: system prompt for the verification pass. Not admin-editable on
+// purpose: it is an internal safeguard, not review policy. The reviewer's job is to
+// find violations; the verifier's job is to REFUTE them, because a false "missing"
+// sends the author hunting for problems that do not exist (observed in practice: a
+// quantity flagged as uncited that had its \cite right next to it).
+const VERIFY_SYSTEM_PROMPT = `You are adversarially double-checking ONE finding produced by a compliance review of a LaTeX document. The finding claims a guideline requirement is violated (status "missing" or "partial"). Your job is to try to REFUTE it: a false violation wastes the author's time and must not survive.
+
+You receive the DOCUMENT (files marked by "% ===== FILE: <path> =====" headers) and the FINDING as JSON.
+
+For EVERY piece of quoted evidence in the finding, check in the DOCUMENT:
+1. Does the quoted text actually appear (verbatim or nearly)?
+2. Does it actually violate the requirement in context? For a missing-citation claim, read the full sentence and its neighbours: a \\cite nearby refutes it. For an unsupported-qualitative-claim finding, numbers or a citation in the surrounding text refute it.
+
+Then return ONE corrected item: keep only the violations that survive your check and drop the refuted ones from the evidence. If nothing survives, set status "ok" and let the evidence say the original finding did not hold up. If only part survives, choose "partial" or "missing" accordingly. Keep the evidence under about 500 characters. Use the same language as the finding.
+
+Return ONLY a JSON object, with no preamble and no code fences, in exactly this shape:
+{"items":[{"analysis":"what you re-checked and what you found","requirement":"the requirement, unchanged","status":"ok","evidence":"the surviving violations, or why the finding was rejected","suggestion":"a concrete suggestion (empty string when status is ok)"}]}`
+
 // overleaf-lab: split the rubric guidelines into individually checkable requirements,
 // one model pass each. Rule (documented in the admin UI): one requirement per numbered
 // line ("1.", "2)", ...); continuation lines belong to the requirement above; text
@@ -782,6 +804,125 @@ async function performReview(job) {
     }
     job.passesDone = requirements.length
     job.currentRequirement = ''
+
+    // overleaf-lab: adversarial verification of the NEGATIVE findings. Reviewer
+    // verdicts on the hardest checks (e.g. matching every number with a nearby \cite
+    // across a whole thesis) are noisy, and a false "missing" is the most harmful
+    // outcome a review can produce. Each missing/partial item gets one dedicated pass
+    // (riding the same document prompt-cache prefix) where the model must try to
+    // refute the finding; refuted evidence is dropped, fully refuted findings flip to
+    // ok. Best-effort: a failed verification keeps the original finding. OK items are
+    // not re-verified, since doubling the whole review's cost to double-check its
+    // successes is not worth it.
+    const indicesToVerify = []
+    for (const [k, item] of allItems.entries()) {
+        if (
+            indicesToVerify.length < VERIFY_MAX_FINDINGS &&
+            (item.status === 'missing' || item.status === 'partial')
+        ) {
+            indicesToVerify.push(k)
+        }
+    }
+    if (indicesToVerify.length > 0) {
+        // Extend the pass count so the progress bar reports the extra work honestly.
+        job.passesTotal = requirements.length + indicesToVerify.length
+        for (const idx of indicesToVerify) {
+            if (job.status === 'cancelled') {
+                throw new Error('review cancelled between passes')
+            }
+            const finding = allItems[idx]
+            job.currentRequirement = `Double-check: ${finding.requirement}`
+                .replace(/\s+/g, ' ')
+                .slice(0, 160)
+
+            const verifyBody = {
+                model: reviewModel,
+                messages: [
+                    { role: 'system', content: VERIFY_SYSTEM_PROMPT },
+                    {
+                        role: 'user',
+                        content:
+                            documentBlock +
+                            `FINDING (verify it against the DOCUMENT above):\n${JSON.stringify(
+                                {
+                                    requirement: finding.requirement,
+                                    status: finding.status,
+                                    evidence: finding.evidence,
+                                    suggestion: finding.suggestion,
+                                }
+                            )}`,
+                    },
+                ],
+                max_tokens: perPassBudget,
+                // Deterministic: the verifier re-reads facts, it does not create.
+                temperature: 0,
+                response_format: {
+                    type: 'json_schema',
+                    json_schema: {
+                        name: 'compliance_review',
+                        strict: true,
+                        schema: REVIEW_ITEMS_SCHEMA,
+                    },
+                },
+            }
+
+            const timeout = setTimeout(() => {
+                if (job.controller) {
+                    job.controller.abort()
+                }
+            }, passTimeoutMs())
+            try {
+                const response = await fetch(`${llmApiUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers: chatHeaders,
+                    body: JSON.stringify(verifyBody),
+                    signal: job.controller ? job.controller.signal : undefined,
+                })
+                if (response.ok) {
+                    const data = await response.json()
+                    recordTimings(data && data.timings)
+                    const content = stripThinkTags(
+                        data?.choices?.[0]?.message?.content || ''
+                    )
+                    try {
+                        const parsed = extractJson(content)
+                        const verified = Array.isArray(parsed.items)
+                            ? parsed.items[0]
+                            : null
+                        if (
+                            verified &&
+                            ['ok', 'partial', 'missing', 'na'].includes(verified.status)
+                        ) {
+                            allItems[idx] = {
+                                // The requirement is not the verifier's to rewrite.
+                                requirement: finding.requirement,
+                                status: verified.status,
+                                evidence: String(verified.evidence || finding.evidence),
+                                suggestion: String(verified.suggestion || ''),
+                            }
+                        }
+                    } catch (err) {
+                        logger.warn(
+                            { projectId, err },
+                            '[LLM] compliance: unparseable verification, keeping the finding'
+                        )
+                    }
+                }
+            } catch (err) {
+                if (job.status === 'cancelled' || (err && err.name === 'AbortError')) {
+                    throw err
+                }
+                logger.warn(
+                    { projectId, err },
+                    '[LLM] compliance: verification pass failed, keeping the finding'
+                )
+            } finally {
+                clearTimeout(timeout)
+            }
+            job.passesDone += 1
+        }
+        job.currentRequirement = ''
+    }
 
     // overleaf-lab: synthesize the overall summary from the ITEMS ONLY (no document,
     // so this call is small and cheap). Best-effort: a failure leaves the summary

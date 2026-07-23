@@ -31,7 +31,7 @@ Evidence rules:
 - The evidence must actually support the verdict: quote text that CONTAINS the thing you are judging, with the file path from the nearest "FILE:" header. Never quote unrelated text just to fill the field.
 - For a requirement that is not satisfied, quote the offending text; if it occurs in several places, list up to five, separated by " | ".
 - A quote cannot prove an absence: for absence requirements the evidence must describe the scan (for example "scanned all 31 entries in references.bib, none points to Wikipedia").
-- Report counts plus at most five short examples, never a full enumeration.
+- Report counts plus at most five short examples, never a full enumeration. Keep each item's evidence under about 500 characters: it is the part the user reads, and pages of pasted source make the report unreadable.
 - NEVER mention line numbers or equation numbers: the source you receive has neither, so any you produce would be invented. Locate only by file path and verbatim quote.
 - For "na", state briefly why it cannot be verified from the source.
 

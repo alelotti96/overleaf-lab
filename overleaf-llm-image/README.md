@@ -175,6 +175,16 @@ the rubric is written directly controls the review quality:
   little as one token and the reported "rate" is pure request overhead; small samples
   only ever seed an empty calibration. `LLM_REVIEW_PREFILL_TPS` /
   `LLM_REVIEW_GEN_TPS`, when set, override the measurement.
+- **Adversarial verification of negative findings.** A false "missing" is the most
+  harmful thing a review can produce (it sends the author hunting for problems that
+  do not exist, e.g. a quantity flagged as uncited whose `\cite` sits right next to
+  it). So every requirement that comes out "missing" or "partial" gets one extra
+  pass (capped at 8, riding the same document cache prefix, temperature 0) where the
+  model must try to REFUTE the finding against the document: refuted evidence is
+  dropped, fully refuted findings flip back to "ok". Best-effort: if verification
+  fails, the original finding stands. OK items are not re-verified. The progress bar
+  extends honestly ("Double-check: <requirement>", e.g. 22/24). The verifier prompt
+  is internal, not admin-editable.
 - **Per-pass failure containment.** A pass that fails (backend refusal, unparseable
   answer) marks only ITS requirement as "n.a." with the reason; the other passes
   still run. An unusable answer (typically a broad requirement whose analysis blows
