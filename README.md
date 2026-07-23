@@ -257,8 +257,9 @@ Configure it via environment variables:
 
 - `LLAMA_BACKENDS`: comma-separated backend base URLs, each ending in `/v1` (default `http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1`).
 - `ROUTER_PORT`: the router's listen port (default `18090`).
+- `ROUTER_HOST`: the router's bind address (default `0.0.0.0`, every interface). The router has no authentication, so on a shared network set it to the Docker bridge host IP (`ROUTER_HOST=172.17.0.1`): local containers and the host keep access, the rest of the network does not. Alternatively, firewall the port.
 
-The install wizard can set this up automatically: answer "yes" to the router question during the AI assistant step and it installs a systemd service named `llama-router` and points `LLM_API_URL` at the router (`http://172.17.0.1:18090/v1`, the Docker bridge host IP).
+The install wizard can set this up automatically: answer "yes" to the router question during the AI assistant step and it installs a systemd service named `llama-router` and points `LLM_API_URL` at the router (`http://172.17.0.1:18090/v1`, the Docker bridge host IP). The wizard also binds the router to that same bridge IP, so it is not reachable from the rest of the network.
 
 To set it up manually (or re-run it later):
 

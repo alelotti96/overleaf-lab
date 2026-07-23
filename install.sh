@@ -834,7 +834,11 @@ if [ "${SETUP_LLAMA_ROUTER:-false}" = "true" ]; then
     echo ""
     echo "Setting up the local multi-model LLM router (llama-router systemd service)..."
     chmod +x ./scripts/setup-llama-router.sh
-    ./scripts/setup-llama-router.sh "$LLAMA_BACKENDS" || echo -e "${YELLOW}WARNING: llama-router setup failed; you can run ./scripts/setup-llama-router.sh manually later${NC}"
+    # Bind the router to the Docker bridge host IP: the wizard points LLM_API_URL
+    # at 172.17.0.1, so only containers and the host need to reach it. The router
+    # has no authentication; export ROUTER_HOST yourself (e.g. 0.0.0.0) before
+    # running install.sh if you really want to expose it more widely.
+    ROUTER_HOST="${ROUTER_HOST:-172.17.0.1}" ./scripts/setup-llama-router.sh "$LLAMA_BACKENDS" || echo -e "${YELLOW}WARNING: llama-router setup failed; you can run ./scripts/setup-llama-router.sh manually later${NC}"
 fi
 
 # -----------------------------------------------------------------------------

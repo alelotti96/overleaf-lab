@@ -18,6 +18,11 @@
 #     port:     router listen port (or set ROUTER_PORT; default 18090)
 #
 #   Optional tuning (exported before running; pinned into the unit only if set):
+#     ROUTER_HOST          bind address (router default 0.0.0.0 = every interface,
+#                          so anyone on the network can use the backends through
+#                          the router, which has no authentication; set the Docker
+#                          bridge host IP, usually 172.17.0.1, to serve only local
+#                          containers and the host, or firewall the port)
 #     PROXY_TIMEOUT        backend response cap in seconds (router default 3600)
 #     EARLY_RESPONSE_WAIT  seconds before the early "200 + chunked" (default 240)
 #     HEARTBEAT_INTERVAL   seconds between heartbeat chunks (default 30)
@@ -30,11 +35,18 @@ set -euo pipefail
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Backends and port: positional arg wins, then env var, then default
 LLAMA_BACKENDS="${1:-${LLAMA_BACKENDS:-http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1}}"
 ROUTER_PORT="${2:-${ROUTER_PORT:-18090}}"
+
+# Effective bind address: the router's own default is 0.0.0.0 (every interface).
+# 0.0.0.0 is not a connectable address, so the curl examples below use loopback.
+BIND_HOST="${ROUTER_HOST:-0.0.0.0}"
+CURL_HOST="${BIND_HOST}"
+[ "${CURL_HOST}" = "0.0.0.0" ] && CURL_HOST="127.0.0.1"
 
 # Repo root derived from this script's own location (scripts/..)
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,14 +66,14 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 # Optional tuning: only pin these in the unit if the operator set them in the
-# environment; otherwise the router uses its own defaults (3600 / 240 / 30, and no
-# chat_template_kwargs). Keeps long CPU compliance reviews from being cut, heartbeats
+# environment; otherwise the router uses its own defaults (bind 0.0.0.0,
+# 3600 / 240 / 30, and no chat_template_kwargs). Keeps long CPU compliance reviews from being cut, heartbeats
 # the client while they run, and can force a reasoning model's thinking off.
 # Each value is wrapped in double quotes with inner quotes/backslashes escaped:
 # systemd strips UNQUOTED double quotes, which would turn a JSON value like
 # CHAT_TEMPLATE_KWARGS={"enable_thinking":false} into the invalid {enable_thinking:false}.
 EXTRA_ENV=""
-for _v in PROXY_TIMEOUT EARLY_RESPONSE_WAIT HEARTBEAT_INTERVAL CHAT_TEMPLATE_KWARGS; do
+for _v in ROUTER_HOST PROXY_TIMEOUT EARLY_RESPONSE_WAIT HEARTBEAT_INTERVAL CHAT_TEMPLATE_KWARGS; do
     if [ -n "${!_v:-}" ]; then
         _val="${!_v}"
         _val="${_val//\\/\\\\}"   # escape backslashes first
@@ -73,10 +85,20 @@ done
 echo "Installing systemd service 'llama-router' with:"
 echo "  backends: ${LLAMA_BACKENDS}"
 echo "  port:     ${ROUTER_PORT}"
+echo "  bind:     ${BIND_HOST}"
 echo "  user:     ${RUN_USER}"
 echo "  script:   ${REPO_DIR}/scripts/llama-router.py"
 [ -n "$EXTRA_ENV" ] && printf '  tuning:   %s' "${EXTRA_ENV//Environment=/}"
 echo ""
+
+if [ "${BIND_HOST}" = "0.0.0.0" ]; then
+    echo -e "${YELLOW}WARNING: the router will listen on every interface (0.0.0.0) and has no${NC}"
+    echo -e "${YELLOW}authentication: anyone who can reach this machine can use the LLM backends${NC}"
+    echo -e "${YELLOW}through it. To restrict it, re-run with ROUTER_HOST set to the Docker bridge${NC}"
+    echo -e "${YELLOW}host IP (usually 172.17.0.1: containers and the host keep access, the rest${NC}"
+    echo -e "${YELLOW}of the network loses it) or firewall port ${ROUTER_PORT}.${NC}"
+    echo ""
+fi
 
 # Write (or overwrite) the systemd unit. Idempotent: re-running just refreshes it.
 sudo tee /etc/systemd/system/llama-router.service > /dev/null <<EOF
@@ -103,13 +125,13 @@ sudo systemctl enable --now llama-router
 
 echo ""
 echo -e "${GREEN}llama-router service installed and started${NC}"
-echo "  Endpoint: http://127.0.0.1:${ROUTER_PORT}/v1"
+echo "  Endpoint: http://${CURL_HOST}:${ROUTER_PORT}/v1"
 echo "  Backends: ${LLAMA_BACKENDS}"
 echo ""
 echo "NOTE: this does NOT start the llama-server processes; run those yourself"
 echo "      (one per model, each on its own port). Until they are up the router"
 echo "      serves an empty model list. Check the merged model list with:"
-echo "  curl http://127.0.0.1:${ROUTER_PORT}/v1/models"
+echo "  curl http://${CURL_HOST}:${ROUTER_PORT}/v1/models"
 echo ""
 echo "Service management:"
 echo "  sudo systemctl status llama-router"
