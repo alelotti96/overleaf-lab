@@ -56,6 +56,7 @@ The footer links are native (set via env vars read by Overleaf). The header and 
 | `HIDE_POWERED_BY` | "false" | Hide the "© 2025 Powered by Overleaf" line |
 | `HEADER_BG_COLOR` | "#1b222c" | Header and footer background (empty = keep Overleaf's default white header and footer) |
 | `HEADER_TEXT_COLOR` | "#ffffff" | Header and footer text/link color |
+| `HEADER_EXTRAS_CUSTOM` | "" | Extra header menu entries, a JSON fragment without the outer `[ ]` (e.g. a `{"text":...,"dropdown":[...]}` item), appended to the built-in menu. Put site-specific menus here so they survive `configure.sh` runs |
 
 ## GitHub Synchronization [optional]
 

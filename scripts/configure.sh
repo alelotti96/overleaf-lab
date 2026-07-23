@@ -247,13 +247,19 @@ fi
 echo "[2/4] Configuring Zotero Proxies..."
 
 if [ -d "zotero-proxies" ]; then
-    # Create empty .env for now (users will be added via dashboard)
-    cat > zotero-proxies/.env <<EOF
+    # Seed an empty .env only if missing. This file holds REAL per-user Zotero API
+    # keys (added by the dashboard); an unconditional `cat >` would wipe them on every
+    # configure.sh run. Same guard the docker-compose.yml below already uses.
+    if [ ! -f "zotero-proxies/.env" ]; then
+        cat > zotero-proxies/.env <<EOF
 # Zotero user credentials will be added here by the dashboard
 # or manually in the format:
 # USERNAME_API_KEY=your_api_key
 # USERNAME_USER_ID=your_user_id
 EOF
+    else
+        echo "  Keeping existing zotero-proxies/.env (has user credentials)"
+    fi
 
     # Create docker-compose.yml for Zotero per-user proxy containers
     # User services will be added by the dashboard when users configure Zotero
@@ -286,6 +292,14 @@ if [ -d "overleaf-toolkit" ]; then
         HEADER_EXTRAS='[{"text":"Admin Dashboard","url":"'"${DASHBOARD_URL}"'"},{"text":"LaTeX Tutorial","url":"https://www.overleaf.com/learn/latex/Learn_LaTeX_in_30_minutes","class":"subdued"},{"text":"Zotero","dropdown":[{"text":"Integration Setup","url":"'"${DASHBOARD_SIGNUP_URL}"'"}]}]'
     else
         HEADER_EXTRAS='[{"text":"Admin Dashboard","url":"'"${DASHBOARD_URL}"'"},{"text":"LaTeX Tutorial","url":"https://www.overleaf.com/learn/latex/Learn_LaTeX_in_30_minutes","class":"subdued"}]'
+    fi
+
+    # overleaf-lab: append site-specific menu entries from config.env.local
+    # (HEADER_EXTRAS_CUSTOM = a JSON fragment of extra items WITHOUT the outer [ ]).
+    # variables.env is regenerated on every run, so put custom menus here instead of
+    # hand-editing variables.env, which configure.sh overwrites. Empty = no change.
+    if [ -n "${HEADER_EXTRAS_CUSTOM}" ]; then
+        HEADER_EXTRAS="${HEADER_EXTRAS%]}, ${HEADER_EXTRAS_CUSTOM}]"
     fi
 
     # overleaf-lab: MongoDB 8.0.5+ refuses to start on Linux kernel >= 6.19 (a tcmalloc
