@@ -124,7 +124,7 @@ function LLMCompliancePane() {
             case 'too_long':
                 message = t(
                     'review_too_long',
-                    'The document is too long for a single-pass review with the configured context window.'
+                    'The document is too long for a single-pass review. Shorten it, or ask your administrator to raise the review model context window.'
                 )
                 break
             case 'busy':

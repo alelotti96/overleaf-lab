@@ -39,6 +39,7 @@ export type ComplianceErrorCode =
     | 'too_long'
     | 'model_unavailable'
     | 'not_found'
+    | 'backend_error'
     | 'failed'
 
 // overleaf-lab: kept for callers that still reference the raw error shape.

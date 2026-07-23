@@ -59,6 +59,7 @@ Runtime env (written by `configure.sh` from `config.env`):
 | `LLM_MODEL_NAME` | comma-separated; first = default |
 | `LLM_COMPLETION_MODEL` | optional model for shared inline completion |
 | `LLM_REVIEW_MAX_TOKENS` | review answer budget (max_tokens + reserved room); empty = 12000 |
+| `LLM_REVIEW_CHARS_PER_TOKEN` | chars/token for the pre-flight size estimate; LaTeX-tuned (default 2.5) |
 | `LLM_REVIEW_PREFILL_TPS` | prefill tokens/sec, only for the review progress estimate (default 80) |
 | `LLM_REVIEW_GEN_TPS` | generation tokens/sec, only for the review progress estimate (default 4) |
 | `LLM_ALLOW_USER_SETTINGS` | `true` = users may bring their own key (below) |
@@ -137,8 +138,14 @@ report.
   elapsed time is exact. A wrong estimate only skews the bar, never the result.
 - **Guards.** The whole prompt (document + rubric + system + output room) is budgeted
   against Max context tokens; an over-long project is refused (`too_long`) instead of
-  silently truncated. The output room reserved (and the model's `max_tokens`) is
-  `LLM_REVIEW_MAX_TOKENS` (default 12000). If a specific review model is configured,
+  silently truncated. The size check is an ESTIMATE (`LLM_REVIEW_CHARS_PER_TOKEN`,
+  default 2.5, tuned for LaTeX which tokenizes much denser than prose), so it can still
+  let a borderline document through: in that case the backend's own context rejection
+  is parsed and reported as `too_long` with the REAL prompt and context token counts,
+  which is the number to act on. The output room reserved (and the model's
+  `max_tokens`) is `LLM_REVIEW_MAX_TOKENS` (default 12000). Any other backend refusal
+  surfaces as `backend_error` with the backend's own message instead of a misleading
+  timeout. If a specific review model is configured,
   its presence is verified against the backend `/models` before running
   (`model_unavailable` otherwise). One-shot only for now; section chunking for very
   long theses is a possible v2.

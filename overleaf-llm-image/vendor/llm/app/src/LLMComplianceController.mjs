@@ -106,10 +106,84 @@ function stripLatexComments(text) {
         .join('\n')
 }
 
-// overleaf-lab: rough token estimate (about 4 characters per token) used only to
-// keep a single-pass review within the configured context window.
+// overleaf-lab: characters per token used by the pre-flight size estimate. The usual
+// "4 chars per token" rule is calibrated on English prose; LaTeX tokenizes far more
+// densely (commands, braces, math, backslashes), and on a real thesis 4 underestimated
+// by roughly 2.4x (about 20k estimated against 47.7k actual), so the guard let a
+// document through and the backend rejected it with a 400. 2.5 is a LaTeX-tuned middle
+// ground: low enough to catch gross overflows, high enough not to refuse documents that
+// would actually fit. It stays an ESTIMATE on purpose; the authoritative number comes
+// from the backend, whose context rejection we parse and report (see performReview).
+const REVIEW_CHARS_PER_TOKEN =
+    Number.parseFloat(process.env.LLM_REVIEW_CHARS_PER_TOKEN) > 0
+        ? Number.parseFloat(process.env.LLM_REVIEW_CHARS_PER_TOKEN)
+        : 2.5
+
+// overleaf-lab: rough token estimate used only to keep a single-pass review within
+// the configured context window (and to size the progress estimate).
 function estimateTokens(text) {
-    return Math.ceil(text.length / 4)
+    return Math.ceil(String(text || '').length / REVIEW_CHARS_PER_TOKEN)
+}
+
+// overleaf-lab: first regex that matches wins; returns null when none does.
+function firstNumber(text, patterns) {
+    for (const pattern of patterns) {
+        const match = pattern.exec(text)
+        if (match) {
+            const value = Number.parseInt(match[1], 10)
+            if (Number.isFinite(value) && value > 0) {
+                return value
+            }
+        }
+    }
+    return null
+}
+
+// overleaf-lab: turn a backend error body into something we can show the user. A
+// context overflow is the common, actionable case: both llama.cpp and OpenAI report
+// the prompt size and the context limit in the message, which is exactly what the user
+// needs to decide between shortening the document and raising the context window.
+// Returns { message, isContext, promptTokens, contextTokens }.
+function parseBackendError(errorText) {
+    let message = String(errorText || '').trim()
+    let kind = ''
+    try {
+        const body = JSON.parse(errorText)
+        const err = body && body.error
+        if (err) {
+            message = String(err.message || message)
+            // Both fields matter: OpenAI puts 'invalid_request_error' in `type` and
+            // the useful 'context_length_exceeded' in `code`, so picking only one
+            // would miss the overflow.
+            kind = `${err.type || ''} ${err.code || ''}`.trim()
+        }
+    } catch (e) {
+        // Not JSON: keep the raw text as the message.
+    }
+
+    const haystack = `${kind} ${message}`.toLowerCase()
+    const isContext =
+        haystack.includes('exceed_context_size') ||
+        haystack.includes('context_length_exceeded') ||
+        haystack.includes('maximum context') ||
+        haystack.includes('context window') ||
+        (haystack.includes('context') &&
+            (haystack.includes('exceed') ||
+                haystack.includes('too long') ||
+                haystack.includes('larger than')))
+
+    const promptTokens = firstNumber(message, [
+        /n_prompt_tokens\s*=\s*(\d+)/i,
+        /you requested\s+(\d+)\s+tokens/i,
+        /requested\s+(\d+)\s+tokens/i,
+    ])
+    const contextTokens = firstNumber(message, [
+        /n_ctx\s*=\s*(\d+)/i,
+        /maximum context length is\s+(\d+)/i,
+        /context (?:size|length)[^0-9]{0,24}(\d+)/i,
+    ])
+
+    return { message, isContext, promptTokens, contextTokens }
 }
 
 // overleaf-lab: extract a JSON object from a model reply that may include code
@@ -372,7 +446,35 @@ async function performReview(job) {
                 { projectId, userId, status: response.status, error: errorText },
                 '[LLM] compliance: LLM API error'
             )
-            throw new Error(`LLM API error: ${response.status}`)
+            const backendError = parseBackendError(errorText)
+
+            // overleaf-lab: a context overflow is reported by the backend with the
+            // real numbers, which beat our own estimate. Surface it as 'too_long' (the
+            // UI already renders that with the token counts) instead of letting it
+            // become the generic "failed or timed out", which named the wrong cause.
+            if (backendError.isContext) {
+                return {
+                    type: 'error',
+                    errorCode: 'too_long',
+                    message:
+                        'The document is too long for the review model context window',
+                    documentTokensEstimate:
+                        backendError.promptTokens || documentTokensEstimate,
+                    maxContextTokens:
+                        backendError.contextTokens || maxContextTokens,
+                }
+            }
+
+            // Any other backend refusal: show the status and the backend's own text
+            // (trimmed), so the user sees the real reason rather than a timeout.
+            const detail = backendError.message.slice(0, 300)
+            return {
+                type: 'error',
+                errorCode: 'backend_error',
+                message: `The review model rejected the request (HTTP ${response.status})${
+                    detail ? `: ${detail}` : ''
+                }`,
+            }
         }
 
         const data = await response.json()
