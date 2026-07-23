@@ -185,17 +185,14 @@ export default function LLMAdminSettingsPage() {
     )
     // overleaf-lab: compliance review settings. Rubrics come from a data-type='json'
     // meta tag, so getMeta returns the parsed value; guard in case it is not an array.
-    const rubricsFromMeta = getMeta('ol-complianceRubrics') as Array<{ id: string; name: string; guidelines: string }>
+    const rubricsFromMeta = getMeta('ol-complianceRubrics') as Array<{ id: string; name: string; guidelines: string; scanPatterns?: string }>
     const initialRubrics = Array.isArray(rubricsFromMeta) ? rubricsFromMeta : []
-    const [complianceRubrics, setComplianceRubrics] = useState<Array<{ id: string; name: string; guidelines: string }>>(initialRubrics)
+    const [complianceRubrics, setComplianceRubrics] = useState<Array<{ id: string; name: string; guidelines: string; scanPatterns?: string }>>(initialRubrics)
     const [reviewModel, setReviewModel] = useState<string>((getMeta('ol-reviewModel') as string) || '')
     const [maxContextTokens, setMaxContextTokens] = useState<number>(parseInt((getMeta('ol-maxContextTokens') as string) || '32000', 10) || 32000)
     // overleaf-lab: budget for the review's JSON answer (the model's max_tokens and
     // the room reserved for it in the context check).
     const [reviewMaxTokens, setReviewMaxTokens] = useState<number>(parseInt((getMeta('ol-reviewMaxTokens') as string) || '12000', 10) || 12000)
-    // overleaf-lab: admin-defined mechanical scans for the review ("Label :: regex",
-    // one per line), fed to the model as exhaustive ground truth (scan hints).
-    const [scanPatterns, setScanPatterns] = useState<string>((getMeta('ol-scanPatterns') as string) || '')
     // overleaf-lab: per-feature enable/disable toggles. The metas use data-type='json'
     // so getMeta returns the parsed boolean; default to true when missing/undefined.
     const [chatEnabled, setChatEnabled] = useState<boolean>(getMeta('ol-chatEnabled') !== false)
@@ -250,7 +247,6 @@ export default function LLMAdminSettingsPage() {
                     reviewModel,
                     maxContextTokens,
                     reviewMaxTokens,
-                    scanPatterns,
                     chatEnabled,
                     completionEnabled,
                     reviewEnabled,
@@ -317,10 +313,10 @@ export default function LLMAdminSettingsPage() {
     // client-generated id so React keys and immutable updates stay correct.
     const addRubric = () => {
         const id = `rubric-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        setComplianceRubrics(prev => [...prev, { id, name: '', guidelines: '' }])
+        setComplianceRubrics(prev => [...prev, { id, name: '', guidelines: '', scanPatterns: '' }])
     }
 
-    const updateRubric = (id: string, field: 'name' | 'guidelines', value: string) => {
+    const updateRubric = (id: string, field: 'name' | 'guidelines' | 'scanPatterns', value: string) => {
         setComplianceRubrics(prev =>
             prev.map(r => (r.id === id ? { ...r, [field]: value } : r))
         )
@@ -741,6 +737,29 @@ export default function LLMAdminSettingsPage() {
                                                 style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
                                             />
                                         </OLFormGroup>
+                                        {/* overleaf-lab: per-rubric mechanical scans; policy
+                                            patterns live next to the guidelines they verify */}
+                                        <OLFormGroup controlId={`rubric-scans-${rubric.id}`} style={{ marginBottom: '0.5rem' }}>
+                                            <OLFormLabel>
+                                                {t('rubric_scan_patterns', 'Scan patterns (optional, one per line)')}
+                                            </OLFormLabel>
+                                            <OLFormControl
+                                                as="textarea"
+                                                rows={3}
+                                                value={rubric.scanPatterns || ''}
+                                                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                                                    updateRubric(rubric.id, 'scanPatterns', e.target.value)
+                                                }
+                                                placeholder={'First person :: (?<![\\w.@/])(io|noi|ho)\\b\nWikipedia :: wikipedia'}
+                                                style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}
+                                            />
+                                            <OLFormText>
+                                                {t(
+                                                    'rubric_scan_patterns_help',
+                                                    '"Label :: regex" (case-insensitive; a plain word works too). The whole source is scanned in code, exhaustively, and the matches are handed to the model as candidates to judge in context. Use it for the pattern-like requirements of THIS rubric (words to avoid, forbidden constructs), in the language of your guidelines.'
+                                                )}
+                                            </OLFormText>
+                                        </OLFormGroup>
                                         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                                             <OLButton
                                                 variant="danger"
@@ -846,27 +865,6 @@ export default function LLMAdminSettingsPage() {
                                     </OLFormText>
                                 </OLFormGroup>
 
-                                {/* overleaf-lab: admin-defined mechanical scans (scan hints) */}
-                                <OLFormGroup controlId="llm-scan-patterns" style={{ marginTop: '1rem', marginBottom: 0 }}>
-                                    <OLFormLabel>
-                                        {t('scan_patterns', 'Extra scan patterns (one per line)')}
-                                    </OLFormLabel>
-                                    <OLFormControl
-                                        as="textarea"
-                                        rows={4}
-                                        value={scanPatterns}
-                                        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                                            setScanPatterns(e.target.value)
-                                        }
-                                        placeholder={'Anglicismi :: \\b(performance|feedback|layout)\\b\nNumeri di figura a mano :: \\bFigura [0-9]'}
-                                    />
-                                    <OLFormText>
-                                        {t(
-                                            'scan_patterns_help',
-                                            'Each line adds a mechanical scan to the review, as "Label :: regex" (case-insensitive; a plain word works too). The whole LaTeX source is scanned in code, exhaustively, and the matches are handed to the review model as candidates to judge in context. Use it for pattern-like requirements (words to avoid, forbidden constructs): unlike the model\'s own reading, a scan cannot overlook an occurrence.'
-                                        )}
-                                    </OLFormText>
-                                </OLFormGroup>
                             </div>
 
                             {/* ── Section 6: AI Prompts ── */}

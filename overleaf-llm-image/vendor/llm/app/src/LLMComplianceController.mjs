@@ -211,13 +211,17 @@ Return ONLY a JSON object, with no preamble and no code fences, in exactly this 
 // overleaf-lab: deterministic scan hints, computed mechanically from the stripped
 // source and appended to the document in every pass. An LLM attends over the whole
 // prompt, but a single forward pass cannot be TRUSTED to have checked every line for
-// an absence claim ("no first person anywhere"): in practice it asserts the absence
-// and quotes a few well-behaved examples. These patterns are exactly greppable, so we
-// scan them in code (exhaustive by construction) and hand the model ground truth:
-// counts it can rely on, and candidate violations it must judge in context. The
-// regexes deliberately OVER-capture (e.g. the noun "richiamo" matches the -iamo verb
-// pattern): context judgement is the model's half of the bargain, exhaustiveness is
-// ours.
+// an absence claim: in practice it asserts the absence and quotes a few well-behaved
+// examples. Greppable patterns are therefore scanned in code (exhaustive by
+// construction) and the model receives ground truth: counts it can rely on, and
+// candidate violations it must judge in context.
+//
+// The BUILT-INS are only language- and policy-neutral LaTeX structure counts. All
+// content patterns (words to avoid, first-person forms, forbidden sources...) are
+// policy, and policy belongs to the RUBRIC being checked, not to this file: they
+// come in via the rubric's own "scan patterns" field (see parseScanPatterns). Those
+// patterns may over-capture freely; context judgement is the model's half of the
+// bargain, exhaustiveness is ours.
 function buildScanHints(strippedDocs, customPatterns = []) {
     const count = re =>
         strippedDocs.reduce((n, d) => n + (d.text.match(re) || []).length, 0)
@@ -244,16 +248,6 @@ function buildScanHints(strippedDocs, customPatterns = []) {
     const cites = count(/\\cite\{/g)
     const listings = count(/\\begin\{(?:lstlisting|verbatim)/g)
 
-    const firstPerson = collect(
-        /\b(?:io|noi|mio|mia|miei|mie|nostro|nostra|nostri|nostre|ho)\b|\b[a-zA-Zà-ù]{2,}iamo\b/i,
-        25
-    )
-    const relativeRefs = collect(
-        /\b(?:figura|tabella|immagine|grafico)\s+(?:seguente|precedente|sottostante|soprastante|sopra|sotto)\b/i,
-        10
-    )
-    const wikipedia = collect(/wikipedia/i, 10)
-
     const fmt = (label, hits) =>
         hits.length === 0
             ? `- ${label}: none found (mechanically verified over the whole source)`
@@ -264,23 +258,22 @@ function buildScanHints(strippedDocs, customPatterns = []) {
     const lines = [
         'SCAN HINTS (computed mechanically from the LaTeX source; exhaustive for the listed patterns):',
         `- Counts: ${figures} figure environments, ${tables} table environments, ${captions} \\caption, ${equations} equation environments, ${refs} \\ref, ${cites} \\cite, ${listings} code listing environments.`,
-        fmt('First-person Italian forms (io/noi/ho/-iamo verbs/possessives)', firstPerson),
-        fmt('Relative figure/table references ("figura seguente" and similar)', relativeRefs),
-        fmt('Occurrences of "wikipedia"', wikipedia),
     ]
-    // overleaf-lab: admin-defined extra scans (see parseScanPatterns), same contract
-    // as the built-ins: exhaustive scan by code, context judgement by the model.
+    // overleaf-lab: rubric-defined scans (see parseScanPatterns): exhaustive scan by
+    // code, context judgement by the model.
     for (const { label, regex } of customPatterns) {
         lines.push(fmt(label, collect(regex, 15)))
     }
     return lines.join('\n')
 }
 
-// overleaf-lab: parse the admin-defined extra scan patterns from the settings page.
-// One per line, "Label :: regex" (case-insensitive); a line without "::" is used as
-// both label and pattern, so a plain word works as-is. The save endpoint already
-// refuses invalid regexes, but settings written by other means must not break a
-// review, so invalid lines are skipped here too. Capped to keep the hint block small.
+// overleaf-lab: parse a RUBRIC's scan patterns (each rubric carries its own, edited
+// next to its guidelines in the settings page, so the patterns live and die with the
+// policy that motivates them). One per line, "Label :: regex" (case-insensitive); a
+// line without "::" is used as both label and pattern, so a plain word works as-is.
+// The save endpoint already refuses invalid regexes, but settings written by other
+// means must not break a review, so invalid lines are skipped here too. Capped to
+// keep the hint block small.
 function parseScanPatterns(text) {
     const patterns = []
     for (const rawLine of String(text || '').split('\n')) {
@@ -585,7 +578,7 @@ async function performReview(job) {
     }))
     const parts = strippedDocs.map(d => `% ===== FILE: ${d.path} =====\n${d.text}`)
     const assembled = parts.join('\n\n')
-    const scanHints = buildScanHints(strippedDocs, parseScanPatterns(admin.scanPatterns))
+    const scanHints = buildScanHints(strippedDocs, parseScanPatterns(rubric.scanPatterns))
 
     if (!assembled.trim()) {
         return {
@@ -738,7 +731,11 @@ async function performReview(job) {
                 { role: 'user', content: documentBlock + guidelinesFor(requirement) },
             ],
             max_tokens: perPassBudget,
-            temperature: 0.2,
+            // overleaf-lab: greedy decoding, so re-running the review on an unchanged
+            // document yields stable verdicts. A compliance report that flips between
+            // runs (observed at 0.2: the same requirement went missing -> ok with no
+            // document change) reads as a lottery to the person fixing the document.
+            temperature: 0,
             // overleaf-lab: constrain the answer to the per-pass JSON shape (see
             // REVIEW_ITEMS_SCHEMA). Guarantees parseable output and, because prose is
             // forbidden, prevents a reasoning model from burning the budget on
@@ -878,6 +875,10 @@ async function performReview(job) {
 
             // overleaf-lab: "analysis" is dropped on purpose: its job was forcing the
             // model to look before judging, and that job ends at generation time.
+            // Evidence/suggestion are HARD-capped in code: the prompt asks for
+            // compact evidence but the model sometimes dumps whole environments
+            // anyway, and a report is read by a human. Enumerations belong in
+            // "analysis", which has already served its purpose.
             const passItems = Array.isArray(parsed.items)
                 ? parsed.items.map(it => ({
                       requirement:
@@ -885,8 +886,8 @@ async function performReview(job) {
                       status: ['ok', 'partial', 'missing', 'na'].includes(it.status)
                           ? it.status
                           : 'na',
-                      evidence: String(it.evidence || ''),
-                      suggestion: String(it.suggestion || ''),
+                      evidence: String(it.evidence || '').slice(0, 600),
+                      suggestion: String(it.suggestion || '').slice(0, 400),
                   }))
                 : []
             allItems.push(...passItems)
@@ -1002,8 +1003,10 @@ async function performReview(job) {
                                 // The requirement is not the verifier's to rewrite.
                                 requirement: finding.requirement,
                                 status: verified.status,
-                                evidence: String(verified.evidence || finding.evidence),
-                                suggestion: String(verified.suggestion || ''),
+                                evidence: String(
+                                    verified.evidence || finding.evidence
+                                ).slice(0, 600),
+                                suggestion: String(verified.suggestion || '').slice(0, 400),
                             }
                         }
                     } catch (err) {

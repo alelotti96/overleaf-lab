@@ -80,7 +80,6 @@ async function buildDisplaySettings() {
         reviewModel: settings.reviewModel || '',
         maxContextTokens: settings.maxContextTokens || 32000,
         reviewMaxTokens: settings.reviewMaxTokens || DEFAULT_REVIEW_MAX_TOKENS,
-        scanPatterns: settings.scanPatterns || '',
         // overleaf-lab: per-feature enable flags; absent field defaults to true so
         // existing installs keep every feature on.
         chatEnabled: settings.chatEnabled !== false,
@@ -122,7 +121,6 @@ async function saveAdminSettings(req, res) {
         reviewModel,
         maxContextTokens,
         reviewMaxTokens,
-        scanPatterns,
         chatEnabled,
         completionEnabled,
         reviewEnabled,
@@ -213,6 +211,9 @@ async function saveAdminSettings(req, res) {
                 id: String((r && r.id) || ''),
                 name: String((r && r.name) || '').slice(0, 200),
                 guidelines: String((r && r.guidelines) || '').slice(0, 20000),
+                // overleaf-lab: per-rubric mechanical scans ("Label :: regex" per
+                // line); policy lives with the rubric it verifies, never in code.
+                scanPatterns: String((r && r.scanPatterns) || '').slice(0, 4000),
             }))
             .filter(r => r.id && r.name)
             .slice(0, 50)
@@ -245,32 +246,36 @@ async function saveAdminSettings(req, res) {
         sanitizedReviewMaxTokens = existing.reviewMaxTokens || DEFAULT_REVIEW_MAX_TOKENS
     }
 
-    // overleaf-lab: validate the extra scan patterns ("Label :: regex" per line) so
-    // the admin learns about a broken regex at save time, not from a silently
+    // overleaf-lab: validate each rubric's scan patterns ("Label :: regex" per line)
+    // so the admin learns about a broken regex at save time, not from a silently
     // hint-less review. The reviewer side skips invalid lines anyway (defense in
     // depth for settings written by other means).
-    if (scanPatterns !== undefined && typeof scanPatterns !== 'string') {
-        return res.status(400).json({ error: 'scanPatterns must be a string' })
-    }
-    if (typeof scanPatterns === 'string') {
-        if (scanPatterns.length > 4000) {
-            return res.status(400).json({ error: 'scanPatterns must be 4000 characters or fewer' })
-        }
-        for (const rawLine of scanPatterns.split('\n')) {
-            const line = rawLine.trim()
-            if (!line) {
-                continue
+    if (Array.isArray(complianceRubrics)) {
+        for (const r of complianceRubrics) {
+            const patternsText = r && typeof r.scanPatterns === 'string' ? r.scanPatterns : ''
+            if (patternsText.length > 4000) {
+                return res.status(400).json({
+                    error: `Scan patterns of rubric "${(r && r.name) || '?'}" must be 4000 characters or fewer`,
+                })
             }
-            const sep = line.indexOf('::')
-            const body = (sep === -1 ? line : line.slice(sep + 2)).trim()
-            if (!body) {
-                continue
-            }
-            try {
-                // eslint-disable-next-line no-new
-                new RegExp(body, 'i')
-            } catch (err) {
-                return res.status(400).json({ error: `Invalid scan pattern regex: ${body}` })
+            for (const rawLine of patternsText.split('\n')) {
+                const line = rawLine.trim()
+                if (!line) {
+                    continue
+                }
+                const sep = line.indexOf('::')
+                const body = (sep === -1 ? line : line.slice(sep + 2)).trim()
+                if (!body) {
+                    continue
+                }
+                try {
+                    // eslint-disable-next-line no-new
+                    new RegExp(body, 'i')
+                } catch (err) {
+                    return res.status(400).json({
+                        error: `Invalid scan pattern regex in rubric "${(r && r.name) || '?'}": ${body}`,
+                    })
+                }
             }
         }
     }
@@ -306,7 +311,6 @@ async function saveAdminSettings(req, res) {
         reviewModel: typeof reviewModel === 'string' ? reviewModel : (existing.reviewModel || ''),
         maxContextTokens: sanitizedMaxContextTokens,
         reviewMaxTokens: sanitizedReviewMaxTokens,
-        scanPatterns: typeof scanPatterns === 'string' ? scanPatterns : (existing.scanPatterns || ''),
         // overleaf-lab: omitted flag keeps the existing value (default true).
         chatEnabled: typeof chatEnabled === 'boolean' ? chatEnabled : (existing.chatEnabled !== false),
         completionEnabled: typeof completionEnabled === 'boolean' ? completionEnabled : (existing.completionEnabled !== false),
@@ -358,7 +362,6 @@ export async function getAdminLLMSettings() {
         reviewModel: settings.reviewModel || '',
         maxContextTokens: settings.maxContextTokens || 32000,
         reviewMaxTokens: settings.reviewMaxTokens || DEFAULT_REVIEW_MAX_TOKENS,
-        scanPatterns: settings.scanPatterns || '',
         // overleaf-lab: per-feature enable flags (absent field defaults to true).
         chatEnabled: settings.chatEnabled !== false,
         completionEnabled: settings.completionEnabled !== false,

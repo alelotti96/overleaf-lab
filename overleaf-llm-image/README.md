@@ -179,16 +179,23 @@ the rubric is written directly controls the review quality:
   pass cannot be TRUSTED to have checked every line for an absence claim ("no first
   person anywhere"): in practice it asserts the absence and quotes a few well-behaved
   examples. Mechanical patterns are grepped in code instead, exhaustively, and the
-  results ride the cached document prefix into every pass: environment/caption/ref/
-  cite counts the model can rely on, plus candidate hits (first-person Italian forms,
-  "figura seguente"-style relative references, "wikipedia") that it must judge in
-  context; the regexes over-capture on purpose (the noun "richiamo" matches the
-  -iamo verb pattern), context judgement being the model's half of the bargain. A
-  "none found" in the hints is a real mechanical verification, not model attention.
-  Admins can add their own scans from the settings page (**Extra scan patterns**, one
-  `Label :: regex` per line, case-insensitive, validated at save time): use them
-  whenever a rubric requirement is pattern-like (words to avoid, forbidden
-  constructs), so its verification stops depending on the model's reading.
+  results ride the cached document prefix into every pass. The built-ins are only
+  language-neutral LaTeX structure counts (figure/table environments, `\caption`,
+  equations, `\ref`, `\cite`, listings). Everything content-related is **policy, and
+  policy lives with the rubric**: each rubric has its own **Scan patterns** field
+  (one `Label :: regex` per line, case-insensitive, validated at save time), edited
+  next to the guidelines it verifies. A "none found" in the hints is a real
+  mechanical verification; listed candidates deliberately over-capture and the model
+  judges each in context. Example patterns for an Italian thesis rubric (note the
+  lookbehind, so the ".io" TLD in URLs does not match the pronoun "io", and the
+  -iamo verb pattern that also catches nouns like "richiamo", judged benign by the
+  model):
+
+  ```
+  Prima persona :: (?<![\w.@/])(io|noi|mio|mia|miei|mie|nostro|nostra|nostri|nostre|ho)\b|\b[a-zA-Zà-ù]{2,}iamo\b
+  Rimandi relativi :: \b(figura|tabella|immagine|grafico)\s+(seguente|precedente|sottostante|soprastante|sopra|sotto)\b
+  Wikipedia :: wikipedia
+  ```
 - **Adversarial verification of negative findings.** A false "missing" is the most
   harmful thing a review can produce (it sends the author hunting for problems that
   do not exist, e.g. a quantity flagged as uncited whose `\cite` sits right next to
@@ -199,6 +206,12 @@ the rubric is written directly controls the review quality:
   fails, the original finding stands. OK items are not re-verified. The progress bar
   extends honestly ("Double-check: <requirement>", e.g. 22/24). The verifier prompt
   is internal, not admin-editable.
+- **Deterministic and readable.** Finder and verifier passes run at temperature 0,
+  so re-running the review on an unchanged document yields stable verdicts (at 0.2 a
+  requirement was observed flipping missing to ok between runs with no document
+  change). Evidence and suggestion are hard-capped in code (600/400 chars): the
+  prompt asks for compact evidence, but a model that dumps whole environments anyway
+  cannot make the report unreadable.
 - **Per-pass failure containment.** A pass that fails (backend refusal, unparseable
   answer) marks only ITS requirement as "n.a." with the reason; the other passes
   still run. An unusable answer (typically a broad requirement whose analysis blows
