@@ -58,6 +58,19 @@ let measuredPrefillTps = null
 let measuredGenTps = null
 let ratesProbed = false
 
+// overleaf-lab: sample-size gates for trusting a timings measurement. llama.cpp
+// reports prompt_per_second over the tokens it ACTUALLY evaluated (prompt_n): on a
+// prompt-cache hit that can be a single token, and the resulting "rate" is pure
+// per-request overhead (~76 tok/s observed where the true prefill was ~5400), so
+// accepting it would poison a good calibration. Two tiers: a STRONG sample (a real
+// review) always updates; a smaller one is accepted only as the FIRST seed (that is
+// how the probe gets in, its ~660/8-token samples sit below the strong bars) and
+// never below the MIN floor, so a cache-hit rerun can never become the calibration.
+const STRONG_PREFILL_N = 2048
+const STRONG_GEN_N = 256
+const MIN_PREFILL_N = 64
+const MIN_GEN_N = 8
+
 function effectiveRates() {
     return {
         prefillTps: ENV_PREFILL_TPS || measuredPrefillTps || FALLBACK_PREFILL_TPS,
@@ -66,17 +79,30 @@ function effectiveRates() {
 }
 
 // overleaf-lab: learn the rates from a llama.cpp `timings` block. Ignored silently for
-// backends that do not report it (OpenAI and friends), which keep env/fallback.
+// backends that do not report it (OpenAI and friends), which keep env/fallback. A
+// missing prompt_n/predicted_n rejects the sample too (NaN fails every >=), since a
+// rate without its sample size cannot be judged.
 function recordTimings(timings) {
     if (!timings || typeof timings !== 'object') {
         return
     }
     const prefill = Number(timings.prompt_per_second)
+    const prefillN = Number(timings.prompt_n)
     const gen = Number(timings.predicted_per_second)
-    if (Number.isFinite(prefill) && prefill > 0) {
+    const genN = Number(timings.predicted_n)
+    if (
+        Number.isFinite(prefill) &&
+        prefill > 0 &&
+        (prefillN >= STRONG_PREFILL_N ||
+            (measuredPrefillTps === null && prefillN >= MIN_PREFILL_N))
+    ) {
         measuredPrefillTps = prefill
     }
-    if (Number.isFinite(gen) && gen > 0) {
+    if (
+        Number.isFinite(gen) &&
+        gen > 0 &&
+        (genN >= STRONG_GEN_N || (measuredGenTps === null && genN >= MIN_GEN_N))
+    ) {
         measuredGenTps = gen
     }
 }
@@ -86,7 +112,9 @@ function recordTimings(timings) {
 // rather than at boot: at boot the backend may not be up yet, and a probe would add a
 // network call plus retries to Overleaf startup for no gain. Best-effort: any failure
 // leaves the fallbacks in place, and the first real review corrects them anyway.
-// The prompt is padded so prompt_per_second is measured on a non-trivial prefill.
+// The prompt is padded so prompt_per_second is measured on a non-trivial prefill; the
+// probe's samples are still small, so recordTimings only accepts them as a first seed
+// and the first real review replaces them with a full-size measurement.
 async function probeBackendRates(llmApiUrl, llmApiKey, model) {
     ratesProbed = true
     try {

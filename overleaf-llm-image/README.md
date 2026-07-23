@@ -140,7 +140,10 @@ report.
   `timings.prompt_per_second` / `predicted_per_second` on every response, so each review
   calibrates the next one, and a small probe before the very first review seeds it (the
   probe is lazy, not at boot, so it never delays startup or fails on a backend that is
-  not up yet). Backends that report no timings, and `LLM_REVIEW_PREFILL_TPS` /
+  not up yet). Unrepresentative samples are rejected by size (`prompt_n` /
+  `predicted_n`): on a prompt-cache hit llama.cpp evaluates as little as one token and
+  the reported "rate" is pure request overhead, which would otherwise poison a good
+  calibration; small samples only ever seed an empty one. Backends that report no timings, and `LLM_REVIEW_PREFILL_TPS` /
   `LLM_REVIEW_GEN_TPS` when set, override the measurement.
 - **Guards.** The whole prompt (document + rubric + system + output room) is budgeted
   against Max context tokens; an over-long project is refused (`too_long`) instead of
