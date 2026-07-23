@@ -74,6 +74,9 @@ export interface ComplianceErrorInfo {
     message?: string
     documentTokensEstimate?: number
     maxContextTokens?: number
+    // overleaf-lab: the room reserved for the answer. It is part of the sum that
+    // caused a too_long refusal, so the UI must show it or the numbers look wrong.
+    reviewMaxTokens?: number
 }
 
 interface RubricsResponse {
@@ -347,6 +350,7 @@ export const useLLMCompliance = () => {
                             message: json.message,
                             documentTokensEstimate: json.documentTokensEstimate,
                             maxContextTokens: json.maxContextTokens,
+                            reviewMaxTokens: json.reviewMaxTokens,
                         })
                         setProgress(null)
                         setPhase('error')

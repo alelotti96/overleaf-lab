@@ -124,7 +124,7 @@ function LLMCompliancePane() {
             case 'too_long':
                 message = t(
                     'review_too_long',
-                    'The document is too long for a single-pass review. Shorten it, or ask your administrator to raise the review model context window.'
+                    'The document plus the room reserved for the answer does not fit the review model context window. Shorten the document, or ask your administrator to lower the review answer budget or raise the context window.'
                 )
                 break
             case 'busy':
@@ -168,6 +168,13 @@ function LLMCompliancePane() {
             errorInfo.documentTokensEstimate != null &&
             errorInfo.maxContextTokens != null
 
+        // overleaf-lab: show the WHOLE equation. The refusal is caused by
+        // prompt + reserved answer room exceeding the limit, so printing only
+        // "prompt / limit" showed numbers that looked like they fitted.
+        const promptTokens = errorInfo.documentTokensEstimate || 0
+        const answerTokens = errorInfo.reviewMaxTokens || 0
+        const totalTokens = promptTokens + answerTokens
+
         return (
             <div
                 style={{
@@ -183,8 +190,23 @@ function LLMCompliancePane() {
                 <div>{message}</div>
                 {showTokens && (
                     <div style={{ color: MUTED, fontSize: '0.85em', marginTop: 4 }}>
-                        ~{errorInfo.documentTokensEstimate} /{' '}
-                        {errorInfo.maxContextTokens} tokens
+                        {answerTokens > 0 ? (
+                            <>
+                                {t('review_tokens_document', 'Document')}:{' '}
+                                {promptTokens.toLocaleString()} +{' '}
+                                {t('review_tokens_answer', 'reserved for the answer')}:{' '}
+                                {answerTokens.toLocaleString()} ={' '}
+                                {totalTokens.toLocaleString()}, {t('review_tokens_limit', 'limit')}:{' '}
+                                {(errorInfo.maxContextTokens || 0).toLocaleString()}{' '}
+                                {t('tokens', 'tokens')}
+                            </>
+                        ) : (
+                            <>
+                                {promptTokens.toLocaleString()} /{' '}
+                                {(errorInfo.maxContextTokens || 0).toLocaleString()}{' '}
+                                {t('tokens', 'tokens')}
+                            </>
+                        )}
                     </div>
                 )}
             </div>

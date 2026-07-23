@@ -120,6 +120,41 @@ async function probeBackendRates(llmApiUrl, llmApiKey, model) {
         logger.debug({ err }, '[LLM] compliance: throughput probe failed, using fallbacks')
     }
 }
+
+// overleaf-lab: ask the backend for the EXACT token count of the prompt. llama.cpp
+// exposes /tokenize, and the router maps <base>/v1/tokenize onto the server root where
+// it actually lives, so the module only needs the one OpenAI-style base URL.
+//
+// Why this matters more than it looks: a character-per-token heuristic can only ever be
+// roughly right for LaTeX, whose density varies a lot between prose and math. When it
+// errs low the backend rejects the request and tells us the truth, which is recoverable.
+// When it errs HIGH we refuse a document that would actually have fit, and nothing
+// downstream can correct that: the user is simply blocked. The exact count removes both.
+// Returns null for any backend without /tokenize, so the caller falls back.
+async function countPromptTokens(llmApiUrl, llmApiKey, text) {
+    try {
+        const headers = { 'Content-Type': 'application/json' }
+        if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
+            headers.Authorization = `Bearer ${llmApiKey}`
+        }
+        const response = await fetch(`${llmApiUrl}/tokenize`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ content: text }),
+        })
+        if (!response.ok) {
+            return null
+        }
+        const data = await response.json()
+        if (Array.isArray(data && data.tokens)) {
+            return data.tokens.length
+        }
+        return null
+    } catch (err) {
+        logger.debug({ err }, '[LLM] compliance: /tokenize unavailable, using the estimate')
+        return null
+    }
+}
 // overleaf-lab: floor for the review timeout (the value it used to be fixed at).
 const REVIEW_MIN_TIMEOUT_MS = 60 * 60 * 1000
 
@@ -187,18 +222,18 @@ function stripLatexComments(text) {
         .join('\n')
 }
 
-// overleaf-lab: characters per token used by the pre-flight size estimate. The usual
-// "4 chars per token" rule is calibrated on English prose; LaTeX tokenizes far more
-// densely (commands, braces, math, backslashes), and on a real thesis 4 underestimated
-// by roughly 2.4x (about 20k estimated against 47.7k actual), so the guard let a
-// document through and the backend rejected it with a 400. 2.5 is a LaTeX-tuned middle
-// ground: low enough to catch gross overflows, high enough not to refuse documents that
-// would actually fit. It stays an ESTIMATE on purpose; the authoritative number comes
-// from the backend, whose context rejection we parse and report (see performReview).
+// overleaf-lab: characters per token for the FALLBACK size estimate, used only when the
+// backend has no /tokenize (countPromptTokens is the normal path and is exact). The
+// usual "4 chars per token" rule is calibrated on English prose; measured on a real
+// LaTeX thesis the ratio was about 3.4, so 4 is optimistic. We use a slightly
+// conservative 3.0: close enough not to refuse documents that would fit, low enough to
+// still catch a gross overflow. An earlier 2.5 was too pessimistic and blocked a
+// document that actually fitted, which is the worse failure since nothing downstream
+// can correct a false refusal.
 const REVIEW_CHARS_PER_TOKEN =
     Number.parseFloat(process.env.LLM_REVIEW_CHARS_PER_TOKEN) > 0
         ? Number.parseFloat(process.env.LLM_REVIEW_CHARS_PER_TOKEN)
-        : 2.5
+        : 3.0
 
 // overleaf-lab: rough token estimate used only to keep a single-pass review within
 // the configured context window (and to size the progress estimate).
@@ -402,21 +437,36 @@ async function performReview(job) {
     // window: document + rubric guidelines + system prompt + room for the JSON
     // answer. The rubric can be large, so it must count too, otherwise the document
     // could pass here and the full prompt still overflow.
-    const documentTokensEstimate = estimateTokens(assembled)
-    const promptTokensEstimate =
-        documentTokensEstimate +
+    // overleaf-lab: prefer the backend's exact count; fall back to the heuristic when
+    // it has no /tokenize (see countPromptTokens).
+    const heuristicPromptTokens =
+        estimateTokens(assembled) +
         estimateTokens(rubric.guidelines) +
         estimateTokens(prompts.reviewSystemPrompt)
+    const exactPromptTokens = await countPromptTokens(
+        llmApiUrl,
+        llmApiKey,
+        `${prompts.reviewSystemPrompt}\n${rubric.guidelines}\n${assembled}`
+    )
+    const promptTokens = exactPromptTokens || heuristicPromptTokens
+    logger.debug(
+        { projectId, promptTokens, exact: exactPromptTokens != null, heuristicPromptTokens },
+        '[LLM] compliance: prompt size'
+    )
     // overleaf-lab: expose the size so the status endpoint can estimate progress.
-    job.documentTokensEstimate = documentTokensEstimate
-    if (promptTokensEstimate + reviewMaxTokens > maxContextTokens) {
+    job.documentTokensEstimate = promptTokens
+    if (promptTokens + reviewMaxTokens > maxContextTokens) {
+        // overleaf-lab: report the answer budget too. Without it the UI could only show
+        // "prompt / limit", which looks like it fits (65158 / 66000) while the refusal
+        // is really caused by the reserved answer room pushing the total over.
         return {
             type: 'error',
             errorCode: 'too_long',
             message:
                 'Document is too long for a single-pass review with the configured context window',
-            documentTokensEstimate,
+            documentTokensEstimate: promptTokens,
             maxContextTokens,
+            reviewMaxTokens,
         }
     }
 
@@ -500,7 +550,7 @@ async function performReview(job) {
     }
     const rates = effectiveRates()
     const estimatedPrefillMs = Math.round(
-        (promptTokensEstimate / rates.prefillTps) * 1000
+        (promptTokens / rates.prefillTps) * 1000
     )
     const worstCaseMs =
         estimatedPrefillMs + Math.round((reviewMaxTokens / rates.genTps) * 1000)
@@ -562,9 +612,10 @@ async function performReview(job) {
                     message:
                         'The document is too long for the review model context window',
                     documentTokensEstimate:
-                        backendError.promptTokens || documentTokensEstimate,
+                        backendError.promptTokens || promptTokens,
                     maxContextTokens:
                         backendError.contextTokens || maxContextTokens,
+                    reviewMaxTokens,
                 }
             }
 
@@ -608,7 +659,7 @@ async function performReview(job) {
             result: {
                 rubric: { id: rubric.id, name: rubric.name },
                 model: reviewModel,
-                documentTokensEstimate,
+                documentTokensEstimate: promptTokens,
                 maxContextTokens,
                 summary: String(parsed.summary || ''),
                 items,
@@ -655,6 +706,7 @@ async function processQueue() {
                 job.message = outcome.message
                 if (outcome.errorCode === 'too_long') {
                     job.documentTokensEstimate = outcome.documentTokensEstimate
+                    job.reviewMaxTokens = outcome.reviewMaxTokens
                     job.maxContextTokens = outcome.maxContextTokens
                 }
             }
@@ -744,6 +796,7 @@ async function startReview(req, res) {
         message: null,
         documentTokensEstimate: null,
         maxContextTokens: null,
+        reviewMaxTokens: null,
         controller: null,
         createdAt: Date.now(),
         startedAt: null,
@@ -811,6 +864,7 @@ async function statusReview(req, res) {
                 message: job.message,
                 documentTokensEstimate: job.documentTokensEstimate,
                 maxContextTokens: job.maxContextTokens,
+                reviewMaxTokens: job.reviewMaxTokens,
             })
         case 'cancelled':
             return res.json({ ok: true, status: 'cancelled' })

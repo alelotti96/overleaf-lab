@@ -59,7 +59,7 @@ Runtime env (written by `configure.sh` from `config.env`):
 | `LLM_MODEL_NAME` | comma-separated; first = default |
 | `LLM_COMPLETION_MODEL` | optional model for shared inline completion |
 | `LLM_REVIEW_MAX_TOKENS` | fallback review answer budget when the admin page has none set (default 12000) |
-| `LLM_REVIEW_CHARS_PER_TOKEN` | chars/token for the pre-flight size estimate; LaTeX-tuned (default 2.5) |
+| `LLM_REVIEW_CHARS_PER_TOKEN` | chars/token fallback when the backend has no `/tokenize` (default 3.0) |
 | `LLM_REVIEW_PREFILL_TPS` | pin the prefill tokens/sec used by the progress bar (normally auto-measured) |
 | `LLM_REVIEW_GEN_TPS` | pin the generation tokens/sec used by the progress bar (normally auto-measured) |
 | `LLM_ALLOW_USER_SETTINGS` | `true` = users may bring their own key (below) |
@@ -144,11 +144,15 @@ report.
   `LLM_REVIEW_GEN_TPS` when set, override the measurement.
 - **Guards.** The whole prompt (document + rubric + system + output room) is budgeted
   against Max context tokens; an over-long project is refused (`too_long`) instead of
-  silently truncated. The size check is an ESTIMATE (`LLM_REVIEW_CHARS_PER_TOKEN`,
-  default 2.5, tuned for LaTeX which tokenizes much denser than prose), so it can still
-  let a borderline document through: in that case the backend's own context rejection
-  is parsed and reported as `too_long` with the REAL prompt and context token counts,
-  which is the number to act on. The output room reserved (and the model's
+  silently truncated. The prompt size is the backend's **exact** count: llama.cpp is
+  asked via `/tokenize` (the router maps `<base>/v1/tokenize` onto the server root where
+  it lives). Backends without it fall back to a character heuristic
+  (`LLM_REVIEW_CHARS_PER_TOKEN`, default 3.0, measured on real LaTeX which tokenizes
+  denser than prose). The refusal message shows the whole equation, prompt + reserved
+  answer room against the limit, because the reserved room is part of what causes it and
+  hiding it made correct refusals look wrong. If a document still slips through, the
+  backend's own context rejection is parsed and reported with the real numbers. The
+  output room reserved (and the model's
   `max_tokens`) is the admin **Review answer budget** (falling back to
   `LLM_REVIEW_MAX_TOKENS`, default 12000). Any other backend refusal surfaces as
   `backend_error` with the backend's own message instead of a misleading timeout. If a
