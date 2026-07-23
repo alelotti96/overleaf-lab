@@ -25,6 +25,12 @@ Config via environment variables:
     HEARTBEAT_INTERVAL   seconds between heartbeat chunks once the early response is
                          committed (default 30). Must stay below the client's idle
                          body timeout.
+    CHAT_TEMPLATE_KWARGS optional JSON object injected into completion requests that
+                         do not carry their own chat_template_kwargs, e.g.
+                         {"enable_thinking": false} to turn off a reasoning model's
+                         internal thinking (which on a CPU backend otherwise eats the
+                         whole answer-token budget and slows every request). Empty or
+                         invalid = no injection. Only reaches the local llama-server.
 
 Routing: the request's "model" field decides the backend. Unknown model names
 (and the placeholder "default") fall back to the first reachable backend, which
@@ -71,6 +77,22 @@ PROXY_TIMEOUT = int(os.environ.get("PROXY_TIMEOUT", "3600"))  # backend response
 EARLY_RESPONSE_WAIT = int(os.environ.get("EARLY_RESPONSE_WAIT", "240"))  # commit 200 by now
 HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "30"))  # between heartbeats
 SCAN_TIMEOUT = 10  # seconds; querying /models
+
+# Optional default chat_template_kwargs injected into completion requests that do
+# not carry their own (a JSON object, e.g. {"enable_thinking": false}). Only the
+# local llama-server understands this field; cloud backends (per-user OpenAI /
+# Anthropic keys) are called directly by the module, not through the router, so
+# they are never affected. Empty/invalid = no injection.
+_DEFAULT_CHAT_TEMPLATE_KWARGS = None
+_ctk_raw = os.environ.get("CHAT_TEMPLATE_KWARGS", "").strip()
+if _ctk_raw:
+    try:
+        _DEFAULT_CHAT_TEMPLATE_KWARGS = json.loads(_ctk_raw)
+        if not isinstance(_DEFAULT_CHAT_TEMPLATE_KWARGS, dict):
+            raise ValueError("must be a JSON object")
+    except Exception as _exc:
+        print(f"[router] ignoring invalid CHAT_TEMPLATE_KWARGS ({_exc})", flush=True)
+        _DEFAULT_CHAT_TEMPLATE_KWARGS = None
 
 _lock = threading.Lock()
 _cache = {"ts": 0.0, "map": {}, "models": []}  # map: model_id -> backend base url
@@ -199,6 +221,17 @@ class Handler(BaseHTTPRequestHandler):
         idx = self.path.find("/v1/")
         suffix = self.path[idx + len("/v1"):] if idx >= 0 else self.path
         url = backend + suffix
+
+        # Inject the default chat_template_kwargs into completion requests that do
+        # not set their own, then re-serialize (urllib recomputes Content-Length).
+        if (
+            _DEFAULT_CHAT_TEMPLATE_KWARGS is not None
+            and isinstance(payload, dict)
+            and "completions" in suffix
+            and "chat_template_kwargs" not in payload
+        ):
+            payload["chat_template_kwargs"] = _DEFAULT_CHAT_TEMPLATE_KWARGS
+            raw = json.dumps(payload).encode("utf-8")
 
         headers = {"Content-Type": "application/json"}
         auth = self.headers.get("Authorization")

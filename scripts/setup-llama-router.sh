@@ -21,6 +21,8 @@
 #     PROXY_TIMEOUT        backend response cap in seconds (router default 3600)
 #     EARLY_RESPONSE_WAIT  seconds before the early "200 + chunked" (default 240)
 #     HEARTBEAT_INTERVAL   seconds between heartbeat chunks (default 30)
+#     CHAT_TEMPLATE_KWARGS JSON injected into completion bodies without their own,
+#                          e.g. '{"enable_thinking":false}' (default: none)
 #===============================================================================
 
 set -euo pipefail
@@ -52,12 +54,19 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 # Optional tuning: only pin these in the unit if the operator set them in the
-# environment; otherwise the router uses its own defaults (3600 / 240 / 30). Keeps
-# long CPU compliance reviews from being cut and heartbeats the client while they run.
+# environment; otherwise the router uses its own defaults (3600 / 240 / 30, and no
+# chat_template_kwargs). Keeps long CPU compliance reviews from being cut, heartbeats
+# the client while they run, and can force a reasoning model's thinking off.
+# Each value is wrapped in double quotes with inner quotes/backslashes escaped:
+# systemd strips UNQUOTED double quotes, which would turn a JSON value like
+# CHAT_TEMPLATE_KWARGS={"enable_thinking":false} into the invalid {enable_thinking:false}.
 EXTRA_ENV=""
-for _v in PROXY_TIMEOUT EARLY_RESPONSE_WAIT HEARTBEAT_INTERVAL; do
+for _v in PROXY_TIMEOUT EARLY_RESPONSE_WAIT HEARTBEAT_INTERVAL CHAT_TEMPLATE_KWARGS; do
     if [ -n "${!_v:-}" ]; then
-        EXTRA_ENV="${EXTRA_ENV}Environment=${_v}=${!_v}"$'\n'
+        _val="${!_v}"
+        _val="${_val//\\/\\\\}"   # escape backslashes first
+        _val="${_val//\"/\\\"}"   # then double quotes
+        EXTRA_ENV="${EXTRA_ENV}Environment=\"${_v}=${_val}\""$'\n'
     fi
 done
 
