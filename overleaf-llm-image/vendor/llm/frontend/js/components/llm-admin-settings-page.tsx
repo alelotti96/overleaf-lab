@@ -837,7 +837,7 @@ export default function LLMAdminSettingsPage() {
                                     <OLFormText>
                                         {t(
                                             'review_max_tokens_help',
-                                            'Maximum length of the review report. Raise it if reports come out truncated with a large rubric. It is also the room reserved inside Max context tokens, so raising it lowers the longest document that still fits, and on a slow backend it makes the review take longer to write.'
+                                            'Upper limit for the answer of each review pass. The actual room adapts to what the document leaves free inside Max context tokens, so a large value here never blocks a long document; it only allows more thorough per-requirement analyses when there is room.'
                                         )}
                                     </OLFormText>
                                 </OLFormGroup>

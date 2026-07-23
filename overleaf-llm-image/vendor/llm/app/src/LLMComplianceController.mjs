@@ -137,11 +137,12 @@ async function countPromptTokens(llmApiUrl, llmApiKey, text) {
 // overleaf-lab: floor for the review timeout (the value it used to be fixed at).
 const REVIEW_MIN_TIMEOUT_MS = 60 * 60 * 1000
 
-// overleaf-lab: cap for the answer budget of ONE pass of a multi-pass review. A pass
-// checks a single requirement and yields one or two items, so it never needs the
-// whole-report budget; a small reserve also means the context guard leaves much more
-// room for the document. The single-pass fallback keeps the full admin budget.
-const PER_PASS_MAX_TOKENS = 4000
+// overleaf-lab: minimum useful answer room per pass. Below this even a brief verdict
+// risks truncation, so the document is refused (too_long) instead of reviewed badly.
+const MIN_ANSWER_TOKENS = 2000
+// overleaf-lab: margin subtracted from the context headroom to cover what our token
+// count cannot see (chat-template role markers, JSON grammar scaffolding).
+const CONTEXT_SAFETY_MARGIN = 256
 
 // overleaf-lab: JSON Schema for ONE review pass, enforced by the backend via
 // response_format so the model is CONSTRAINED to emit exactly this shape (llama.cpp
@@ -473,10 +474,6 @@ async function performReview(job) {
     // lines; prose degrades to a single pass over the whole text). Resolved fresh per
     // job, so editing the rubric in the admin UI changes the NEXT review's pass count.
     const { preamble, requirements } = splitRubric(rubric.guidelines)
-    const multiPass = requirements.length > 1
-    const perPassBudget = multiPass
-        ? Math.min(reviewMaxTokens, PER_PASS_MAX_TOKENS)
-        : reviewMaxTokens
 
     // Context-window guard. Budget the WHOLE prompt against the configured context
     // window: document + rubric guidelines + system prompt + room for the JSON
@@ -501,10 +498,20 @@ async function performReview(job) {
     )
     // overleaf-lab: expose the size for the result metadata and error reports.
     job.documentTokensEstimate = promptTokens
-    if (promptTokens + perPassBudget > maxContextTokens) {
-        // overleaf-lab: report the answer budget too. Without it the UI could only show
-        // "prompt / limit", which looks like it fits (65158 / 66000) while the refusal
-        // is really caused by the reserved answer room pushing the total over.
+
+    // overleaf-lab: ADAPTIVE per-pass answer budget. max_tokens is a CAP, not a
+    // target: a short answer costs the same under any cap, so the only real cost of a
+    // generous budget is the context room it reserves. Give each pass ALL the room the
+    // document leaves free (up to the admin budget) instead of a fixed slice: a
+    // thorough pass may legitimately enumerate dozens of figures in its analysis, and
+    // writing that enumeration out IS how the model verifies (starving it pushes the
+    // work back into attention, which is what multi-pass exists to avoid).
+    const headroom = maxContextTokens - promptTokens - CONTEXT_SAFETY_MARGIN
+    const perPassBudget = Math.min(reviewMaxTokens, headroom)
+    if (perPassBudget < MIN_ANSWER_TOKENS) {
+        // overleaf-lab: report the minimum reserve too. Without it the UI could only
+        // show "prompt / limit", which can look like it fits while the refusal is
+        // really caused by the answer room pushing the total over.
         return {
             type: 'error',
             errorCode: 'too_long',
@@ -512,7 +519,7 @@ async function performReview(job) {
                 'Document is too long for a single-pass review with the configured context window',
             documentTokensEstimate: promptTokens,
             maxContextTokens,
-            reviewMaxTokens: perPassBudget,
+            reviewMaxTokens: MIN_ANSWER_TOKENS,
         }
     }
 
@@ -674,25 +681,70 @@ async function performReview(job) {
                 continue
             }
 
-            const data = await response.json()
+            let data = await response.json()
             // overleaf-lab: a full-size prefill is the best throughput measurement
             // there is; cache-hit passes are rejected by the sample-size gate.
             recordTimings(data && data.timings)
-            const content = stripThinkTags(data?.choices?.[0]?.message?.content || '')
+            let content = stripThinkTags(data?.choices?.[0]?.message?.content || '')
 
-            let parsed
-            try {
-                parsed = extractJson(content)
-            } catch (err) {
+            // overleaf-lab: parse, with ONE retry on an unusable answer. The typical
+            // cause is a broad requirement (e.g. "check every citation") whose analysis
+            // enumeration blows the per-pass budget: the grammar-constrained JSON gets
+            // cut mid-way (finish_reason 'length') and cannot be parsed. The retry adds
+            // an explicit brevity instruction; thanks to the prompt cache it only pays
+            // its own generation, not another document prefill.
+            let parsed = null
+            for (let attempt = 0; attempt < 2 && parsed === null; attempt++) {
+                if (attempt === 1) {
+                    logger.warn(
+                        {
+                            projectId,
+                            pass: i,
+                            truncated: data?.choices?.[0]?.finish_reason === 'length',
+                        },
+                        '[LLM] compliance: pass answer unusable, retrying with brevity note'
+                    )
+                    const retryBody = {
+                        ...requestBody,
+                        messages: [
+                            {
+                                role: 'system',
+                                content: `${prompts.reviewSystemPrompt}\n\nIMPORTANT: your previous answer was unusable (likely cut off by the token budget). Be drastically more concise: keep "analysis" under 80 words, report counts instead of lists, and quote at most three short examples in "evidence".`,
+                            },
+                            requestBody.messages[1],
+                        ],
+                    }
+                    const retryResponse = await fetch(`${llmApiUrl}/chat/completions`, {
+                        method: 'POST',
+                        headers: chatHeaders,
+                        body: JSON.stringify(retryBody),
+                        signal: job.controller ? job.controller.signal : undefined,
+                    })
+                    if (!retryResponse.ok) {
+                        break
+                    }
+                    data = await retryResponse.json()
+                    recordTimings(data && data.timings)
+                    content = stripThinkTags(data?.choices?.[0]?.message?.content || '')
+                }
+                try {
+                    parsed = extractJson(content)
+                } catch (err) {
+                    parsed = null
+                }
+            }
+            if (parsed === null) {
                 logger.warn(
-                    { projectId, pass: i, err },
-                    '[LLM] compliance: could not parse pass JSON'
+                    { projectId, pass: i },
+                    '[LLM] compliance: pass answer unusable twice, marking na'
                 )
                 allItems.push({
                     requirement: job.currentRequirement,
                     status: 'na',
-                    evidence: 'The check returned an unparseable answer',
-                    suggestion: '',
+                    evidence:
+                        'The check produced an unusable answer twice (likely the analysis exceeded the per-pass token budget)',
+                    suggestion:
+                        'Consider splitting this requirement into narrower ones in the rubric',
                 })
                 continue
             }

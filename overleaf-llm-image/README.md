@@ -177,8 +177,12 @@ the rubric is written directly controls the review quality:
   `LLM_REVIEW_GEN_TPS`, when set, override the measurement.
 - **Per-pass failure containment.** A pass that fails (backend refusal, unparseable
   answer) marks only ITS requirement as "n.a." with the reason; the other passes
-  still run. A context overflow fails the whole review (every pass would hit it), and
-  a user cancel aborts between passes or kills the in-flight call.
+  still run. An unusable answer (typically a broad requirement whose analysis blows
+  the per-pass budget, cutting the grammar-constrained JSON mid-way) is retried once
+  with an explicit brevity instruction before giving up; the retry rides the prompt
+  cache, so it only pays its own generation. A context overflow fails the whole
+  review (every pass would hit it), and a user cancel aborts between passes or kills
+  the in-flight call.
 - **Guards.** The whole prompt (document + rubric + system + output room) is budgeted
   against Max context tokens; an over-long project is refused (`too_long`) instead of
   silently truncated. The prompt size is the backend's **exact** count: llama.cpp is
@@ -189,14 +193,15 @@ the rubric is written directly controls the review quality:
   answer room against the limit, because the reserved room is part of what causes it and
   hiding it made correct refusals look wrong. If a document still slips through, the
   backend's own context rejection is parsed and reported with the real numbers. The
-  output room reserved (and the model's `max_tokens`) is per pass: a single
-  requirement needs few items, so multi-pass reviews cap it at 4000 regardless of the
-  admin **Review answer budget** (which still applies in full to a single-pass rubric;
-  fallback `LLM_REVIEW_MAX_TOKENS`, default 12000). The smaller per-pass reserve also
-  means noticeably more room for the document. Any other backend refusal surfaces on
-  its own requirement instead of killing the review. If a specific review model is
-  configured, its presence is verified against the backend `/models` before running
-  (`model_unavailable` otherwise).
+  answer room per pass is **adaptive**: each pass gets all the context the document
+  leaves free (minus a small safety margin), capped by the admin **Review answer
+  budget** (fallback `LLM_REVIEW_MAX_TOKENS`, default 12000). `max_tokens` is a cap,
+  not a target, so a generous budget costs nothing on short answers while letting a
+  thorough pass enumerate dozens of figures in its analysis; the review is refused
+  (`too_long`) only when less than a minimum useful reserve (2000 tokens) remains.
+  Any other backend refusal surfaces on its own requirement instead of killing the
+  review. If a specific review model is configured, its presence is verified against
+  the backend `/models` before running (`model_unavailable` otherwise).
 - **Structured output.** Every pass pins `response_format` to a JSON schema, so a
   backend that supports it (llama.cpp, OpenAI) is constrained to emit exactly the
   per-requirement shape. That guarantees parseable output and, since prose is

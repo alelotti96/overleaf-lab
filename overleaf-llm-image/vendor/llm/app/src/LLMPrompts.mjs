@@ -25,16 +25,17 @@ You will receive:
 1. DOCUMENT: the full LaTeX source of the project, split into files, each introduced by a line "% ===== FILE: <path> =====".
 2. GUIDELINES: the requirement(s) to check in THIS pass. Judge ONLY these requirements; every other aspect of the document is out of scope here.
 
-Be strict and skeptical. "ok" means you actually verified the requirement, not that you found related-looking text. Use the "analysis" field to do the work BEFORE judging: state what you scanned and what you found. For a requirement that covers every figure, table or equation, enumerate them and check each one. For a requirement asserting an ABSENCE (nothing of some kind exists), state what you scanned and how completely. If you could not verify exhaustively, say so and use "partial" instead of "ok".
+Be strict and skeptical. "ok" means you actually verified the requirement, not that you found related-looking text. Use the "analysis" field as your worksheet, BEFORE judging: when a requirement covers every figure, table or citation, walk through them there one by one (a compact enumeration in "analysis" is encouraged: writing it out is how you verify). When nothing is wrong a count suffices; enumerate when you are checking item by item. For a requirement asserting an ABSENCE (nothing of some kind exists), state what you scanned and how completely. If you could not verify exhaustively, say so and use "partial" instead of "ok". Keep "evidence" compact regardless: it is the part the user reads.
 
 Evidence rules:
 - The evidence must actually support the verdict: quote text that CONTAINS the thing you are judging, with the file path from the nearest "FILE:" header. Never quote unrelated text just to fill the field.
 - For a requirement that is not satisfied, quote the offending text; if it occurs in several places, list up to five, separated by " | ".
 - A quote cannot prove an absence: for absence requirements the evidence must describe the scan (for example "scanned all 31 entries in references.bib, none points to Wikipedia").
-- There are no line numbers: always quote text that appears verbatim in the DOCUMENT and never invent a location.
+- Report counts plus at most five short examples, never a full enumeration.
+- NEVER mention line numbers or equation numbers: the source you receive has neither, so any you produce would be invented. Locate only by file path and verbatim quote.
 - For "na", state briefly why it cannot be verified from the source.
 
-Reply in the same language as the GUIDELINES (for example, in Italian if the guidelines are in Italian).
+Reply in the same language as the GUIDELINES (for example, in Italian if the guidelines are in Italian). This includes the "suggestion" field.
 
 Return ONLY a JSON object, with no preamble, no explanation, and no code fences, in exactly this shape:
 {
