@@ -54,16 +54,16 @@ export interface ComplianceError {
 // overleaf-lab: the phase drives the whole pane UI.
 export type CompliancePhase = 'idle' | 'queued' | 'running' | 'done' | 'error'
 
-// overleaf-lab: live progress estimate for a running review. The review is one long
-// blocking model call, so there is no exact percentage: elapsedMs is exact, but the
-// total is an estimate from the backend's throughput. 'reading' is the prefill phase
-// (the model reads the whole document, the long output-less part), 'writing' is when
-// it produces the report. The pane renders this as a moving bar with a phase label.
+// overleaf-lab: live progress of a running review. The review is multi-pass (one
+// model call per rubric requirement), so progress is REAL: passes completed over
+// total, plus the requirement currently being checked. 'preparing' is the document
+// assembly before the first pass, 'summarizing' the final small synthesis call.
 export interface ReviewProgress {
-    phase: 'preparing' | 'reading' | 'writing'
-    fraction: number // 0..1
+    phase: 'preparing' | 'checking' | 'summarizing'
+    passesDone: number
+    passesTotal: number
+    currentRequirement: string
     elapsedMs: number
-    estimatedTotalMs: number
 }
 
 // overleaf-lab: normalized error info the pane renders. The code lives in
@@ -199,19 +199,15 @@ export const useLLMCompliance = () => {
         phaseRef.current = phase
     }, [phase])
 
-    // overleaf-lab: advance the progress bar smoothly between the 2s status polls so
-    // it does not jump. Each poll re-syncs elapsedMs from the server (authoritative);
-    // between polls we tick it forward locally. Capped just under 100% until 'done'.
+    // overleaf-lab: tick the elapsed clock locally between the 2s status polls so it
+    // moves smoothly; each poll re-syncs it from the server (authoritative). The bar
+    // itself only moves on real pass completions reported by the server.
     useEffect(() => {
         if (phase !== 'running') return undefined
         const id = window.setInterval(() => {
-            setProgress(prev => {
-                if (!prev || prev.estimatedTotalMs <= 0) return prev
-                const elapsedMs = prev.elapsedMs + 1000
-                // Same 0.95 cap the server uses, so a poll never snaps the bar back.
-                const fraction = Math.min(0.95, elapsedMs / prev.estimatedTotalMs)
-                return { ...prev, elapsedMs, fraction }
-            })
+            setProgress(prev =>
+                prev ? { ...prev, elapsedMs: prev.elapsedMs + 1000 } : prev
+            )
         }, 1000)
         return () => window.clearInterval(id)
     }, [phase])
@@ -310,27 +306,34 @@ export const useLLMCompliance = () => {
                     case 'running':
                         setPhase('running')
                         if (
-                            typeof json.estimatedTotalMs === 'number' &&
-                            json.estimatedTotalMs > 0
+                            typeof json.passesTotal === 'number' &&
+                            json.passesTotal > 0
                         ) {
                             setProgress({
                                 phase:
-                                    json.phase === 'writing' || json.phase === 'reading'
-                                        ? json.phase
-                                        : 'reading',
-                                fraction:
-                                    typeof json.progress === 'number' ? json.progress : 0,
+                                    json.phase === 'summarizing'
+                                        ? 'summarizing'
+                                        : 'checking',
+                                passesDone:
+                                    typeof json.passesDone === 'number'
+                                        ? json.passesDone
+                                        : 0,
+                                passesTotal: json.passesTotal,
+                                currentRequirement:
+                                    typeof json.currentRequirement === 'string'
+                                        ? json.currentRequirement
+                                        : '',
                                 elapsedMs:
                                     typeof json.elapsedMs === 'number' ? json.elapsedMs : 0,
-                                estimatedTotalMs: json.estimatedTotalMs,
                             })
                         } else {
-                            // Still assembling the document: no estimate yet.
+                            // Still assembling the document: the rubric is not split yet.
                             setProgress({
                                 phase: 'preparing',
-                                fraction: 0,
+                                passesDone: 0,
+                                passesTotal: 0,
+                                currentRequirement: '',
                                 elapsedMs: 0,
-                                estimatedTotalMs: 0,
                             })
                         }
                         break

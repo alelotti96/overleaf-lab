@@ -26,12 +26,9 @@ const REVIEW_MAX_TOKENS =
         ? Number.parseInt(process.env.LLM_REVIEW_MAX_TOKENS, 10)
         : 12000
 
-// overleaf-lab: rough backend throughput, used ONLY to show a progress estimate in
-// the UI (the review is one long blocking call, there is no exact percentage). The
-// two phases are prefill (the model reads the whole document, the long output-less
-// part) and generation (it writes the report). Defaults are measured on the reference
-// CPU backend; override with LLM_REVIEW_PREFILL_TPS / LLM_REVIEW_GEN_TPS if yours
-// differs (a wrong estimate only skews the bar, never the result).
+// overleaf-lab: rough backend throughput, now used only to SIZE THE PER-PASS TIMEOUT
+// (progress is pass-based and needs no time estimate, so a wrong rate can only make
+// the safety timeout more generous, never mislead the user).
 // An explicit env value always wins (an operator pinning a number), otherwise we use
 // what we MEASURED from the backend, otherwise these last-resort fallbacks. The
 // fallbacks are CPU-era numbers and are wrong by ~2 orders of magnitude on a GPU, so
@@ -46,26 +43,22 @@ const ENV_GEN_TPS =
         : null
 const FALLBACK_PREFILL_TPS = 80
 const FALLBACK_GEN_TPS = 4
-const REVIEW_EST_OUTPUT_TOKENS = 1500 // typical size of a structured JSON report
 
-// overleaf-lab: throughput measured from the backend, so the progress bar calibrates
-// itself instead of asking an admin to guess tokens/sec. llama.cpp reports
-// timings.prompt_per_second / predicted_per_second on every response, so a real review
-// gives the exact numbers for free; a small probe seeds them before the FIRST review.
-// Process-local on purpose: it is a display estimate, not state worth persisting, and
-// one review (or one probe) re-learns it after a restart.
+// overleaf-lab: throughput measured from the backend. llama.cpp reports
+// timings.prompt_per_second / predicted_per_second on every response, so each real
+// review calibrates the next one for free. Process-local on purpose: after a restart
+// the first review just runs on the fallbacks (only the timeout cap depends on this).
 let measuredPrefillTps = null
 let measuredGenTps = null
-let ratesProbed = false
 
 // overleaf-lab: sample-size gates for trusting a timings measurement. llama.cpp
 // reports prompt_per_second over the tokens it ACTUALLY evaluated (prompt_n): on a
 // prompt-cache hit that can be a single token, and the resulting "rate" is pure
 // per-request overhead (~76 tok/s observed where the true prefill was ~5400), so
 // accepting it would poison a good calibration. Two tiers: a STRONG sample (a real
-// review) always updates; a smaller one is accepted only as the FIRST seed (that is
-// how the probe gets in, its ~660/8-token samples sit below the strong bars) and
-// never below the MIN floor, so a cache-hit rerun can never become the calibration.
+// review) always updates; a smaller one is accepted only as the FIRST seed of an
+// empty calibration and never below the MIN floor, so a cache-hit rerun (prompt_n=1)
+// can never become the calibration.
 const STRONG_PREFILL_N = 2048
 const STRONG_GEN_N = 256
 const MIN_PREFILL_N = 64
@@ -107,48 +100,6 @@ function recordTimings(timings) {
     }
 }
 
-// overleaf-lab: one cheap request whose only purpose is to read `timings`, so even the
-// first review shows a sensible bar. Deliberately lazy (right before the first review)
-// rather than at boot: at boot the backend may not be up yet, and a probe would add a
-// network call plus retries to Overleaf startup for no gain. Best-effort: any failure
-// leaves the fallbacks in place, and the first real review corrects them anyway.
-// The prompt is padded so prompt_per_second is measured on a non-trivial prefill; the
-// probe's samples are still small, so recordTimings only accepts them as a first seed
-// and the first real review replaces them with a full-size measurement.
-async function probeBackendRates(llmApiUrl, llmApiKey, model) {
-    ratesProbed = true
-    try {
-        const headers = { 'Content-Type': 'application/json' }
-        if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
-            headers.Authorization = `Bearer ${llmApiKey}`
-        }
-        const filler = 'The quick brown fox jumps over the lazy dog. '.repeat(60)
-        const response = await fetch(`${llmApiUrl}/chat/completions`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                model,
-                messages: [{ role: 'user', content: `${filler}\n\nReply with: ok` }],
-                max_tokens: 8,
-                temperature: 0,
-            }),
-        })
-        if (!response.ok) {
-            return
-        }
-        const data = await response.json()
-        recordTimings(data && data.timings)
-        if (measuredPrefillTps || measuredGenTps) {
-            logger.debug(
-                { prefillTps: measuredPrefillTps, genTps: measuredGenTps },
-                '[LLM] compliance: measured backend throughput for the progress estimate'
-            )
-        }
-    } catch (err) {
-        logger.debug({ err }, '[LLM] compliance: throughput probe failed, using fallbacks')
-    }
-}
-
 // overleaf-lab: ask the backend for the EXACT token count of the prompt. llama.cpp
 // exposes /tokenize, and the router maps <base>/v1/tokenize onto the server root where
 // it actually lives, so the module only needs the one OpenAI-style base URL.
@@ -186,34 +137,91 @@ async function countPromptTokens(llmApiUrl, llmApiKey, text) {
 // overleaf-lab: floor for the review timeout (the value it used to be fixed at).
 const REVIEW_MIN_TIMEOUT_MS = 60 * 60 * 1000
 
-// overleaf-lab: JSON Schema for the review answer, enforced by the backend via
+// overleaf-lab: cap for the answer budget of ONE pass of a multi-pass review. A pass
+// checks a single requirement and yields one or two items, so it never needs the
+// whole-report budget; a small reserve also means the context guard leaves much more
+// room for the document. The single-pass fallback keeps the full admin budget.
+const PER_PASS_MAX_TOKENS = 4000
+
+// overleaf-lab: JSON Schema for ONE review pass, enforced by the backend via
 // response_format so the model is CONSTRAINED to emit exactly this shape (llama.cpp
 // and OpenAI both support json_schema). This removes the "No JSON object found"
 // failure class by construction and, because prose is forbidden, also stops a
 // reasoning model from spending the whole answer budget on internal thinking.
+// "analysis" is deliberately the FIRST property: the grammar enforces field order,
+// so the model must write down what it scanned and found BEFORE it commits to a
+// verdict (structured look-before-you-judge, with no chat-template thinking needed).
+// It is consumed at generation time and dropped from the stored result.
 // extractJson below is kept only as a defensive fallback for a backend that ignores
-// the field. The fields mirror what the parser reads (see performReview).
-const REVIEW_JSON_SCHEMA = {
+// the field. The other fields mirror what the parser reads (see performReview).
+const REVIEW_ITEMS_SCHEMA = {
     type: 'object',
     additionalProperties: false,
     properties: {
-        summary: { type: 'string' },
         items: {
             type: 'array',
             items: {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                    analysis: { type: 'string' },
                     requirement: { type: 'string' },
                     status: { type: 'string', enum: ['ok', 'partial', 'missing', 'na'] },
                     evidence: { type: 'string' },
                     suggestion: { type: 'string' },
                 },
-                required: ['requirement', 'status', 'evidence', 'suggestion'],
+                required: ['analysis', 'requirement', 'status', 'evidence', 'suggestion'],
             },
         },
     },
-    required: ['summary', 'items'],
+    required: ['items'],
+}
+
+// overleaf-lab: schema for the final summary synthesis call (items in, 2-4 sentences out).
+const REVIEW_SUMMARY_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    properties: { summary: { type: 'string' } },
+    required: ['summary'],
+}
+
+// overleaf-lab: split the rubric guidelines into individually checkable requirements,
+// one model pass each. Rule (documented in the admin UI): one requirement per numbered
+// line ("1.", "2)", ...); continuation lines belong to the requirement above; text
+// before the first numbered line is a preamble repeated in every pass as context.
+// Bulleted lines ("-", "*", "•") split too, but only when there are no numbered lines,
+// so sub-bullets inside numbered requirements do not fragment them. A rubric with no
+// recognizable structure degrades gracefully to today's single pass over the whole
+// text, never to an arbitrary split.
+function splitRubric(text) {
+    const raw = String(text || '')
+    const NUMBERED = /^\s*\d{1,3}[.)]\s+/
+    const BULLET = /^\s*[-*•]\s+/
+    const lines = raw.split('\n')
+    const numberedCount = lines.filter(l => NUMBERED.test(l)).length
+    const marker = numberedCount >= 2 ? NUMBERED : BULLET
+    const requirements = []
+    const preambleLines = []
+    let current = null
+    for (const line of lines) {
+        if (marker.test(line)) {
+            if (current) {
+                requirements.push(current.join('\n').trim())
+            }
+            current = [line.trim()]
+        } else if (current) {
+            current.push(line)
+        } else {
+            preambleLines.push(line)
+        }
+    }
+    if (current) {
+        requirements.push(current.join('\n').trim())
+    }
+    if (requirements.length < 2) {
+        return { preamble: '', requirements: [raw.trim()] }
+    }
+    return { preamble: preambleLines.join('\n').trim(), requirements }
 }
 
 // overleaf-lab: the compliance reviewer system prompt now lives in LLMPrompts.mjs as
@@ -461,10 +469,20 @@ async function performReview(job) {
         }
     }
 
+    // overleaf-lab: split the rubric into one requirement per pass (numbered/bulleted
+    // lines; prose degrades to a single pass over the whole text). Resolved fresh per
+    // job, so editing the rubric in the admin UI changes the NEXT review's pass count.
+    const { preamble, requirements } = splitRubric(rubric.guidelines)
+    const multiPass = requirements.length > 1
+    const perPassBudget = multiPass
+        ? Math.min(reviewMaxTokens, PER_PASS_MAX_TOKENS)
+        : reviewMaxTokens
+
     // Context-window guard. Budget the WHOLE prompt against the configured context
     // window: document + rubric guidelines + system prompt + room for the JSON
     // answer. The rubric can be large, so it must count too, otherwise the document
-    // could pass here and the full prompt still overflow.
+    // could pass here and the full prompt still overflow. Counting ALL the guidelines
+    // is a safe upper bound: each pass actually sends only one requirement.
     // overleaf-lab: prefer the backend's exact count; fall back to the heuristic when
     // it has no /tokenize (see countPromptTokens).
     const heuristicPromptTokens =
@@ -481,9 +499,9 @@ async function performReview(job) {
         { projectId, promptTokens, exact: exactPromptTokens != null, heuristicPromptTokens },
         '[LLM] compliance: prompt size'
     )
-    // overleaf-lab: expose the size so the status endpoint can estimate progress.
+    // overleaf-lab: expose the size for the result metadata and error reports.
     job.documentTokensEstimate = promptTokens
-    if (promptTokens + reviewMaxTokens > maxContextTokens) {
+    if (promptTokens + perPassBudget > maxContextTokens) {
         // overleaf-lab: report the answer budget too. Without it the UI could only show
         // "prompt / limit", which looks like it fits (65158 / 66000) while the refusal
         // is really caused by the reserved answer room pushing the total over.
@@ -494,7 +512,7 @@ async function performReview(job) {
                 'Document is too long for a single-pass review with the configured context window',
             documentTokensEstimate: promptTokens,
             maxContextTokens,
-            reviewMaxTokens,
+            reviewMaxTokens: perPassBudget,
         }
     }
 
@@ -535,169 +553,248 @@ async function performReview(job) {
         }
     }
 
-    // Build and send the review request.
-    const userContent = `GUIDELINES:\n${rubric.guidelines}\n\nDOCUMENT:\n${assembled}`
-    const requestBody = {
-        model: reviewModel,
-        messages: [
-            { role: 'system', content: prompts.reviewSystemPrompt },
-            { role: 'user', content: userContent },
-        ],
-        max_tokens: reviewMaxTokens,
-        temperature: 0.2,
-        // overleaf-lab: constrain the answer to the review JSON shape (see
-        // REVIEW_JSON_SCHEMA). Guarantees parseable output and, because prose is
-        // forbidden, prevents a reasoning model from burning the budget on thinking.
-        // enable_thinking:false for a local reasoning model is handled at the router
-        // (llama-only), not here, so this stays portable to cloud backends.
-        response_format: {
-            type: 'json_schema',
-            json_schema: {
-                name: 'compliance_review',
-                strict: true,
-                schema: REVIEW_JSON_SCHEMA,
+    // Build the per-pass request pieces. The document comes FIRST in the user message
+    // so the llama.cpp prompt cache can reuse its prefill across passes: with the
+    // requirement appended AFTER the document, passes 2..N only pay for their own few
+    // hundred tokens instead of re-reading the whole project.
+    const documentBlock = `DOCUMENT:\n${assembled}\n\n`
+    const guidelinesFor = requirement =>
+        `GUIDELINES (check ONLY these):\n${preamble ? `${preamble}\n` : ''}${requirement}`
+
+    // overleaf-lab: send Authorization only when a non-empty key exists, so a
+    // keyless local server is not sent a malformed empty Bearer header.
+    const chatHeaders = { 'Content-Type': 'application/json' }
+    if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
+        chatHeaders.Authorization = `Bearer ${llmApiKey}`
+    }
+
+    // overleaf-lab: per-pass safety timeout, SIZED FROM THE WORK with the old fixed
+    // hour as the floor. The worst case per pass is a full document prefill (the
+    // prompt cache makes later passes much cheaper, but a cap must not rely on that)
+    // plus a full-budget generation. These fetches do not pass through nginx (the
+    // client polls the job), so no proxy limit applies. Recomputed every pass, since
+    // timings from completed passes refine the measured rates.
+    const passTimeoutMs = () => {
+        const rates = effectiveRates()
+        const worstCaseMs =
+            Math.round((promptTokens / rates.prefillTps) * 1000) +
+            Math.round((perPassBudget / rates.genTps) * 1000)
+        return Math.max(REVIEW_MIN_TIMEOUT_MS, Math.round(worstCaseMs * 1.5))
+    }
+
+    // overleaf-lab: pass-based progress, read by the status endpoint.
+    job.passesTotal = requirements.length
+    job.passesDone = 0
+
+    const allItems = []
+    for (let i = 0; i < requirements.length; i++) {
+        // A cancel can land BETWEEN passes; stop before spending another model call
+        // (an in-flight fetch is aborted by the shared controller signal instead).
+        if (job.status === 'cancelled') {
+            throw new Error('review cancelled between passes')
+        }
+        const requirement = requirements[i]
+        job.passesDone = i
+        job.currentRequirement = requirement.replace(/\s+/g, ' ').slice(0, 160)
+
+        const requestBody = {
+            model: reviewModel,
+            messages: [
+                { role: 'system', content: prompts.reviewSystemPrompt },
+                { role: 'user', content: documentBlock + guidelinesFor(requirement) },
+            ],
+            max_tokens: perPassBudget,
+            temperature: 0.2,
+            // overleaf-lab: constrain the answer to the per-pass JSON shape (see
+            // REVIEW_ITEMS_SCHEMA). Guarantees parseable output and, because prose is
+            // forbidden, prevents a reasoning model from burning the budget on
+            // thinking. enable_thinking:false for a local reasoning model is handled
+            // at the router (llama-only), not here, staying portable to cloud backends.
+            response_format: {
+                type: 'json_schema',
+                json_schema: {
+                    name: 'compliance_review',
+                    strict: true,
+                    schema: REVIEW_ITEMS_SCHEMA,
+                },
             },
-        },
-    }
-
-    // overleaf-lab: the review is async (the client polls the job status), so this
-    // web->LLM fetch does NOT pass through nginx and is not bound by its 600s proxy
-    // limit. It aborts the job's own AbortController, the same signal the cancel
-    // endpoint uses, so both a timeout and a user cancel abort the in-flight fetch.
-    //
-    // The timeout is SIZED FROM THE WORK instead of being a fixed hour: prefill of the
-    // whole document plus a full-budget generation is the worst case. With a large
-    // answer budget on a slow CPU backend that worst case exceeds an hour, and a fixed
-    // 60 min would kill a review that was still legitimately writing. The old fixed
-    // value stays as the floor, so short reviews are unaffected.
-    // overleaf-lab: before the first review, spend one cheap request learning the
-    // backend's real speed, so the bar is not off by orders of magnitude on hardware
-    // that differs from the fallbacks. Skipped when an operator pinned the rates.
-    if (!ratesProbed && !(ENV_PREFILL_TPS && ENV_GEN_TPS)) {
-        await probeBackendRates(llmApiUrl, llmApiKey, reviewModel)
-    }
-    const rates = effectiveRates()
-    const estimatedPrefillMs = Math.round(
-        (promptTokens / rates.prefillTps) * 1000
-    )
-    const worstCaseMs =
-        estimatedPrefillMs + Math.round((reviewMaxTokens / rates.genTps) * 1000)
-    const reviewTimeoutMs = Math.max(
-        REVIEW_MIN_TIMEOUT_MS,
-        Math.round(worstCaseMs * 1.5)
-    )
-    const timeout = setTimeout(() => {
-        if (job.controller) {
-            job.controller.abort()
         }
-    }, reviewTimeoutMs)
 
+        const timeout = setTimeout(() => {
+            if (job.controller) {
+                job.controller.abort()
+            }
+        }, passTimeoutMs())
+        try {
+            const response = await fetch(`${llmApiUrl}/chat/completions`, {
+                method: 'POST',
+                headers: chatHeaders,
+                body: JSON.stringify(requestBody),
+                // overleaf-lab: job signal, so cancel (and the pass timeout) abort it.
+                signal: job.controller ? job.controller.signal : undefined,
+            })
+
+            if (!response.ok) {
+                const errorText = await response.text()
+                logger.error(
+                    { projectId, userId, status: response.status, pass: i, error: errorText },
+                    '[LLM] compliance: LLM API error'
+                )
+                const backendError = parseBackendError(errorText)
+
+                // overleaf-lab: a context overflow means the DOCUMENT does not fit, so
+                // every other pass would fail identically: fail the whole job, with the
+                // backend's real numbers (they beat our own estimate).
+                if (backendError.isContext) {
+                    return {
+                        type: 'error',
+                        errorCode: 'too_long',
+                        message:
+                            'The document is too long for the review model context window',
+                        documentTokensEstimate:
+                            backendError.promptTokens || promptTokens,
+                        maxContextTokens:
+                            backendError.contextTokens || maxContextTokens,
+                        reviewMaxTokens: perPassBudget,
+                    }
+                }
+
+                // Any other refusal: record THIS requirement as unverifiable and move
+                // on, so one bad pass no longer kills the other N-1.
+                allItems.push({
+                    requirement: job.currentRequirement,
+                    status: 'na',
+                    evidence: `The check could not run (HTTP ${response.status}${
+                        backendError.message
+                            ? `: ${backendError.message.slice(0, 200)}`
+                            : ''
+                    })`,
+                    suggestion: '',
+                })
+                continue
+            }
+
+            const data = await response.json()
+            // overleaf-lab: a full-size prefill is the best throughput measurement
+            // there is; cache-hit passes are rejected by the sample-size gate.
+            recordTimings(data && data.timings)
+            const content = stripThinkTags(data?.choices?.[0]?.message?.content || '')
+
+            let parsed
+            try {
+                parsed = extractJson(content)
+            } catch (err) {
+                logger.warn(
+                    { projectId, pass: i, err },
+                    '[LLM] compliance: could not parse pass JSON'
+                )
+                allItems.push({
+                    requirement: job.currentRequirement,
+                    status: 'na',
+                    evidence: 'The check returned an unparseable answer',
+                    suggestion: '',
+                })
+                continue
+            }
+
+            // overleaf-lab: "analysis" is dropped on purpose: its job was forcing the
+            // model to look before judging, and that job ends at generation time.
+            const passItems = Array.isArray(parsed.items)
+                ? parsed.items.map(it => ({
+                      requirement:
+                          String(it.requirement || '') || job.currentRequirement,
+                      status: ['ok', 'partial', 'missing', 'na'].includes(it.status)
+                          ? it.status
+                          : 'na',
+                      evidence: String(it.evidence || ''),
+                      suggestion: String(it.suggestion || ''),
+                  }))
+                : []
+            allItems.push(...passItems)
+        } catch (err) {
+            // An abort (user cancel or the pass timeout) must stop the whole review;
+            // anything else downgrades to an unverifiable requirement.
+            if (job.status === 'cancelled' || (err && err.name === 'AbortError')) {
+                throw err
+            }
+            logger.warn({ projectId, pass: i, err }, '[LLM] compliance: pass failed')
+            allItems.push({
+                requirement: job.currentRequirement,
+                status: 'na',
+                evidence: `The check failed (${err.message})`,
+                suggestion: '',
+            })
+        } finally {
+            clearTimeout(timeout)
+        }
+    }
+    job.passesDone = requirements.length
+    job.currentRequirement = ''
+
+    // overleaf-lab: synthesize the overall summary from the ITEMS ONLY (no document,
+    // so this call is small and cheap). Best-effort: a failure leaves the summary
+    // empty instead of failing a review whose per-requirement work already succeeded.
+    let summary = ''
     try {
-        // overleaf-lab: send Authorization only when a non-empty key exists, so a
-        // keyless local server is not sent a malformed empty Bearer header.
-        const chatHeaders = { 'Content-Type': 'application/json' }
-        if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
-            chatHeaders.Authorization = `Bearer ${llmApiKey}`
+        const summaryBody = {
+            model: reviewModel,
+            messages: [
+                {
+                    role: 'system',
+                    content:
+                        'You summarize the outcome of a compliance review of a LaTeX document against writing guidelines. Given the review items, write a 2 to 4 sentence overall assessment IN THE SAME LANGUAGE as the items, mentioning the main problems found (or that none were found). Return ONLY a JSON object shaped {"summary": "..."}.',
+                },
+                {
+                    role: 'user',
+                    content: JSON.stringify({
+                        rubric: rubric.name,
+                        items: allItems.map(it => ({
+                            requirement: it.requirement,
+                            status: it.status,
+                            evidence: it.evidence.slice(0, 200),
+                        })),
+                    }),
+                },
+            ],
+            max_tokens: 500,
+            temperature: 0.2,
+            response_format: {
+                type: 'json_schema',
+                json_schema: {
+                    name: 'compliance_summary',
+                    strict: true,
+                    schema: REVIEW_SUMMARY_SCHEMA,
+                },
+            },
         }
-
-        // overleaf-lab: the model call starts now. Seed the progress estimate the
-        // status endpoint reports: prefill (reading the whole prompt) is the long,
-        // output-less phase, then generation writes the report.
-        job.progressStartedAt = Date.now()
-        job.estimatedPrefillMs = estimatedPrefillMs
-        // The bar uses the TYPICAL report size, not the full budget: the budget is a
-        // cap the model rarely fills, so using it here would make the bar crawl.
-        job.estimatedTotalMs =
-            estimatedPrefillMs +
-            Math.round((REVIEW_EST_OUTPUT_TOKENS / rates.genTps) * 1000)
-
         const response = await fetch(`${llmApiUrl}/chat/completions`, {
             method: 'POST',
             headers: chatHeaders,
-            body: JSON.stringify(requestBody),
-            // overleaf-lab: pass the job signal so cancel (and the review timeout) abort it.
-            signal: job.controller.signal,
+            body: JSON.stringify(summaryBody),
+            signal: job.controller ? job.controller.signal : undefined,
         })
-
-        clearTimeout(timeout)
-
-        if (!response.ok) {
-            const errorText = await response.text()
-            logger.error(
-                { projectId, userId, status: response.status, error: errorText },
-                '[LLM] compliance: LLM API error'
-            )
-            const backendError = parseBackendError(errorText)
-
-            // overleaf-lab: a context overflow is reported by the backend with the
-            // real numbers, which beat our own estimate. Surface it as 'too_long' (the
-            // UI already renders that with the token counts) instead of letting it
-            // become the generic "failed or timed out", which named the wrong cause.
-            if (backendError.isContext) {
-                return {
-                    type: 'error',
-                    errorCode: 'too_long',
-                    message:
-                        'The document is too long for the review model context window',
-                    documentTokensEstimate:
-                        backendError.promptTokens || promptTokens,
-                    maxContextTokens:
-                        backendError.contextTokens || maxContextTokens,
-                    reviewMaxTokens,
-                }
-            }
-
-            // Any other backend refusal: show the status and the backend's own text
-            // (trimmed), so the user sees the real reason rather than a timeout.
-            const detail = backendError.message.slice(0, 300)
-            return {
-                type: 'error',
-                errorCode: 'backend_error',
-                message: `The review model rejected the request (HTTP ${response.status})${
-                    detail ? `: ${detail}` : ''
-                }`,
-            }
-        }
-
-        const data = await response.json()
-        // overleaf-lab: the real review is the most representative measurement there
-        // is (a full-size prefill), so let it refine the rates for the next one.
-        recordTimings(data && data.timings)
-        const content = stripThinkTags(data?.choices?.[0]?.message?.content || '')
-
-        let parsed
-        try {
-            parsed = extractJson(content)
-        } catch (err) {
-            logger.warn({ projectId, err }, '[LLM] compliance: could not parse review JSON')
-            throw new Error('Could not parse the review result')
-        }
-
-        const items = Array.isArray(parsed.items)
-            ? parsed.items.map(it => ({
-                  requirement: String(it.requirement || ''),
-                  status: ['ok', 'partial', 'missing', 'na'].includes(it.status) ? it.status : 'na',
-                  evidence: String(it.evidence || ''),
-                  suggestion: String(it.suggestion || ''),
-              }))
-            : []
-
-        return {
-            type: 'done',
-            result: {
-                rubric: { id: rubric.id, name: rubric.name },
-                model: reviewModel,
-                documentTokensEstimate: promptTokens,
-                maxContextTokens,
-                summary: String(parsed.summary || ''),
-                items,
-            },
+        if (response.ok) {
+            const data = await response.json()
+            const content = stripThinkTags(data?.choices?.[0]?.message?.content || '')
+            summary = String(extractJson(content).summary || '')
         }
     } catch (err) {
-        clearTimeout(timeout)
-        // overleaf-lab: rethrow so processQueue can tell a cancel (job already
-        // 'cancelled') from the review timeout or a real failure.
-        throw err
+        if (job.status === 'cancelled' || (err && err.name === 'AbortError')) {
+            throw err
+        }
+        logger.warn({ projectId, err }, '[LLM] compliance: summary synthesis failed')
+    }
+
+    return {
+        type: 'done',
+        result: {
+            rubric: { id: rubric.id, name: rubric.name },
+            model: reviewModel,
+            documentTokensEstimate: promptTokens,
+            maxContextTokens,
+            summary,
+            items: allItems,
+        },
     }
 }
 
@@ -829,10 +926,11 @@ async function startReview(req, res) {
         createdAt: Date.now(),
         startedAt: null,
         finishedAt: null,
-        // overleaf-lab: progress estimate, filled in when the model call starts.
-        progressStartedAt: null,
-        estimatedPrefillMs: null,
-        estimatedTotalMs: null,
+        // overleaf-lab: pass-based progress (one model call per requirement),
+        // filled in by performReview and read by the status endpoint.
+        passesTotal: null,
+        passesDone: 0,
+        currentRequirement: '',
     }
     jobs.set(job.id, job)
     queue.push(job.id)
@@ -861,25 +959,21 @@ async function statusReview(req, res) {
         case 'queued':
             return res.json({ ok: true, status: 'queued', position: jobsAhead(job.id) })
         case 'running': {
-            // overleaf-lab: report an estimated progress so the UI can show a bar
-            // instead of an open-ended spinner. Before the model call starts we are
-            // still assembling the document (no estimate yet): report 'preparing'.
-            if (!job.progressStartedAt || !job.estimatedTotalMs) {
+            // overleaf-lab: pass-based progress. Each requirement is checked by its
+            // own model call, so the bar reports REAL progress (passes completed over
+            // total) instead of a time estimate. Before the rubric is split we are
+            // still assembling the document: report 'preparing'.
+            if (!job.passesTotal) {
                 return res.json({ ok: true, status: 'running', phase: 'preparing' })
             }
-            const elapsedMs = Date.now() - job.progressStartedAt
-            const phase = elapsedMs < job.estimatedPrefillMs ? 'reading' : 'writing'
-            const progress = Math.max(
-                0,
-                Math.min(0.95, elapsedMs / job.estimatedTotalMs)
-            )
             return res.json({
                 ok: true,
                 status: 'running',
-                phase,
-                elapsedMs,
-                estimatedTotalMs: job.estimatedTotalMs,
-                progress,
+                phase: job.passesDone >= job.passesTotal ? 'summarizing' : 'checking',
+                passesDone: job.passesDone,
+                passesTotal: job.passesTotal,
+                currentRequirement: job.currentRequirement || '',
+                elapsedMs: Date.now() - (job.startedAt || job.createdAt),
             })
         }
         case 'done':

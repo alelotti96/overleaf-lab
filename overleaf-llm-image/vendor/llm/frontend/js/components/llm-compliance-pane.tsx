@@ -292,21 +292,24 @@ function LLMCompliancePane() {
                     </span>
                 </div>
 
-                {/* Summary block */}
-                <div
-                    style={{
-                        padding: 10,
-                        borderRadius: 6,
-                        // overleaf-lab: translucent grey (works on light and dark)
-                        // instead of the fixed light --bg-light-secondary, which was a
-                        // white box on the dark theme, and an adaptive text color.
-                        background: 'rgba(125,125,125,0.14)',
-                        color: 'var(--content-primary-themed)',
-                        overflowWrap: 'anywhere',
-                    }}
-                >
-                    {result.summary}
-                </div>
+                {/* Summary block (synthesized in a final pass; may be empty if that
+                    best-effort call failed, in which case show nothing) */}
+                {result.summary && (
+                    <div
+                        style={{
+                            padding: 10,
+                            borderRadius: 6,
+                            // overleaf-lab: translucent grey (works on light and dark)
+                            // instead of the fixed light --bg-light-secondary, which was
+                            // a white box on the dark theme, and an adaptive text color.
+                            background: 'rgba(125,125,125,0.14)',
+                            color: 'var(--content-primary-themed)',
+                            overflowWrap: 'anywhere',
+                        }}
+                    >
+                        {result.summary}
+                    </div>
+                )}
 
                 <div style={{ color: MUTED, fontSize: '0.85em', marginTop: 6 }}>
                     {t('model_label', 'Model')}: {result.model} - ~
@@ -396,7 +399,9 @@ function LLMCompliancePane() {
                 </div>
             )}
 
-            {/* overleaf-lab: running state - phase label + estimated progress bar + cancel */}
+            {/* overleaf-lab: running state - real pass-based progress + cancel.
+                The review runs one model call per rubric requirement, so the bar
+                moves on actual completions, not on a time estimate. */}
             {phase === 'running' && (
                 <div style={{ marginTop: 12 }}>
                     <div
@@ -409,18 +414,19 @@ function LLMCompliancePane() {
                     >
                         <MaterialIcon
                             type={
-                                progress?.phase === 'writing'
+                                progress?.phase === 'summarizing'
                                     ? 'edit_note'
-                                    : progress?.phase === 'reading'
-                                      ? 'menu_book'
+                                    : progress?.phase === 'checking'
+                                      ? 'rule'
                                       : 'hourglass_empty'
                             }
                         />
                         <span>
-                            {progress?.phase === 'writing'
-                                ? t('review_writing', 'Writing the report...')
-                                : progress?.phase === 'reading'
-                                  ? t('review_reading', 'Reading the document...')
+                            {progress?.phase === 'summarizing'
+                                ? t('review_summarizing', 'Writing the summary...')
+                                : progress?.phase === 'checking'
+                                  ? t('review_checking', 'Checking requirement') +
+                                    ` ${Math.min(progress.passesDone + 1, progress.passesTotal)}/${progress.passesTotal}`
                                   : t(
                                         'review_preparing',
                                         'Preparing the document...'
@@ -428,9 +434,21 @@ function LLMCompliancePane() {
                         </span>
                     </div>
 
-                    {/* overleaf-lab: bar appears once the model call started and we
-                        have an estimate. It is an estimate, not exact progress. */}
-                    {progress && progress.estimatedTotalMs > 0 && (
+                    {/* overleaf-lab: the requirement being checked right now */}
+                    {progress?.phase === 'checking' && progress.currentRequirement && (
+                        <div
+                            style={{
+                                marginTop: 4,
+                                fontSize: '0.8em',
+                                color: MUTED,
+                                overflowWrap: 'anywhere',
+                            }}
+                        >
+                            {progress.currentRequirement}
+                        </div>
+                    )}
+
+                    {progress && progress.passesTotal > 0 && (
                         <>
                             <div
                                 style={{
@@ -444,9 +462,14 @@ function LLMCompliancePane() {
                                 <div
                                     style={{
                                         height: '100%',
-                                        width: `${Math.round(progress.fraction * 100)}%`,
+                                        width: `${Math.round(
+                                            (progress.phase === 'summarizing'
+                                                ? 0.97
+                                                : progress.passesDone /
+                                                  progress.passesTotal) * 100
+                                        )}%`,
                                         background: 'var(--green-60, #198754)',
-                                        transition: 'width 1s linear',
+                                        transition: 'width 0.5s ease',
                                     }}
                                 />
                             </div>
@@ -460,29 +483,13 @@ function LLMCompliancePane() {
                                     gap: 8,
                                 }}
                             >
+                                <span>{formatDuration(progress.elapsedMs)}</span>
                                 <span>
-                                    {formatDuration(progress.elapsedMs)} /{' '}
-                                    {formatDuration(progress.estimatedTotalMs)}{' '}
-                                    {t('review_estimate', '(estimate)')}
+                                    {progress.passesDone}/{progress.passesTotal}
                                 </span>
-                                <span>{Math.round(progress.fraction * 100)}%</span>
                             </div>
                         </>
                     )}
-
-                    <div
-                        style={{
-                            marginTop: 8,
-                            fontSize: '0.8em',
-                            color: MUTED,
-                            overflowWrap: 'anywhere',
-                        }}
-                    >
-                        {t(
-                            'review_in_progress',
-                            'A full review can take several minutes on a long document.'
-                        )}
-                    </div>
 
                     <div style={{ marginTop: 8 }}>
                         <OLButton

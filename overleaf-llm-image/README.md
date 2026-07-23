@@ -116,7 +116,11 @@ A lab-specific feature (not in PR #171). It sends the **whole project** (all `.t
 files, assembled server-side via `getAllDocs`, main file first, LaTeX comments
 stripped) to the review model and checks it against an admin-defined **rubric** of
 writing guidelines (thesis / internship indications), returning a per-requirement
-report.
+report. The review is **multi-pass**: the rubric is split into individual
+requirements and each one gets its own dedicated model call over the full document,
+so the model can actually enumerate figures, scan the bibliography, and so on for
+that one requirement, instead of skimming 20+ requirements in a single pass (which
+produced rubber-stamp "all ok" reports with unrelated evidence).
 
 - **Admin setup** (super-admin, `/admin/llm/settings`, "Compliance Review" section):
   add one or more named **rubrics** (name + guidelines text), pick the **review
@@ -124,6 +128,30 @@ report.
   **Max context tokens** to the review model's context window (no auto-detection, it is
   only a setting), and optionally raise the **Review answer budget** if reports come out
   truncated with a large rubric.
+
+### How to write a rubric
+
+The splitter turns the guidelines text into one check per requirement, so the way
+the rubric is written directly controls the review quality:
+
+- **One requirement per numbered line** (`1.`, `2.`, ... or `1)`, `2)`): each becomes
+  its own model pass. This is the recommended format.
+- **Continuation lines** (lines that do not start with a number) belong to the
+  requirement above, so a requirement can span multiple lines.
+- **Text before the first numbered line is a preamble**, repeated in every pass as
+  context (e.g. "Requisiti per una tesi triennale del laboratorio X").
+- **Bulleted lines** (`-`, `*`, `•`) also split, but only when the rubric has no
+  numbered lines; inside a numbered requirement they are kept as sub-points.
+- **Unstructured prose degrades gracefully** to the old single-pass review over the
+  whole text: never split arbitrarily, but also much shallower. Number your rubric.
+- **Keep each requirement atomic and verifiable from the LaTeX source.** "Every
+  figure has a caption" is checkable; "the thesis is well written" is not. Phrasing a
+  requirement as a scan helps the model ("check every bib entry", "list the figures
+  lacking X"). Do not put in the rubric what cannot be seen in the source (PDF page
+  count, image resolution, delivery process): those come back as "n.a." at best.
+- Editing a rubric applies to the **next** review (the pass count follows the text:
+  add requirement 23 and the next run shows 23 passes); a running review keeps the
+  rubric it started with.
 - **Users** open the AI Assistant rail, switch to the **Review** tab, choose a rubric
   and run. Each item shows a status (ok / partial / missing / n.a.), the evidence, and
   a suggestion, with a **Download report** button (Markdown) so the result survives
@@ -132,19 +160,25 @@ report.
   extra requests queue and the UI shows the position. A queued or running review can
   be **cancelled**, and is cancelled automatically on page refresh/close. Switching
   the Chat/Review tab does **not** cancel it (both panes stay mounted).
-- **Progress.** While running, the pane shows a phase label ("Reading the document"
-  then "Writing the report") and an estimated progress bar with elapsed time. The
-  review is one blocking call with no exact percentage, so the bar is an estimate from
-  the backend throughput; elapsed time is exact, and a wrong estimate only skews the
-  bar, never the result. The throughput is **measured, not guessed**: llama.cpp returns
-  `timings.prompt_per_second` / `predicted_per_second` on every response, so each review
-  calibrates the next one, and a small probe before the very first review seeds it (the
-  probe is lazy, not at boot, so it never delays startup or fails on a backend that is
-  not up yet). Unrepresentative samples are rejected by size (`prompt_n` /
-  `predicted_n`): on a prompt-cache hit llama.cpp evaluates as little as one token and
-  the reported "rate" is pure request overhead, which would otherwise poison a good
-  calibration; small samples only ever seed an empty one. Backends that report no timings, and `LLM_REVIEW_PREFILL_TPS` /
-  `LLM_REVIEW_GEN_TPS` when set, override the measurement.
+- **Progress.** The bar reports **real progress**: passes completed over total, with
+  the requirement currently being checked shown under the label ("Checking requirement
+  7/22"), then a final "Writing the summary" step. No time estimate is involved; the
+  elapsed clock is exact.
+- **Prompt-cache friendliness.** Each pass sends the document FIRST and the
+  requirement AFTER, so llama.cpp's prefix cache reuses the document prefill across
+  passes: pass 1 pays the full document read, passes 2..N only pay their own few
+  hundred tokens. On a backend with no prompt cache every pass re-reads the document,
+  which on a slow CPU makes multi-pass expensive; there, prefer a shorter rubric.
+- **Throughput measurement.** llama.cpp `timings` from completed passes size the
+  per-pass safety timeout (floor: 60 min). Unrepresentative samples are rejected by
+  size (`prompt_n` / `predicted_n`): on a prompt-cache hit llama.cpp evaluates as
+  little as one token and the reported "rate" is pure request overhead; small samples
+  only ever seed an empty calibration. `LLM_REVIEW_PREFILL_TPS` /
+  `LLM_REVIEW_GEN_TPS`, when set, override the measurement.
+- **Per-pass failure containment.** A pass that fails (backend refusal, unparseable
+  answer) marks only ITS requirement as "n.a." with the reason; the other passes
+  still run. A context overflow fails the whole review (every pass would hit it), and
+  a user cancel aborts between passes or kills the in-flight call.
 - **Guards.** The whole prompt (document + rubric + system + output room) is budgeted
   against Max context tokens; an over-long project is refused (`too_long`) instead of
   silently truncated. The prompt size is the backend's **exact** count: llama.cpp is
@@ -155,19 +189,22 @@ report.
   answer room against the limit, because the reserved room is part of what causes it and
   hiding it made correct refusals look wrong. If a document still slips through, the
   backend's own context rejection is parsed and reported with the real numbers. The
-  output room reserved (and the model's
-  `max_tokens`) is the admin **Review answer budget** (falling back to
-  `LLM_REVIEW_MAX_TOKENS`, default 12000). Any other backend refusal surfaces as
-  `backend_error` with the backend's own message instead of a misleading timeout. If a
-  specific review model is configured,
-  its presence is verified against the backend `/models` before running
-  (`model_unavailable` otherwise). One-shot only for now; section chunking for very
-  long theses is a possible v2.
-- **Structured output.** The request pins `response_format` to a JSON schema, so a
+  output room reserved (and the model's `max_tokens`) is per pass: a single
+  requirement needs few items, so multi-pass reviews cap it at 4000 regardless of the
+  admin **Review answer budget** (which still applies in full to a single-pass rubric;
+  fallback `LLM_REVIEW_MAX_TOKENS`, default 12000). The smaller per-pass reserve also
+  means noticeably more room for the document. Any other backend refusal surfaces on
+  its own requirement instead of killing the review. If a specific review model is
+  configured, its presence is verified against the backend `/models` before running
+  (`model_unavailable` otherwise).
+- **Structured output.** Every pass pins `response_format` to a JSON schema, so a
   backend that supports it (llama.cpp, OpenAI) is constrained to emit exactly the
   per-requirement shape. That guarantees parseable output and, since prose is
   forbidden, keeps a reasoning model from spending the whole budget on internal
-  thinking. For a local reasoning model, also turn thinking off at the router
+  thinking. The schema puts an `analysis` field FIRST in each item: the grammar
+  enforces field order, so the model must write down what it scanned before it can
+  emit a verdict (structured look-before-you-judge); the field is dropped from the
+  stored result. For a local reasoning model, also turn thinking off at the router
   (`CHAT_TEMPLATE_KWARGS={"enable_thinking":false}`) since the two can otherwise
   conflict in the chat template; validate once against your model after building.
 - **Routes** (all project-scoped, login required): `GET .../llm/compliance/rubrics`,

@@ -19,26 +19,30 @@ export const DEFAULT_ERROR_PROMPT = `**Please help me:**
 4. Explain how to avoid this error in the future`
 
 // overleaf-lab: system prompt for the document compliance reviewer.
-export const DEFAULT_REVIEW_SYSTEM_PROMPT = `You are a meticulous reviewer that checks whether a LaTeX document complies with a set of writing guidelines for academic theses and internship reports.
+export const DEFAULT_REVIEW_SYSTEM_PROMPT = `You are a meticulous reviewer that checks whether a LaTeX document complies with writing guidelines for academic theses and internship reports.
 
 You will receive:
-1. GUIDELINES: the requirements the document must satisfy.
-2. DOCUMENT: the full LaTeX source of the project. It is split into files, each introduced by a line "% ===== FILE: <path> =====".
+1. DOCUMENT: the full LaTeX source of the project, split into files, each introduced by a line "% ===== FILE: <path> =====".
+2. GUIDELINES: the requirement(s) to check in THIS pass. Judge ONLY these requirements; every other aspect of the document is out of scope here.
 
-For each distinct requirement you can identify in the GUIDELINES, judge whether the DOCUMENT satisfies it. Base your judgement only on the DOCUMENT content.
+Be strict and skeptical. "ok" means you actually verified the requirement, not that you found related-looking text. Use the "analysis" field to do the work BEFORE judging: state what you scanned and what you found. For a requirement that covers every figure, table or equation, enumerate them and check each one. For a requirement asserting an ABSENCE (nothing of some kind exists), state what you scanned and how completely. If you could not verify exhaustively, say so and use "partial" instead of "ok".
 
-Always say WHERE. For every item whose status is not "ok", the "evidence" field must locate the problem: give the file path (from the nearest "FILE:" header) followed by a short verbatim quote of the offending text. If the problem occurs in several places, list up to five, each as the path and a short quote, separated by " | ". For an "ok" item, cite the file and a short quote (or the section) that shows it is satisfied. For "na", state briefly why it cannot be verified from the source. There are no line numbers, so always quote text that appears verbatim in the DOCUMENT and never invent a location.
+Evidence rules:
+- The evidence must actually support the verdict: quote text that CONTAINS the thing you are judging, with the file path from the nearest "FILE:" header. Never quote unrelated text just to fill the field.
+- For a requirement that is not satisfied, quote the offending text; if it occurs in several places, list up to five, separated by " | ".
+- A quote cannot prove an absence: for absence requirements the evidence must describe the scan (for example "scanned all 31 entries in references.bib, none points to Wikipedia").
+- There are no line numbers: always quote text that appears verbatim in the DOCUMENT and never invent a location.
+- For "na", state briefly why it cannot be verified from the source.
 
 Reply in the same language as the GUIDELINES (for example, in Italian if the guidelines are in Italian).
 
 Return ONLY a JSON object, with no preamble, no explanation, and no code fences, in exactly this shape:
 {
-  "summary": "a short overall assessment (2 to 4 sentences)",
   "items": [
-    { "requirement": "the guideline requirement, restated concisely", "status": "ok", "evidence": "file path and a short verbatim quote (several separated by ' | '), or why it is missing or not verifiable", "suggestion": "a concrete suggestion to satisfy it (empty string when status is ok)" }
+    { "analysis": "what you scanned and what you found, written before judging", "requirement": "the guideline requirement, restated concisely", "status": "ok", "evidence": "file path and verbatim quote(s), or the description of the scan", "suggestion": "a concrete suggestion to satisfy it (empty string when status is ok)" }
   ]
 }
-Use "ok" when clearly satisfied, "partial" when partially satisfied, "missing" when not satisfied, "na" when not applicable or impossible to verify from the source.`
+Use "ok" when clearly satisfied, "partial" when partially satisfied or only partially verified, "missing" when not satisfied, "na" when not applicable or impossible to verify from the source.`
 
 // overleaf-lab: per-action templates for the "Ask AI" selection toolbar. Each
 // template embeds the selected text where the `{{selection}}` placeholder appears;
