@@ -149,6 +149,13 @@ the rubric is written directly controls the review quality:
   requirement as a scan helps the model ("check every bib entry", "list the figures
   lacking X"). Do not put in the rubric what cannot be seen in the source (PDF page
   count, image resolution, delivery process): those come back as "n.a." at best.
+- **End a diffuse-quality requirement with `[per-file]`** (e.g. "Assenza di errori di
+  ortografia. [per-file]"): it then runs as one sub-pass per source file, each file
+  alone in context, merged into a single report item. One pass over a whole thesis
+  under-attends the middle chapters (the documented lost-in-the-middle effect), so an
+  "ok" on spelling or tense coherence from a single pass over-claims; per-file passes
+  restore full attention at the cost of roughly one extra read of the project. Use it
+  for the few requirements about text quality everywhere, not for structural checks.
 - Editing a rubric applies to the **next** review (the pass count follows the text:
   add requirement 23 and the next run shows 23 passes); a running review keeps the
   rubric it started with.
@@ -163,7 +170,8 @@ the rubric is written directly controls the review quality:
 - **Progress.** The bar reports **real progress**: passes completed over total, with
   the requirement currently being checked shown under the label ("Checking requirement
   7/22"), then a final "Writing the summary" step. No time estimate is involved; the
-  elapsed clock is exact.
+  elapsed clock is exact. A `[per-file]` requirement contributes one pass per source
+  file and the label names the file being checked.
 - **Prompt-cache friendliness.** Each pass sends the document FIRST and the
   requirement AFTER, so llama.cpp's prefix cache reuses the document prefill across
   passes: pass 1 pays the full document read, passes 2..N only pay their own few
@@ -196,16 +204,26 @@ the rubric is written directly controls the review quality:
   Rimandi relativi :: \b(figura|tabella|immagine|grafico)\s+(seguente|precedente|sottostante|soprastante|sopra|sotto)\b
   Wikipedia :: wikipedia
   ```
-- **Adversarial verification of negative findings.** A false "missing" is the most
-  harmful thing a review can produce (it sends the author hunting for problems that
-  do not exist, e.g. a quantity flagged as uncited whose `\cite` sits right next to
-  it). So every requirement that comes out "missing" or "partial" gets one extra
-  pass (capped at 8, riding the same document cache prefix, temperature 0) where the
-  model must try to REFUTE the finding against the document: refuted evidence is
-  dropped, fully refuted findings flip back to "ok". Best-effort: if verification
-  fails, the original finding stands. OK items are not re-verified. The progress bar
-  extends honestly ("Double-check: <requirement>", e.g. 22/24). The verifier prompt
-  is internal, not admin-editable.
+- **Quote grounding.** The judge itself can hallucinate evidence (observed: invented
+  line numbers, quotes attributed to the wrong file). Quotes are mechanically
+  checkable, so every quoted passage in an item's evidence is searched, whitespace-
+  and typography-normalized, in the assembled source. An item whose quotes are not
+  found is flagged for adversarial verification regardless of its status (an "ok"
+  propped up by fabricated quotes gets double-checked too), and any quote still
+  unfound after verification appends a visible `[warning: N quoted passages not
+  found verbatim in the source]` to the evidence instead of standing as false
+  authority.
+- **Adversarial verification.** A false "missing" is the most harmful thing a review
+  can produce (it sends the author hunting for problems that do not exist, e.g. a
+  quantity flagged as uncited whose `\cite` sits right next to it). Every requirement
+  that comes out "missing" or "partial", plus any item with ungrounded quotes, gets
+  one extra pass (capped at 8, riding the same document cache prefix, temperature 0)
+  where the model must test whether the finding HOLDS UP against the document:
+  refuted evidence is dropped, fully refuted findings flip back to "ok", ok-verdicts
+  with fabricated evidence get re-grounded or downgraded. Best-effort: if
+  verification fails, the original finding stands. The progress bar extends honestly
+  ("Double-check: <requirement>", e.g. 22/24). The verifier prompt is internal, not
+  admin-editable.
 - **Deterministic and readable.** Finder and verifier passes run at temperature 0,
   so re-running the review on an unchanged document yields stable verdicts (at 0.2 a
   requirement was observed flipping missing to ok between runs with no document

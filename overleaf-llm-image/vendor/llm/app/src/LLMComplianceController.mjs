@@ -195,15 +195,15 @@ const VERIFY_MAX_FINDINGS = 8
 // find violations; the verifier's job is to REFUTE them, because a false "missing"
 // sends the author hunting for problems that do not exist (observed in practice: a
 // quantity flagged as uncited that had its \cite right next to it).
-const VERIFY_SYSTEM_PROMPT = `You are adversarially double-checking ONE finding produced by a compliance review of a LaTeX document. The finding claims a guideline requirement is violated (status "missing" or "partial"). Your job is to try to REFUTE it: a false violation wastes the author's time and must not survive.
+const VERIFY_SYSTEM_PROMPT = `You are adversarially double-checking ONE finding produced by a compliance review of a LaTeX document. The finding either claims a guideline requirement is violated (status "missing" or "partial"), or claims compliance ("ok") but with evidence that a mechanical search flagged as suspect. Your job is to test whether the finding HOLDS UP: a false violation wastes the author's time, and a verdict propped up by fabricated evidence must not survive either.
 
-You receive the DOCUMENT (files marked by "% ===== FILE: <path> =====" headers) and the FINDING as JSON.
+You receive the DOCUMENT (files marked by "% ===== FILE: <path> =====" headers) and the FINDING as JSON, possibly followed by a NOTE listing how many of its quotes a mechanical search could not find.
 
 For EVERY piece of quoted evidence in the finding, check in the DOCUMENT:
 1. Does the quoted text actually appear (verbatim or nearly)?
-2. Does it actually violate the requirement in context? For a missing-citation claim, read the full sentence and its neighbours: a \\cite nearby refutes it. For an unsupported-qualitative-claim finding, numbers or a citation in the surrounding text refute it.
+2. Does it actually support the verdict in context? For a missing-citation claim, read the full sentence and its neighbours: a \\cite nearby refutes it. For an unsupported-qualitative-claim finding, numbers or a citation in the surrounding text refute it. For an "ok" finding, replace unfounded evidence with REAL evidence from the document, or downgrade the status if you cannot find any.
 
-Then return ONE corrected item: keep only the violations that survive your check and drop the refuted ones from the evidence. If nothing survives, set status "ok" and let the evidence say the original finding did not hold up. If only part survives, choose "partial" or "missing" accordingly. Keep the evidence under about 500 characters. Use the same language as the finding.
+Then return ONE corrected item: keep only the claims that survive your check and drop the refuted ones from the evidence. If nothing of a violation survives, set status "ok" and let the evidence say the original finding did not hold up. If only part survives, choose "partial" or "missing" accordingly. Keep the evidence under about 500 characters. Use the same language as the finding.
 
 Return ONLY a JSON object, with no preamble and no code fences, in exactly this shape:
 {"items":[{"analysis":"what you re-checked and what you found","requirement":"the requirement, unchanged","status":"ok","evidence":"the surviving violations, or why the finding was rejected","suggestion":"a concrete suggestion (empty string when status is ok)"}]}`
@@ -297,6 +297,115 @@ function parseScanPatterns(text) {
         }
     }
     return patterns
+}
+
+// overleaf-lab: quote grounding. The judge itself can hallucinate evidence (observed:
+// invented line numbers, quotes attributed to the wrong file), which is the failure
+// mode that costs a report its credibility. Quotes are mechanically checkable: every
+// quoted passage in an item's evidence is searched (whitespace/typography-normalized)
+// in the assembled source. Ungrounded quotes flag the item for adversarial
+// verification and, if they survive, a visible warning is appended to the evidence.
+function normalizeForMatch(text) {
+    return String(text || '')
+        .replace(/[‘’‚]/g, "'")
+        .replace(/[“”„«»]/g, '"')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase()
+}
+
+// overleaf-lab: pull the quoted passages out of an evidence string. Handles double
+// quotes and guillemets anywhere, and single-quoted spans only when they close a
+// chunk (Italian apostrophes make mid-chunk single quotes ambiguous). Short spans are
+// ignored: grounding a 5-char quote proves nothing. Missing a quote here is harmless
+// (it just goes unchecked); a false extraction could produce a false warning, so the
+// rules stay conservative.
+function extractQuotedSegments(evidence) {
+    const segments = []
+    // Typographic quotes/guillemets fold onto their straight forms FIRST, so the
+    // extraction rules below see one quoting style regardless of what the model used.
+    const text = String(evidence || '')
+        .replace(/[“”„«»]/g, '"')
+        .replace(/[‘’‚]/g, "'")
+    for (const match of text.matchAll(/"([^"]{15,300})"/g)) {
+        segments.push(match[1])
+    }
+    for (const chunk of text.split('|')) {
+        const single = /'(.{15,300})'\s*$/.exec(chunk.trim())
+        if (single) {
+            segments.push(single[1])
+        }
+    }
+    return segments
+}
+
+// overleaf-lab: how many quoted passages of this evidence do NOT appear in the
+// normalized source. {checked: n, missing: m}; checked=0 means the evidence carries
+// no groundable quotes (e.g. a scan description), which is fine.
+function countUngroundedQuotes(evidence, normalizedSource) {
+    const segments = extractQuotedSegments(evidence)
+    let missing = 0
+    for (const segment of segments) {
+        if (!normalizedSource.includes(normalizeForMatch(segment))) {
+            missing += 1
+        }
+    }
+    return { checked: segments.length, missing }
+}
+
+// overleaf-lab: the "[per-file]" rubric marker. A requirement about diffuse text
+// quality (spelling, tense coherence) checked in ONE pass over a whole thesis falls
+// into the documented lost-in-the-middle failure: the model under-attends the middle
+// of a long context and an "ok" under-covers the central chapters. Ending a rubric
+// line with [per-file] makes that requirement run as one sub-pass per source file
+// (each file alone in context, fully attended), merged into a single report item.
+// Like the scan patterns, the marker lives in the rubric: policy, not code.
+const PER_FILE_MARKER = /\s*\[\s*per[- ]file\s*\]\s*$/i
+
+function isPerFileRequirement(requirement) {
+    return PER_FILE_MARKER.test(requirement)
+}
+
+function stripPerFileMarker(requirement) {
+    return String(requirement || '').replace(PER_FILE_MARKER, '').trim()
+}
+
+// overleaf-lab: fold the per-file sub-results into ONE report item. Any missing wins,
+// else any partial, else ok; "na" files (a spelling check on a .bib is legitimately
+// n.a.) do not drag the verdict down unless nothing was checkable at all.
+function mergeFileItems(requirement, fileResults) {
+    const statuses = fileResults.map(r => r.status)
+    let status = 'na'
+    if (statuses.includes('missing')) {
+        status = 'missing'
+    } else if (statuses.includes('partial')) {
+        status = 'partial'
+    } else if (statuses.includes('ok')) {
+        status = 'ok'
+    }
+    let evidence
+    if (status === 'ok') {
+        const okCount = statuses.filter(s => s === 'ok').length
+        const naCount = statuses.filter(s => s === 'na').length
+        evidence = `Checked file by file: ${okCount}/${fileResults.length} files ok${
+            naCount > 0 ? `, ${naCount} n.a.` : ''
+        }`
+    } else {
+        evidence = fileResults
+            .filter(r => r.status === status)
+            .slice(0, 5)
+            .map(r => `${r.path}: ${r.evidence}`)
+            .join(' | ')
+            .slice(0, 600)
+    }
+    const suggestion =
+        (fileResults.find(r => r.status === status && r.suggestion) || {}).suggestion || ''
+    return {
+        requirement,
+        status,
+        evidence,
+        suggestion: String(suggestion).slice(0, 400),
+    }
 }
 
 // overleaf-lab: split the rubric guidelines into individually checkable requirements,
@@ -709,9 +818,19 @@ async function performReview(job) {
         return Math.max(REVIEW_MIN_TIMEOUT_MS, Math.round(worstCaseMs * 1.5))
     }
 
-    // overleaf-lab: pass-based progress, read by the status endpoint.
-    job.passesTotal = requirements.length
+    // overleaf-lab: pass-based progress, read by the status endpoint. A [per-file]
+    // requirement counts one pass per source file.
+    const mainPassCount = requirements.reduce(
+        (n, r) =>
+            n + (isPerFileRequirement(r) && strippedDocs.length > 1 ? strippedDocs.length : 1),
+        0
+    )
+    job.passesTotal = mainPassCount
     job.passesDone = 0
+    let completedPasses = 0
+
+    // overleaf-lab: normalized source for the mechanical quote-grounding check.
+    const normalizedSource = normalizeForMatch(assembled)
 
     const allItems = []
     for (let i = 0; i < requirements.length; i++) {
@@ -720,9 +839,126 @@ async function performReview(job) {
         if (job.status === 'cancelled') {
             throw new Error('review cancelled between passes')
         }
-        const requirement = requirements[i]
-        job.passesDone = i
+        const perFile = isPerFileRequirement(requirements[i]) && strippedDocs.length > 1
+        const requirement = stripPerFileMarker(requirements[i])
+        job.passesDone = completedPasses
         job.currentRequirement = requirement.replace(/\s+/g, ' ').slice(0, 160)
+
+        // overleaf-lab: [per-file] branch. One sub-pass per source file, each with
+        // ONLY that file in context (fully attended, no lost-in-the-middle), merged
+        // into a single report item. This deliberately gives up the shared document
+        // cache prefix: the sub-pass prompts are small, so the total prefill is about
+        // one extra read of the project. Lean by design: no retry (small prompts do
+        // not truncate), a failed file becomes "n.a." for that file only.
+        if (perFile) {
+            const fileResults = []
+            for (let f = 0; f < strippedDocs.length; f++) {
+                if (job.status === 'cancelled') {
+                    throw new Error('review cancelled between passes')
+                }
+                const doc = strippedDocs[f]
+                job.currentRequirement = `${requirement} (file ${f + 1}/${strippedDocs.length}: ${doc.path})`
+                    .replace(/\s+/g, ' ')
+                    .slice(0, 160)
+                const subBody = {
+                    model: reviewModel,
+                    messages: [
+                        { role: 'system', content: prompts.reviewSystemPrompt },
+                        {
+                            role: 'user',
+                            content:
+                                `DOCUMENT (one file of a larger project):\n% ===== FILE: ${doc.path} =====\n${doc.text}\n\n` +
+                                `GUIDELINES (check ONLY these, in THIS file only):\n${
+                                    preamble ? `${preamble}\n` : ''
+                                }${requirement}`,
+                        },
+                    ],
+                    max_tokens: perPassBudget,
+                    temperature: 0,
+                    response_format: {
+                        type: 'json_schema',
+                        json_schema: {
+                            name: 'compliance_review',
+                            strict: true,
+                            schema: REVIEW_ITEMS_SCHEMA,
+                        },
+                    },
+                }
+                const subTimeout = setTimeout(() => {
+                    if (job.controller) {
+                        job.controller.abort()
+                    }
+                }, passTimeoutMs())
+                try {
+                    const response = await fetch(`${llmApiUrl}/chat/completions`, {
+                        method: 'POST',
+                        headers: chatHeaders,
+                        body: JSON.stringify(subBody),
+                        signal: job.controller ? job.controller.signal : undefined,
+                    })
+                    if (!response.ok) {
+                        const errorText = await response.text()
+                        logger.warn(
+                            { projectId, pass: i, file: doc.path, status: response.status },
+                            '[LLM] compliance: per-file sub-pass refused'
+                        )
+                        fileResults.push({
+                            path: doc.path,
+                            status: 'na',
+                            evidence: `check refused (HTTP ${response.status})`,
+                            suggestion: '',
+                        })
+                    } else {
+                        const data = await response.json()
+                        recordTimings(data && data.timings)
+                        const content = stripThinkTags(
+                            data?.choices?.[0]?.message?.content || ''
+                        )
+                        try {
+                            const parsed = extractJson(content)
+                            const first = Array.isArray(parsed.items) ? parsed.items[0] : null
+                            fileResults.push({
+                                path: doc.path,
+                                status:
+                                    first &&
+                                    ['ok', 'partial', 'missing', 'na'].includes(first.status)
+                                        ? first.status
+                                        : 'na',
+                                evidence: String((first && first.evidence) || '').slice(0, 300),
+                                suggestion: String((first && first.suggestion) || '').slice(0, 300),
+                            })
+                        } catch (err) {
+                            fileResults.push({
+                                path: doc.path,
+                                status: 'na',
+                                evidence: 'unparseable answer for this file',
+                                suggestion: '',
+                            })
+                        }
+                    }
+                } catch (err) {
+                    if (job.status === 'cancelled' || (err && err.name === 'AbortError')) {
+                        throw err
+                    }
+                    logger.warn(
+                        { projectId, pass: i, file: doc.path, err },
+                        '[LLM] compliance: per-file sub-pass failed'
+                    )
+                    fileResults.push({
+                        path: doc.path,
+                        status: 'na',
+                        evidence: `check failed (${err.message})`,
+                        suggestion: '',
+                    })
+                } finally {
+                    clearTimeout(subTimeout)
+                }
+                completedPasses += 1
+                job.passesDone = completedPasses
+            }
+            allItems.push(mergeFileItems(requirement, fileResults))
+            continue
+        }
 
         const requestBody = {
             model: reviewModel,
@@ -906,20 +1142,31 @@ async function performReview(job) {
             })
         } finally {
             clearTimeout(timeout)
+            // In the finally so the `continue` paths (refusal, unparseable) count too.
+            completedPasses += 1
+            job.passesDone = completedPasses
         }
     }
-    job.passesDone = requirements.length
+    job.passesDone = completedPasses
     job.currentRequirement = ''
 
-    // overleaf-lab: adversarial verification of the NEGATIVE findings. Reviewer
-    // verdicts on the hardest checks (e.g. matching every number with a nearby \cite
-    // across a whole thesis) are noisy, and a false "missing" is the most harmful
-    // outcome a review can produce. Each missing/partial item gets one dedicated pass
-    // (riding the same document prompt-cache prefix) where the model must try to
-    // refute the finding; refuted evidence is dropped, fully refuted findings flip to
-    // ok. Best-effort: a failed verification keeps the original finding. OK items are
-    // not re-verified, since doubling the whole review's cost to double-check its
-    // successes is not worth it.
+    // overleaf-lab: adversarial verification. Reviewer verdicts on the hardest checks
+    // (e.g. matching every number with a nearby \cite across a whole thesis) are
+    // noisy, and a false "missing" is the most harmful outcome a review can produce.
+    // Each selected item gets one dedicated pass (riding the same document
+    // prompt-cache prefix) where the model must test whether the finding holds up;
+    // refuted evidence is dropped, fully refuted findings flip to ok, and an "ok"
+    // whose quotes fail the mechanical grounding check gets its evidence re-grounded
+    // or its status downgraded. Best-effort: a failed verification keeps the original
+    // finding. Clean OK items are not re-verified, since doubling the whole review's
+    // cost to double-check its successes is not worth it.
+    // overleaf-lab: mechanical quote grounding feeds the selection: an item whose
+    // evidence quotes text the source does not contain is a judge hallucination
+    // suspect REGARDLESS of its status, so an "ok" propped up by fabricated quotes
+    // gets double-checked too. Negatives keep priority for the capped slots.
+    const groundingByItem = allItems.map(item =>
+        countUngroundedQuotes(item.evidence, normalizedSource)
+    )
     const indicesToVerify = []
     for (const [k, item] of allItems.entries()) {
         if (
@@ -929,9 +1176,18 @@ async function performReview(job) {
             indicesToVerify.push(k)
         }
     }
+    for (const [k] of allItems.entries()) {
+        if (
+            indicesToVerify.length < VERIFY_MAX_FINDINGS &&
+            !indicesToVerify.includes(k) &&
+            groundingByItem[k].missing > 0
+        ) {
+            indicesToVerify.push(k)
+        }
+    }
     if (indicesToVerify.length > 0) {
         // Extend the pass count so the progress bar reports the extra work honestly.
-        job.passesTotal = requirements.length + indicesToVerify.length
+        job.passesTotal = mainPassCount + indicesToVerify.length
         for (const idx of indicesToVerify) {
             if (job.status === 'cancelled') {
                 throw new Error('review cancelled between passes')
@@ -956,7 +1212,11 @@ async function performReview(job) {
                                     evidence: finding.evidence,
                                     suggestion: finding.suggestion,
                                 }
-                            )}`,
+                            )}${
+                                groundingByItem[idx].missing > 0
+                                    ? `\n\nNOTE: a mechanical text search could NOT find ${groundingByItem[idx].missing} of the quoted passage(s) verbatim in the document. Treat those quotes as suspect.`
+                                    : ''
+                            }`,
                     },
                 ],
                 max_tokens: perPassBudget,
@@ -1030,6 +1290,18 @@ async function performReview(job) {
             job.passesDone += 1
         }
         job.currentRequirement = ''
+    }
+
+    // overleaf-lab: final grounding annotation on whatever evidence survived: a quote
+    // the mechanical search cannot find in the source is flagged to the reader
+    // instead of standing in the report as false authority.
+    for (const item of allItems) {
+        const { missing } = countUngroundedQuotes(item.evidence, normalizedSource)
+        if (missing > 0) {
+            item.evidence = `${item.evidence} [warning: ${missing} quoted passage${
+                missing === 1 ? '' : 's'
+            } not found verbatim in the source]`
+        }
     }
 
     // overleaf-lab: synthesize the overall summary from the ITEMS ONLY (no document,
