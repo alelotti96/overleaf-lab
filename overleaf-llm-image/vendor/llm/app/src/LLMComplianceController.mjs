@@ -20,6 +20,17 @@ import { findIncludeGraphics, imageDimensions, analyzeFigures, imageMetricsFactL
 // progress, cancel, and result rather than holding a request open.
 const jobs = new Map() // jobId -> job
 const queue = [] // array of jobId, FIFO
+// overleaf-lab: THE FAST LANE, which is deliberately not the queue above.
+//
+// A fast review calls no model, so the resource the queue exists to share - a GPU
+// with one review on it at a time - is not one it uses. Putting it in that queue
+// would make a five-second answer wait behind an hour of somebody else's full
+// reviews, and worse, it would occupy a backend slot to run code that needs no
+// backend. It gets a list of its own and a small concurrency cap, so the work it
+// does spend (reading the project, running the parsers) still cannot be started
+// fifty times at once by one impatient page.
+const fastQueue = [] // array of jobId, FIFO
+let fastRunning = 0
 // overleaf-lab: THE SLOTS. This used to be `let running = false`, one review at a
 // time for the whole web process, because there was one model backend to run them
 // on. With a pool of backends (three GPUs, three models) that flag was the only
@@ -3841,13 +3852,54 @@ const VOTE_TOP_P = 0.8
 // the chapter's findings.
 const CHAPTER_FILE_SHARE = 0.15
 
+// overleaf-lab: THE TWO MODES A REVIEW RUNS IN.
+//
+// 'full' is what this file has always done: every requirement, the model-judged ones
+// included, minutes of GPU per thesis. 'fast' runs ONLY what this process can decide
+// on its own - the [check: ...] requirements, which are parsers - and answers in
+// seconds without touching a model backend at all.
+//
+// The point of the second one is not speed for its own sake. A student fixing
+// captions wants to know whether the captions are fixed, and today that question
+// costs a queue slot, a GPU and twenty minutes; and an instance with no model backend
+// configured (which is every clone of this repository) could not run a review at all.
+// A mode string on the job is what buys both, without a second engine to keep in step
+// with this one: the planner filters, everything downstream is unchanged.
+//
+// Unknown values collapse to 'full' on purpose. The mode arrives in a request body,
+// and the failure mode of a typo must be "you got the review you always got", never
+// "your requirements were silently not checked".
+function normalizeReviewMode(mode) {
+    return mode === 'fast' ? 'fast' : 'full'
+}
+
 // overleaf-lab: turn the requirement list into the passes the review will actually
 // run, before running any of them. Two reasons it is computed up front and as a pure
 // function: the progress bar can announce an honest total from the first second, and
 // the arithmetic that decides whether this review is affordable can be unit tested
 // without a model behind it.
-function buildPassPlan(requirements, { fileCount = 1, segmentCount = 1 } = {}) {
+function buildPassPlan(requirements, { fileCount = 1, segmentCount = 1, mode = 'full' } = {}) {
     const scopes = requirements.map(requirementScope)
+
+    // overleaf-lab: THE FAST-MODE FILTER, and it is the whole of fast mode. A step
+    // that would reach a model is not planned; it is planned as 'model-only', which
+    // the run turns into an honest n.a. row instead of dropping it.
+    //
+    // Three things it deliberately does NOT do. It does not group the chapter
+    // requirements: a group is one shared model call over several requirements, and
+    // with no call to share, grouping would merge rows the reader needs one by one. It
+    // does not plan a single pass (every step costs 0), because nothing here is sent
+    // anywhere and a progress bar counting model calls must not count these. And it
+    // does not reorder anything: the report still reads in rubric order, so the two
+    // modes produce the same list of requirements in the same sequence, with the
+    // model-side ones marked as not looked at.
+    if (normalizeReviewMode(mode) === 'fast') {
+        return requirements.map((_, i) => ({
+            scope: scopes[i] === 'code' ? 'code' : 'model-only',
+            indexes: [i],
+            passes: 0,
+        }))
+    }
 
     // Chapter requirements are grouped in rubric order but ACROSS the requirements of
     // other scopes that sit between them. Grouping only strictly consecutive ones
@@ -3898,6 +3950,36 @@ function buildPassPlan(requirements, { fileCount = 1, segmentCount = 1 } = {}) {
 
 function countPlannedPasses(plan) {
     return plan.reduce((n, step) => n + step.passes, 0)
+}
+
+// overleaf-lab: how many requirements a fast plan actually decides, and how many it
+// was handed. The banner in the report is built from these two numbers, so they are
+// counted from the PLAN rather than from the items: counting the items would count
+// what came back, and "3 of 30 checked" has to be true even when a check crashes.
+function countCheckedRequirements(plan) {
+    return plan.reduce((n, step) => n + (step.scope === 'code' ? step.indexes.length : 0), 0)
+}
+
+// overleaf-lab: what a fast review says about a requirement it did not look at.
+//
+// THE ONE RULE OF THIS FUNCTION: it is an n.a. and it says why. A fast review is
+// offered next to a full one, so the temptation is to let the untouched requirements
+// disappear from the report and show a short clean list - which reads exactly like a
+// document with fewer requirements against it, and would make "no findings" mean two
+// different things depending on a button the reader never saw pressed. Every
+// requirement therefore keeps its row, marked n.a. with the reason in the student's
+// language, and the delta refuses to compare a fast run with a full one (see the
+// store) so this n.a. can never be reported as a requirement that got fixed.
+function notCheckedInFastMode(requirement) {
+    return {
+        requirement,
+        status: 'na',
+        evidence: L(
+            'Not checked in fast mode: run a full review for this requirement.',
+            'Non controllato in modalità rapida: per questo requisito serve una review completa.'
+        ),
+        suggestion: '',
+    }
 }
 
 // overleaf-lab: split the rubric guidelines into individually checkable requirements,
@@ -4573,6 +4655,14 @@ function sweepOldJobs() {
 // a fact the panel can state and a divided estimate is a promise about machines that
 // may not be equally fast.
 function jobsAhead(jobId) {
+    // The fast lane first, and counted against ITS OWN cap: a fast review waits for
+    // the two or three fast ones in front of it and for nothing on the GPU, so adding
+    // the busy endpoints here would tell somebody five seconds from their report that
+    // three reviews are ahead of them.
+    const fastIdx = fastQueue.indexOf(jobId)
+    if (fastIdx !== -1) {
+        return fastIdx + fastRunning
+    }
     const idx = queue.indexOf(jobId)
     if (idx === -1) {
         return 0
@@ -4815,6 +4905,16 @@ async function runReviewPasses(job) {
     setChecksLanguage(reportLanguage)
     logger.debug({ projectId, reportLanguage }, '[LLM] compliance: report language')
 
+    // overleaf-lab: FULL OR FAST, decided by the job and read here once. Everything
+    // below that would reach a model backend is guarded on it - the token count, the
+    // model probe, the schema probe, the document-type question, the passes themselves
+    // and the closing summary - because "fast" is not a smaller review, it is a review
+    // that does not call anything. Read from the job rather than passed down: the same
+    // value has to reach the archived result, and one source for it is what keeps the
+    // report's badge and the work actually done from ever disagreeing.
+    const mode = normalizeReviewMode(job.mode)
+    const fast = mode === 'fast'
+
     // overleaf-lab: and the checks module's language, re-asserted at every call.
     //
     // LLMStructuralChecks keeps a module-level language of its own, set from the line
@@ -4839,7 +4939,12 @@ async function runReviewPasses(job) {
     const endpoint = job.endpoint || reviewEndpoints[0]
     const llmApiUrl = endpoint.url || admin.llmApiUrl
     const llmApiKey = admin.llmApiKey
-    if (!llmApiUrl) {
+    // overleaf-lab: a fast review has no backend to be missing. This throw is what
+    // made "no model configured" mean "no review at all", and it is exactly the
+    // instance - a fresh clone of this repository, a department with no GPU - where the
+    // deterministic half of the rubric is the only review available and is worth
+    // having. The full mode still refuses here, loudly, as it always did.
+    if (!llmApiUrl && !fast) {
         throw new Error('LLM backend is not configured')
     }
     const maxContextTokens = admin.maxContextTokens || 32000
@@ -4991,7 +5096,21 @@ async function runReviewPasses(job) {
     // allowed to lose a finished review or to become a fact about the student: a
     // failure degrades to the disabled marker, which the hints then print as NOT RUN.
     let bibVerify = null
-    if (isBibVerifyEnabled()) {
+    // overleaf-lab: and the one part a FAST review will not pay for. It is bounded at
+    // one request per second against a third-party API, so a bibliography of sixty
+    // entries is a minute on its own - which is the whole budget of a mode whose
+    // promise is an answer in seconds. Marked not-run rather than left absent: an
+    // absent block renders nothing, and a bibliography section that silently
+    // disappears reads as a bibliography with nothing wrong with it.
+    if (fast && isBibVerifyEnabled()) {
+        bibVerify = {
+            enabled: false,
+            reason: L(
+                'not part of a fast review',
+                'non fa parte della review rapida'
+            ),
+        }
+    } else if (isBibVerifyEnabled()) {
         try {
             bibVerify = await guarded(
                 verifyBibliography(bibEntriesForVerification(strippedDocs), { signal }),
@@ -5008,7 +5127,14 @@ async function runReviewPasses(job) {
     // overleaf-lab: the raster figures, measured. Async (the bytes live in the file
     // store), bounded by its own budgets, and never fatal: a null block adds no lines.
     const imageMetrics = await measureProjectFigures(projectId, strippedDocs)
-    const scanHints = [
+    // overleaf-lab: the scan hints are PROMPT MATERIAL and nothing else - they are the
+    // facts a pass is shown so it does not have to count things itself, and no line of
+    // them reaches the report. With no pass to show them to they are pure cost (a
+    // sweep of the project per pattern, including the admin-written regexes), so a
+    // fast review does not build them. The code-computed blocks that DO reach the
+    // report - the figure measurements above, the writing signals below - are built in
+    // both modes, which is the line between what a fast review keeps and what it drops.
+    const scanHints = fast ? '' : [
         buildScanHints(strippedDocs, rubricPatterns, activeChecks, imageMetrics),
         // overleaf-lab: the opening headings in include order, tagged by the keyword
         // sets of the compulsory-parts requirements. A FACT, never a verdict: presence
@@ -5066,13 +5192,17 @@ async function runReviewPasses(job) {
         estimateTokens(scanHints) +
         estimateTokens(worstCaseGuidelines) +
         estimateTokens(prompts.reviewSystemPrompt)
-    const exactPromptTokens = await countPromptTokens(
-        llmApiUrl,
-        llmApiKey,
-        `${prompts.reviewSystemPrompt}\n${worstCaseGuidelines}\n${assembled}\n${scanHints}`,
-        reviewModel,
-        job.controller ? job.controller.signal : undefined
-    )
+    // A call to the backend, so a fast review does not make it: there is no prompt to
+    // measure and the heuristic below is only ever used to size things nothing sends.
+    const exactPromptTokens = fast
+        ? null
+        : await countPromptTokens(
+              llmApiUrl,
+              llmApiKey,
+              `${prompts.reviewSystemPrompt}\n${worstCaseGuidelines}\n${assembled}\n${scanHints}`,
+              reviewModel,
+              job.controller ? job.controller.signal : undefined
+          )
     const promptTokens = exactPromptTokens || heuristicPromptTokens
     logger.debug(
         { projectId, promptTokens, exact: exactPromptTokens != null, heuristicPromptTokens },
@@ -5142,7 +5272,12 @@ async function runReviewPasses(job) {
         fileCount: strippedDocs.length,
         segmentCount: segments.length,
     }).some(step => step.scope !== 'document')
-    if (!documentFits && (!hasScopedWork || localPassBudget < MIN_ANSWER_TOKENS)) {
+    // overleaf-lab: `!fast` because a context window is not a constraint a fast review
+    // has. Nothing is ever put in a prompt, so a thesis ten times too long for the
+    // model is checked by the parsers exactly as a short one is, and refusing it here
+    // with "too long for a single-pass review" would be a refusal about a pass that
+    // was never going to run.
+    if (!fast && !documentFits && (!hasScopedWork || localPassBudget < MIN_ANSWER_TOKENS)) {
         // overleaf-lab: report the minimum reserve too. Without it the UI could only
         // show "prompt / limit", which can look like it fits while the refusal is
         // really caused by the answer room pushing the total over.
@@ -5176,10 +5311,14 @@ async function runReviewPasses(job) {
     // the answer marks that endpoint alone (see processQueue), so a machine whose
     // model failed to load stops taking work without saying anything about the other
     // two.
+    //
+    // A fast review skips it: "is the model there" is not a question about a run that
+    // will not ask the model anything, and answering model_unavailable would fail a
+    // review that was perfectly able to finish.
     const declaredModel =
         (endpoint.model && endpoint.model.trim()) ||
         (typeof admin.reviewModel === 'string' ? admin.reviewModel.trim() : '')
-    if (declaredModel.length > 0) {
+    if (!fast && declaredModel.length > 0) {
         try {
             const modelsHeaders = {}
             if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
@@ -5231,12 +5370,17 @@ async function runReviewPasses(job) {
     // counter moves, not just the outer loop: a [per-file] requirement advances once
     // per source file, and mirroring only the outer loop left the admin dashboard
     // ten passes behind the editor panel for minutes at a time.
+    // A fast job is not in the work list at all (see startReview: it is re-runnable in
+    // seconds and must never be resumed as GPU work), so there is no document for
+    // these updates to land in and they are simply not made.
     const mirrorProgress = () =>
-        ComplianceStore.updateJobProgressQuietly(job.id, {
-            passesDone: job.passesDone,
-            passesTotal: job.passesTotal,
-            currentRequirement: job.currentRequirement,
-        })
+        fast
+            ? undefined
+            : ComplianceStore.updateJobProgressQuietly(job.id, {
+                  passesDone: job.passesDone,
+                  passesTotal: job.passesTotal,
+                  currentRequirement: job.currentRequirement,
+              })
 
     // overleaf-lab: the requirement, then its own contrastive examples, then the
     // language note. Everything the examples add sits AFTER the document block, which
@@ -5273,8 +5417,12 @@ async function runReviewPasses(job) {
     // an unreachable backend says nothing about the grammar, and the review itself
     // surfaces a backend that is down; a probe that could fail a job over connectivity
     // would be a new way to lose reviews, not a safeguard.
+    //
+    // A fast review does not probe: no verdict below comes back through a schema, so
+    // there is nothing a broken one could poison. `null` and not a skipped block, so
+    // the failure handling around it stays one shape.
     try {
-        const probeResponse = await fetchWithLimit(
+        const probeResponse = fast ? null : await fetchWithLimit(
             `${llmApiUrl}/chat/completions`,
             {
                 method: 'POST',
@@ -5300,7 +5448,7 @@ async function runReviewPasses(job) {
             JSON_PROBE_TIMEOUT_MS,
             job.controller ? job.controller.signal : undefined
         )
-        if (probeResponse.ok) {
+        if (probeResponse && probeResponse.ok) {
             const probeData = await probeResponse.json()
             const probeContent = stripThinkTags(probeData?.choices?.[0]?.message?.content || '')
             let probed = null
@@ -5329,7 +5477,7 @@ async function runReviewPasses(job) {
                     ),
                 }
             }
-        } else {
+        } else if (probeResponse) {
             logger.warn(
                 { projectId, status: probeResponse.status },
                 '[LLM] compliance: JSON schema probe returned non-ok, continuing'
@@ -5406,6 +5554,12 @@ async function runReviewPasses(job) {
     // difference is what made the two runs of the same test disagree on sources that
     // had not changed: a title page in a file the main document no longer \inputs
     // passed at enqueue and was refused here, after the user had waited out the queue.
+    //
+    // The MECHANICAL branch runs in both modes: it is a regex over sources already in
+    // memory, and picking the wrong rubric from the dropdown is just as wrong in a
+    // fast review as in a full one. Only the model fallback under it is skipped in
+    // fast mode, because asking a model what kind of document this is would be the one
+    // model call in a mode whose whole promise is that there are none.
     const typePattern = documentTypePattern(rubricPatterns)
     if (!job.confirmed && typePattern) {
         if (!documentTypeMatches(typePattern, allReadDocs)) {
@@ -5421,7 +5575,7 @@ async function runReviewPasses(job) {
                 certain: true,
             }
         }
-    } else if (!job.confirmed && expectedDocument) {
+    } else if (!fast && !job.confirmed && expectedDocument) {
         let verdict = null
         try {
             const response = await fetchWithLimit(
@@ -5517,11 +5671,13 @@ async function runReviewPasses(job) {
     const plan = buildPassPlan(requirements, {
         fileCount: strippedDocs.length,
         segmentCount: segments.length,
+        mode,
     })
     const mainPassCount = countPlannedPasses(plan)
     logger.debug(
         {
             projectId,
+            mode,
             requirements: requirements.length,
             segments: segments.length,
             passes: mainPassCount,
@@ -5617,6 +5773,15 @@ async function runReviewPasses(job) {
         // back to when the check is switched off - otherwise printed "[per-file]" to the
         // student and showed it to the model.
         const requirement = stripScopeMarker(stripCheckMarker(stripScopeMarker(requirements[i])))
+
+        // overleaf-lab: a requirement a fast review is not equipped to answer. The row
+        // exists, it is n.a., and it says which button to press: see
+        // notCheckedInFastMode for why it is never simply left out of the report.
+        if (step.scope === 'model-only') {
+            allItems.push(notCheckedInFastMode(requirement))
+            refreshTotal()
+            continue
+        }
 
         // overleaf-lab: decided by code, no model call. The verdict is exact, it
         // cannot vary between runs, and it carries file:line straight from the parser
@@ -6729,6 +6894,14 @@ async function runReviewPasses(job) {
     // gets double-checked too. Negatives keep priority for the capped slots.
     const indicesToVerify = []
     const consider = predicate => {
+        // overleaf-lab: a fast review selects nothing, because a verification IS a
+        // model call. It would already select nothing by the two rules below - every
+        // item it produces is either decided by code or n.a. - but "no model call can
+        // happen here" is the promise on the button, and a promise that holds only as
+        // a consequence of two other rules is one edit away from not holding.
+        if (fast) {
+            return
+        }
         for (const [k, item] of allItems.entries()) {
             // overleaf-lab: never send a code-decided verdict to the model. The
             // verification pass exists because model verdicts are noisy; a parser's
@@ -7042,6 +7215,10 @@ async function runReviewPasses(job) {
     // overleaf-lab: synthesize the overall summary from the ITEMS ONLY (no document,
     // so this call is small and cheap). Best-effort: a failure leaves the summary
     // empty instead of failing a review whose per-requirement work already succeeded.
+    //
+    // A fast review has none. It is a model call like any other, and a sentence
+    // written by a model would be the only line of that report not produced by code,
+    // in the mode whose whole claim is that no language model was involved.
     let summary = ''
     try {
         const summaryBody = {
@@ -7077,17 +7254,21 @@ async function runReviewPasses(job) {
                 },
             },
         }
-        const response = await fetchWithLimit(
-            `${llmApiUrl}/chat/completions`,
-            {
-                method: 'POST',
-                headers: chatHeaders,
-                body: JSON.stringify(summaryBody),
-            },
-            passTimeoutMs(),
-            job.controller ? job.controller.signal : undefined
-        )
-        if (response.ok) {
+        // `null` in fast mode, which is the same shape the failure paths already
+        // produce: the summary stays empty and the report draws no summary block.
+        const response = fast
+            ? null
+            : await fetchWithLimit(
+                  `${llmApiUrl}/chat/completions`,
+                  {
+                      method: 'POST',
+                      headers: chatHeaders,
+                      body: JSON.stringify(summaryBody),
+                  },
+                  passTimeoutMs(),
+                  job.controller ? job.controller.signal : undefined
+              )
+        if (response && response.ok) {
             const data = await response.json()
             const content = stripThinkTags(data?.choices?.[0]?.message?.content || '')
             summary = repairJsonEscapeArtifacts(extractJson(content).summary || '')
@@ -7129,33 +7310,54 @@ async function runReviewPasses(job) {
         type: 'done',
         result: {
             rubric: { id: rubric.id, name: rubric.name },
+            // overleaf-lab: WHICH REVIEW THIS IS. It travels with the report because
+            // every reader of it - the panel, the archived HTML, the delta, a
+            // supervisor opening a downloaded file a year later - has to be able to
+            // tell a run that measured thirty requirements from one that measured
+            // three, and no count in the document can be read as that on its own.
+            mode,
+            // The two numbers behind the fast banner. Null in full mode, where "all of
+            // them" is the answer and a fraction would only invite the question.
+            modeCoverage: fast
+                ? { checked: countCheckedRequirements(plan), total: requirements.length }
+                : null,
             // overleaf-lab: THE MODEL ID AND NOTHING ELSE. The delta between two
             // reviews refuses to compare runs whose `model` differs (see the store),
             // so folding the machine name in here would report "that one ran on a
             // different model" for two runs of the SAME model that happened to land
             // on different GPUs, and silently drop the comparison the student came
             // for. Which machine served the review is the field below.
-            model: reviewModelNow(),
+            //
+            // NULL in fast mode, and this is not a detail: naming a model in a report
+            // no model produced would be the plainest possible untruth in the
+            // document, it would print "Model: qwen..." at the top of a page that was
+            // written by parsers, and the delta would then compare a fast run and a
+            // full one as "same model" instead of refusing. Every reader already
+            // handles an absent model (older archived reports have none).
+            model: fast ? null : reviewModelNow(),
             // overleaf-lab: WHICH BACKEND ANSWERED. Without it a pool is unauditable:
             // three machines, three models, and a report that could have come from
             // any of them. It carries the label and the model, never the URL - this
             // document is downloaded and forwarded, and the address of an internal
-            // machine has no reason to travel with it.
-            endpoint: {
-                id: endpoint.id,
-                label: endpoint.label || '',
-                model: reviewModelNow(),
-            },
+            // machine has no reason to travel with it. Null when none did.
+            endpoint: fast
+                ? null
+                : {
+                      id: endpoint.id,
+                      label: endpoint.label || '',
+                      model: reviewModelNow(),
+                  },
             // The same fact as a sentence the report can print, in the language the
             // student is being marked in. Null unless a pool is actually configured:
             // on a single-backend install there is nothing to disambiguate, and the
             // report must read exactly as it did before any of this existed.
-            endpointNote: poolIsConfigured()
-                ? L(
-                      `Reviewed on the ${endpointName(endpoint)} backend.`,
-                      `Review eseguita sul backend ${endpointName(endpoint)}.`
-                  )
-                : null,
+            endpointNote:
+                !fast && poolIsConfigured()
+                    ? L(
+                          `Reviewed on the ${endpointName(endpoint)} backend.`,
+                          `Review eseguita sul backend ${endpointName(endpoint)}.`
+                      )
+                    : null,
             // overleaf-lab: when the review ran. The exported report used to carry
             // this only in its file name, so a printed or forwarded copy had no date
             // at all; with reports now archived, it is what tells two runs apart.
@@ -7163,8 +7365,11 @@ async function runReviewPasses(job) {
             // overleaf-lab: the rubric's language, so the report chrome can localize.
             // The renderer falls back to English when absent (older stored reviews).
             language: reportLanguage,
-            documentTokensEstimate: promptTokens,
-            maxContextTokens,
+            // Nothing was put in a prompt in fast mode, so there is no prompt to
+            // measure: the report prints no token line rather than a number for a
+            // request that was never made.
+            documentTokensEstimate: fast ? null : promptTokens,
+            maxContextTokens: fast ? null : maxContextTokens,
             // overleaf-lab: WHAT THE REVIEW ACTUALLY READ. Without this the report
             // cannot be audited: a run that silently saw one file fewer (a deleted
             // file, an empty doc skipped, a project still syncing) is
@@ -7486,6 +7691,124 @@ async function firstAnsweringEndpoint() {
     return fallback
 }
 
+// overleaf-lab: WHAT A FINISHED REVIEW LEAVES BEHIND, whatever lane it ran in.
+//
+// Extracted from processQueue when the fast lane arrived, and extracted rather than
+// copied for one reason: this is where a review is archived, and two copies of an
+// archiving path is how the same report gets written twice or, worse, how one lane
+// quietly stops writing it at all. The endpoint bookkeeping stays in the caller,
+// because only the queued lane holds an endpoint; the outage marking below is keyed
+// off `job.endpoint` and is inert (see noteEndpointOutage) for a job that has none.
+async function recordReviewOutcome(job, outcome) {
+    // overleaf-lab: a cancel may have landed mid-run; if so, keep 'cancelled'.
+    if (job.status === 'cancelled') {
+        return
+    }
+    if (outcome.type === 'done') {
+        job.status = 'done'
+        job.result = outcome.result
+        // overleaf-lab: archive the finished report and attach the delta against the
+        // previous one. Persistence is best-effort by design: saveReportQuietly
+        // swallows its own errors, so a Mongo problem costs the archive and never the
+        // report the user is waiting for.
+        job.finishedAt = Date.now()
+        job.result.durationMs = job.finishedAt - (job.startedAt || job.createdAt)
+        const delta = await ComplianceStore.saveReportQuietly(job)
+        if (delta) {
+            job.result.delta = delta
+        }
+        return
+    }
+    job.status = 'error'
+    job.errorCode = outcome.errorCode
+    job.message = outcome.message
+    // overleaf-lab: the three failures that are ABOUT THE MACHINE and not about the
+    // document. The backend never answered, it does not serve the model this endpoint
+    // declares, or it ignores the JSON schema: every later review sent there would
+    // fail the same way, so the endpoint steps out of the rotation instead of
+    // consuming the queue one job at a time. A too_long or a type_mismatch marks
+    // nothing - those are facts about the project, and the next one may be fine.
+    if (
+        outcome.errorCode === 'backend_error' ||
+        outcome.errorCode === 'model_unavailable' ||
+        outcome.errorCode === 'json_mode_broken'
+    ) {
+        noteEndpointOutage(job.endpoint, outcome.errorCode)
+    }
+    if (outcome.errorCode === 'too_long') {
+        job.documentTokensEstimate = outcome.documentTokensEstimate
+        job.reviewMaxTokens = outcome.reviewMaxTokens
+        job.maxContextTokens = outcome.maxContextTokens
+    }
+    if (outcome.errorCode === 'type_mismatch') {
+        job.expectedDocument = outcome.expectedDocument
+        job.certain = outcome.certain
+    }
+}
+
+// overleaf-lab: cancel aborts the controller after setting status 'cancelled', so
+// keep that; any other throw (the review timeout abort or an HTTP/parse failure)
+// becomes a generic 'failed'.
+function recordReviewCrash(job, err) {
+    if (job.status === 'cancelled') {
+        return
+    }
+    job.status = 'error'
+    job.errorCode = 'failed'
+    job.message = 'The review request failed or timed out'
+    logger.error(
+        { projectId: job.projectId, userId: job.userId, err },
+        '[LLM] compliance: review job failed'
+    )
+}
+
+// overleaf-lab: the bookkeeping every finished job owes, in both lanes.
+async function settleFinishedJob(job) {
+    job.finishedAt = Date.now()
+    job.controller = null
+    // overleaf-lab: a review that ended badly is recorded too. Without this the
+    // in-memory job was the only trace of the failure, and it is swept after
+    // JOB_TTL_MS - so once it was gone /latest fell through to the archive and
+    // answered with the PREVIOUS report as though it were current. Not awaited on
+    // its own: the forget below is, and it is ordered after this by the await.
+    if (job.status === 'error') {
+        await ComplianceStore.saveFailureQuietly(job)
+    }
+    // The job is no longer owed: whatever came of it, the report (if any) is in
+    // the reports collection and this entry would only be resumed for nothing.
+    //
+    // AWAITED, unlike the report write next to it, which was the asymmetry that
+    // made a finished review come back from the dead. processQueue's promise used
+    // to resolve with this delete still in flight, so the nightly `docker stop`
+    // landing in that window left a job document at status 'running' whose report
+    // was already archived: at the next boot claimInterruptedJobs correctly saw
+    // work still owed, and the student got a full duplicate review on the GPU and
+    // a second "Review finished" email. The unique jobId index refused the second
+    // REPORT, which is why the duplication was invisible in the data. The cost of
+    // ordering it properly is one round trip on a path that has just spent minutes
+    // on a GPU. A fast job was never written to that collection, and deleting a
+    // document that is not there is a no-op, so the two lanes share this line.
+    await ComplianceStore.forgetJobQuietly(job.id)
+    // overleaf-lab: tell the user it is over, so they do not have to sit in front
+    // of the panel for the whole review. Deliberately NOT awaited: the quiet
+    // wrapper never rejects, and an SMTP server that hangs must not keep the next
+    // queued review waiting behind a notification about this one.
+    //
+    // NOT FOR A FAST REVIEW, on purpose. The email exists because a full review is a
+    // delivery you walk away from: minutes on a queue, an hour of GPU, come back
+    // later. A fast one finishes while the panel is still open, in the middle of a
+    // fix-and-check loop somebody may run ten times in an afternoon, and ten emails
+    // about ten five-second runs is how a useful notification becomes one people
+    // filter away - including the ones about the reviews that took an hour.
+    // Compared against the literal rather than through normalizeReviewMode: the mode
+    // is normalised once, where the request lands (see startReview), and this line is
+    // sliced out and evaluated on its own by the queue suites, where the helper that
+    // lives four thousand lines up does not exist.
+    if (job.mode !== 'fast') {
+        ComplianceMailer.notifyReviewFinishedQuietly(job)
+    }
+}
+
 // overleaf-lab: run the next queued job on the first free endpoint. Recurse to skip
 // missing or already-cancelled jobs, and always try the next job in a finally so a
 // single job failure never stalls the queue.
@@ -7547,64 +7870,9 @@ async function processQueue() {
     }
 
     try {
-        const outcome = await performReview(job)
-        // overleaf-lab: a cancel may have landed mid-run; if so, keep 'cancelled'.
-        if (job.status !== 'cancelled') {
-            if (outcome.type === 'done') {
-                job.status = 'done'
-                job.result = outcome.result
-                // overleaf-lab: archive the finished report and attach the delta
-                // against the previous one. Persistence is best-effort by design:
-                // saveReportQuietly swallows its own errors, so a Mongo problem
-                // costs the archive and never the report the user is waiting for.
-                job.finishedAt = Date.now()
-                job.result.durationMs = job.finishedAt - (job.startedAt || job.createdAt)
-                const delta = await ComplianceStore.saveReportQuietly(job)
-                if (delta) {
-                    job.result.delta = delta
-                }
-            } else {
-                job.status = 'error'
-                job.errorCode = outcome.errorCode
-                job.message = outcome.message
-                // overleaf-lab: the three failures that are ABOUT THE MACHINE and not
-                // about the document. The backend never answered, it does not serve
-                // the model this endpoint declares, or it ignores the JSON schema:
-                // every later review sent there would fail the same way, so the
-                // endpoint steps out of the rotation instead of consuming the queue
-                // one job at a time. A too_long or a type_mismatch marks nothing -
-                // those are facts about the project, and the next one may be fine.
-                if (
-                    outcome.errorCode === 'backend_error' ||
-                    outcome.errorCode === 'model_unavailable' ||
-                    outcome.errorCode === 'json_mode_broken'
-                ) {
-                    noteEndpointOutage(job.endpoint, outcome.errorCode)
-                }
-                if (outcome.errorCode === 'too_long') {
-                    job.documentTokensEstimate = outcome.documentTokensEstimate
-                    job.reviewMaxTokens = outcome.reviewMaxTokens
-                    job.maxContextTokens = outcome.maxContextTokens
-                }
-                if (outcome.errorCode === 'type_mismatch') {
-                    job.expectedDocument = outcome.expectedDocument
-                    job.certain = outcome.certain
-                }
-            }
-        }
+        await recordReviewOutcome(job, await performReview(job))
     } catch (err) {
-        // overleaf-lab: cancel aborts the controller after setting status
-        // 'cancelled', so keep that; any other throw (the review timeout abort or an
-        // HTTP/parse failure) becomes a generic 'failed'.
-        if (job.status !== 'cancelled') {
-            job.status = 'error'
-            job.errorCode = 'failed'
-            job.message = 'The review request failed or timed out'
-            logger.error(
-                { projectId: job.projectId, userId: job.userId, err },
-                '[LLM] compliance: review job failed'
-            )
-        }
+        recordReviewCrash(job, err)
     } finally {
         job.finishedAt = Date.now()
         // overleaf-lab: give the machine back. Keyed by the endpoint the job was
@@ -7616,34 +7884,7 @@ async function processQueue() {
         if (job.status === 'done') {
             clearEndpointOutage(endpoint)
         }
-        job.controller = null
-        // overleaf-lab: a review that ended badly is recorded too. Without this the
-        // in-memory job was the only trace of the failure, and it is swept after
-        // JOB_TTL_MS - so once it was gone /latest fell through to the archive and
-        // answered with the PREVIOUS report as though it were current. Not awaited on
-        // its own: the forget below is, and it is ordered after this by the await.
-        if (job.status === 'error') {
-            await ComplianceStore.saveFailureQuietly(job)
-        }
-        // The job is no longer owed: whatever came of it, the report (if any) is in
-        // the reports collection and this entry would only be resumed for nothing.
-        //
-        // AWAITED, unlike the report write next to it, which was the asymmetry that
-        // made a finished review come back from the dead. processQueue's promise used
-        // to resolve with this delete still in flight, so the nightly `docker stop`
-        // landing in that window left a job document at status 'running' whose report
-        // was already archived: at the next boot claimInterruptedJobs correctly saw
-        // work still owed, and the student got a full duplicate review on the GPU and
-        // a second "Review finished" email. The unique jobId index refused the second
-        // REPORT, which is why the duplication was invisible in the data. The cost of
-        // ordering it properly is one round trip on a path that has just spent minutes
-        // on a GPU.
-        await ComplianceStore.forgetJobQuietly(job.id)
-        // overleaf-lab: tell the user it is over, so they do not have to sit in front
-        // of the panel for the whole review. Deliberately NOT awaited: the quiet
-        // wrapper never rejects, and an SMTP server that hangs must not keep the next
-        // queued review waiting behind a notification about this one.
-        ComplianceMailer.notifyReviewFinishedQuietly(job)
+        await settleFinishedJob(job)
         // overleaf-lab: never let one job's failure stall the queue. processQueue is
         // async, so it can only ever REJECT and never throw synchronously: a try/catch
         // around it is unreachable, and the day something in it rejects the result
@@ -7654,6 +7895,56 @@ async function processQueue() {
     }
 }
 
+// overleaf-lab: how many fast reviews may run at once in this process.
+//
+// They cost no GPU, but they are not free: each one reads the whole project out of
+// the docstore and file store and runs every parser over it, on the event loop that
+// serves every other request of the instance. Three is enough that a class clicking
+// together does not queue behind itself, and small enough that the web process is
+// never spending its whole time slice on them.
+const MAX_CONCURRENT_FAST_REVIEWS = 3
+
+// overleaf-lab: start as many queued fast reviews as the cap allows.
+//
+// No endpoint is claimed and no lock is needed: the loop is synchronous up to the
+// point where each job is marked running, and runFastReview never awaits before
+// returning its promise unhandled to us. What it must not do is await the reviews
+// themselves - they are independent, and awaiting one here would turn the cap into a
+// FIFO of one.
+function processFastQueue() {
+    while (fastRunning < MAX_CONCURRENT_FAST_REVIEWS && fastQueue.length > 0) {
+        const job = jobs.get(fastQueue.shift())
+        // Same rule as the queued lane: a job that vanished, was cancelled while
+        // waiting, or somehow already finished has had its turn.
+        if (!job || job.status === 'cancelled' || job.status === 'done' || job.status === 'error') {
+            continue
+        }
+        fastRunning += 1
+        runFastReview(job).catch(err => {
+            logger.error({ err }, '[LLM] compliance: a fast review ended badly')
+        })
+    }
+}
+
+// overleaf-lab: one fast review, from pickup to archive. The same performReview the
+// queued lane runs (the mode on the job is what makes it fast), the same outcome
+// recording and the same settling; what it does NOT do is take an endpoint, mark one
+// as broken, or send an email.
+async function runFastReview(job) {
+    job.status = 'running'
+    job.startedAt = Date.now()
+    job.controller = new AbortController()
+    try {
+        await recordReviewOutcome(job, await performReview(job))
+    } catch (err) {
+        recordReviewCrash(job, err)
+    } finally {
+        fastRunning -= 1
+        await settleFinishedJob(job)
+        processFastQueue()
+    }
+}
+
 async function getRubrics(req, res) {
     // overleaf-lab: review feature disabled by admin -> no rubrics to offer.
     const flags = await getLLMFeatureFlags()
@@ -7661,9 +7952,24 @@ async function getRubrics(req, res) {
         return res.json({ rubrics: [], notifyByEmail: false })
     }
     const rubrics = await getComplianceRubrics()
+    // overleaf-lab: CAN THE FULL REVIEW RUN AT ALL ON THIS INSTANCE?
+    //
+    // The panel offers two buttons and one of them needs a model backend, so it has to
+    // know before it draws them: a button that is enabled, clicked, and answers
+    // "not_configured" teaches people that the feature is broken, while a button
+    // disabled WITH THE REASON next to a fast one that works teaches them what this
+    // instance can do. The same two facts the start guard consults, read without
+    // touching the pool snapshot: this is a GET on a read-only route, and moving the
+    // pool under a review that is running is not something it may do.
+    const admin = await getAdminLLMSettings()
+    const declaredEndpoints = Array.isArray(admin.reviewEndpoints) ? admin.reviewEndpoints : []
+    const fullReviewAvailable = Boolean(
+        admin.llmApiUrl || declaredEndpoints.some(e => e && String(e.url || '').trim())
+    )
     // overleaf-lab: expose names only, never the guidelines text, to the project UI.
     res.json({
         rubrics: rubrics.map(r => ({ id: r.id, name: r.name })),
+        fullReviewAvailable,
         // overleaf-lab: whether this instance can mail the user when the review ends.
         // The panel tells them to walk away and come back, and it must only promise
         // the email when one will actually be sent: an install without SMTP would
@@ -7692,9 +7998,15 @@ async function startReview(req, res) {
     // overleaf-lab: `confirmed` is the user answering "yes, this rubric really is the
     // right one for this document" after a type_mismatch, and it skips the check on
     // the retry. It cannot be inferred, so it has to travel with the request.
-    const { rubricId, confirmed } = req.body || {}
+    // overleaf-lab: WHICH OF THE TWO REVIEWS was asked for. Normalised here, once, so
+    // everything downstream compares against a value that can only be 'full' or
+    // 'fast': a typo in the body must fall back to the review this endpoint has always
+    // run, never to a run that quietly checks a third of the rubric.
+    const { rubricId, confirmed, mode: requestedMode } = req.body || {}
+    const mode = normalizeReviewMode(requestedMode)
+    const fast = mode === 'fast'
 
-    logger.debug({ projectId, userId, rubricId }, '[LLM] compliance: start requested')
+    logger.debug({ projectId, userId, rubricId, mode }, '[LLM] compliance: start requested')
 
     // 3. Resolve the requested rubric (capture its name for the job).
     const rubrics = await getComplianceRubrics()
@@ -7721,7 +8033,12 @@ async function startReview(req, res) {
     // on, so an endpoint added in the admin page is in the rotation from the next
     // click, with no restart.
     refreshReviewEndpoints(admin)
-    if (!admin.llmApiUrl && reviewEndpoints.every(endpoint => !endpoint.url)) {
+    // overleaf-lab: `!fast`, which is the whole of point 3 of this feature. An
+    // instance with no model backend - a fresh clone of this repository, a department
+    // that never bought a GPU - can still run every requirement its rubric hands to a
+    // parser, and refusing that here would be refusing a review that needs nothing
+    // this check is about.
+    if (!fast && !admin.llmApiUrl && reviewEndpoints.every(endpoint => !endpoint.url)) {
         return res.json({
             ok: false,
             error: 'not_configured',
@@ -7881,6 +8198,10 @@ async function startReview(req, res) {
         // means, and comparing two reports across that edit would be a lie.
         rubricFingerprint: ComplianceStore.rubricFingerprint(rubric.guidelines),
         confirmed: Boolean(confirmed),
+        // overleaf-lab: the mode travels ON THE JOB and is read from there by the
+        // planner, the mailer and the archive. One field, one source: a report that
+        // says "fast" and a run that called a model cannot come from this.
+        mode,
         status: 'queued',
         result: null,
         errorCode: null,
@@ -7904,14 +8225,28 @@ async function startReview(req, res) {
         currentRequirement: '',
     }
     jobs.set(job.id, job)
-    queue.push(job.id)
-    // overleaf-lab: persist the job as soon as it is owed, so the nightly backup
-    // (docker stop, then docker rm) no longer swallows a review that was queued or
-    // halfway through. Best effort: losing the archive must never block a review.
-    ComplianceStore.rememberJobQuietly(job)
-    // overleaf-lab: kick the queue; it runs to its first await, so if nothing else
-    // is running this job may already be 'running' by the time we respond.
-    processQueue()
+    if (fast) {
+        // overleaf-lab: the fast lane, and DELIBERATELY NOT PERSISTED.
+        //
+        // The work list exists so that a review interrupted by the nightly `docker
+        // stop` is resumed instead of lost, which is worth doing for an hour of GPU.
+        // A fast review is seconds and one click, and resuming one would be actively
+        // wrong: the resume path waits for a model backend to answer before it starts
+        // anything and then pushes what it claimed onto the GPU queue, so a review
+        // that was chosen precisely because it needs no model would come back as
+        // exactly the thing the user did not ask for.
+        fastQueue.push(job.id)
+        processFastQueue()
+    } else {
+        queue.push(job.id)
+        // overleaf-lab: persist the job as soon as it is owed, so the nightly backup
+        // (docker stop, then docker rm) no longer swallows a review that was queued or
+        // halfway through. Best effort: losing the archive must never block a review.
+        ComplianceStore.rememberJobQuietly(job)
+        // overleaf-lab: kick the queue; it runs to its first await, so if nothing else
+        // is running this job may already be 'running' by the time we respond.
+        processQueue()
+    }
 
     return res.json({
         ok: true,
@@ -7925,9 +8260,14 @@ async function startReview(req, res) {
 // latest-for-project endpoints. It always carries the jobId so a client that
 // re-attaches through /latest can resume polling by id.
 function jobStatusBody(job) {
+    // overleaf-lab: WHICH REVIEW IS RUNNING, on every live body. The panel offers two
+    // buttons and re-attaches to whatever it finds after a reload, so without this it
+    // would have to guess which of the two it is watching - and the honest wait note
+    // for a fast review ("seconds") is the wrong thing to show over a full one.
+    const mode = job.mode === 'fast' ? 'fast' : 'full'
     switch (job.status) {
         case 'queued': {
-            const body = { ok: true, jobId: job.id, status: 'queued', position: jobsAhead(job.id) }
+            const body = { ok: true, jobId: job.id, status: 'queued', mode, position: jobsAhead(job.id) }
             // overleaf-lab: what "position 2" MEANS when several reviews run at once.
             // On one backend the number is the wait; on three it is not, and a panel
             // that says "2 reviews ahead of you" with three machines running is
@@ -7946,12 +8286,13 @@ function jobStatusBody(job) {
             // total) instead of a time estimate. Before the rubric is split we are
             // still assembling the document: report 'preparing'.
             if (!job.passesTotal) {
-                return { ok: true, jobId: job.id, status: 'running', phase: 'preparing' }
+                return { ok: true, jobId: job.id, status: 'running', mode, phase: 'preparing' }
             }
             return {
                 ok: true,
                 jobId: job.id,
                 status: 'running',
+                mode,
                 phase: job.passesDone >= job.passesTotal ? 'summarizing' : 'checking',
                 passesDone: job.passesDone,
                 passesTotal: job.passesTotal,
@@ -8074,10 +8415,17 @@ async function cancelReview(req, res) {
     // Same project binding as statusReview, same reason.
     if (job && job.userId === userId && job.projectId === req.params.Project_id) {
         if (job.status === 'queued') {
-            // overleaf-lab: pull it out of the queue so it never runs.
+            // overleaf-lab: pull it out of the queue so it never runs. Both queues:
+            // a fast job waiting for a fast slot is queued in the other list, and the
+            // status alone would only stop it at dispatch, leaving a cancelled id
+            // sitting in front of everybody else's position count.
             const idx = queue.indexOf(job.id)
             if (idx !== -1) {
                 queue.splice(idx, 1)
+            }
+            const fastIdx = fastQueue.indexOf(job.id)
+            if (fastIdx !== -1) {
+                fastQueue.splice(fastIdx, 1)
             }
             job.status = 'cancelled'
             job.finishedAt = Date.now()

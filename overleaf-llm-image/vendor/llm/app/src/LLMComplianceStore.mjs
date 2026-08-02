@@ -148,6 +148,17 @@ function worstByRequirement(items) {
     return worst
 }
 
+// overleaf-lab: which review produced this record, as the delta needs to read it.
+//
+// Two places carry it - the top-level field written by saveReport, and the result the
+// controller built - because a record can reach here from either the archive or a job
+// that has just finished. Anything with NEITHER is a report written before fast
+// reviews existed, and every one of those was a full review, so 'full' is not a
+// default here so much as a fact about the data.
+function reviewMode(record) {
+    return (record && (record.mode || (record.result && record.result.mode))) || 'full'
+}
+
 // overleaf-lab: what changed between two reports, at the level where the answer is
 // exact. Every requirement carries one verdict, so comparing verdicts needs no
 // heuristics at all; comparing individual findings would, and that is a separate
@@ -163,6 +174,25 @@ export function buildDelta(current, previous) {
     }
     if (current.rubricFingerprint !== previous.rubricFingerprint) {
         return { comparable: false, reason: 'rubric_changed', previousAt: previous.createdAt }
+    }
+    // overleaf-lab: A FAST REVIEW AND A FULL ONE ARE NOT COMPARABLE, and this is the
+    // same rule as the `na` one below, applied one level up.
+    //
+    // A fast review does not look at the model-side requirements at all; it records
+    // them as n.a. with the reason. Compared against a full run, every requirement the
+    // full one had found MISSING would now read as "no longer open" for the single
+    // reason that nobody looked - which is the manufactured progress this function
+    // exists to prevent, at the worst possible scale: not one requirement, all of
+    // them. The rule holds in the other direction too (a full review after a fast one
+    // would announce a page of new findings that were never absent), so the modes are
+    // simply never crossed. Two fast reviews compare perfectly, which is what makes
+    // the mode a working loop instead of a one-off.
+    //
+    // Ahead of the model check on purpose: a fast review carries no model at all, so
+    // the crossing would otherwise be reported as "that one ran on a different model",
+    // which is true, useless, and hides the reason that matters.
+    if (reviewMode(current) !== reviewMode(previous)) {
+        return { comparable: false, reason: 'mode_changed', previousAt: previous.createdAt }
     }
     if (current.model !== previous.model) {
         return { comparable: false, reason: 'model_changed', previousAt: previous.createdAt }
@@ -246,6 +276,11 @@ export async function saveReport(job) {
         rubricName: job.rubricName,
         rubricFingerprint: job.rubricFingerprint || null,
         model: job.result?.model || null,
+        // overleaf-lab: 'full' or 'fast', at the TOP LEVEL and not only inside the
+        // result. Two readers need it without pulling the report body: the delta,
+        // which refuses to compare across modes, and findLatest, which has to be able
+        // to find the previous review of the SAME mode to compare against.
+        mode: job.mode === 'fast' ? 'fast' : 'full',
         createdAt: new Date(job.createdAt),
         finishedAt: new Date(job.finishedAt || now),
         expiresAt: new Date(now + RETENTION_MS),
@@ -261,10 +296,16 @@ export async function saveReport(job) {
         durationMs: job.result?.durationMs || null,
         result: job.result,
     }
-    // The previous report OF THIS RUBRIC, not simply the previous report: see
-    // findLatest. A project reviewed against two rubrics in turn otherwise compared
-    // every run against the other rubric and answered "rubric changed" for ever.
-    const previous = await findLatest(job.projectId, job.userId, job.rubricFingerprint || null)
+    // The previous report OF THIS RUBRIC AND THIS MODE, not simply the previous
+    // report: see findLatest. A project reviewed against two rubrics in turn otherwise
+    // compared every run against the other rubric and answered "rubric changed" for
+    // ever, and the same is true of somebody alternating a fast check with a full one.
+    const previous = await findLatest(
+        job.projectId,
+        job.userId,
+        job.rubricFingerprint || null,
+        doc.mode
+    )
     doc.delta = buildDelta(doc, previous)
     // overleaf-lab: the standalone HTML report, rendered once at completion and
     // archived with the data, so the dashboard can hand a staff member the very
@@ -329,6 +370,7 @@ export async function saveFailure(job) {
             rubricName: job.rubricName,
             rubricFingerprint: job.rubricFingerprint || null,
             model: null,
+            mode: job.mode === 'fast' ? 'fast' : 'full',
             createdAt: new Date(job.createdAt),
             finishedAt: new Date(job.finishedAt || now),
             expiresAt: new Date(now + RETENTION_MS),
@@ -622,12 +664,35 @@ export async function forgetJobQuietly(jobId) {
 // The fallback is deliberate: with no same-rubric predecessor the newest report of
 // another rubric is still the right answer, because it is what lets the delta say
 // "rubric changed" WITH the date instead of "first stored review of this project".
-export async function findLatest(projectId, userId, rubricFingerprint = null) {
+// overleaf-lab: and the same argument again for the MODE. A student alternating a fast
+// check with a full one would otherwise have every fast report compared against the
+// full one before it and be told "not compared" every single time, while a comparable
+// fast report sat one row further down. `$in: [mode, null]` for the full case matches
+// the reports written before modes existed, which were all full reviews.
+//
+// The fallback chain is deliberate and ordered: same rubric and same mode, then same
+// rubric, then anything. Each step down loses a comparison but keeps a DATE, which is
+// what lets the delta say "the rubric changed" or "that one was a fast review" with a
+// when, instead of the much less useful "first stored review of this project".
+export async function findLatest(projectId, userId, rubricFingerprint = null, mode = null) {
     const collection = await reports()
     // The archived HTML copy stays out: every consumer of this function wants the
     // DATA (the delta, the recovery payload), and the copy weighs tens of KB.
     const query = { projectId, userId, failed: { $ne: true } }
     const options = { sort: { createdAt: -1 }, projection: { html: 0 } }
+    if (rubricFingerprint && mode) {
+        const sameRun = await collection.findOne(
+            {
+                ...query,
+                rubricFingerprint,
+                mode: mode === 'fast' ? 'fast' : { $in: ['full', null] },
+            },
+            options
+        )
+        if (sameRun) {
+            return sameRun
+        }
+    }
     if (rubricFingerprint) {
         const sameRubric = await collection.findOne({ ...query, rubricFingerprint }, options)
         if (sameRubric) {
@@ -684,6 +749,11 @@ export async function listReports(projectId, userId, limit = 20) {
         failed: Boolean(row.failed),
         errorCode: row.failed ? row.errorCode || 'failed' : null,
         counts: row.failed ? null : row.counts || null,
+        // Normalised here for the same reason as the fields above: a row with no mode
+        // is a report from before fast reviews existed, and a listing that renders a
+        // fast run's tally next to a full one's without saying which is which is
+        // comparing three requirements against thirty.
+        mode: row.mode === 'fast' ? 'fast' : 'full',
     }))
 }
 

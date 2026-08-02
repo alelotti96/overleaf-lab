@@ -1021,6 +1021,20 @@ check('no decimal number is na', status('decimal-separator', 'testo senza numeri
     check('and the evidence says so', /thousands separator/.test(r.evidence))
 }
 {
+    // REGRESSION, from the public-thesis corpus: "equazioni 33,34" is a hand-written
+    // reference list, and the sectioning vocabulary only carried the singular, so a
+    // point-convention document was flipped to "both separators in use" by its own
+    // equation references.
+    const r = run('decimal-separator', 'come mostrano le equazioni 33,34 il valore vale 1.5 e poi 2.75')
+    check('a plural sectioning word shields its reference list', r.status === 'ok', r.evidence)
+    // And "alle 19,34" is a time of day, in any convention. The guard is shape-gated:
+    // the same digits with a unit after a normal word keep counting.
+    const time = run('decimal-separator', "l'osservazione e iniziata alle 19,34 e il valore misurato vale 1.5 e 2.75")
+    check('a time of day after an hour word is not a decimal', time.status === 'ok', time.evidence)
+    const mass = run('decimal-separator', 'una massa di 19,34 kg contro un valore di 1.5 e 2.75')
+    check('the same digits as a measurement still count', mass.status === 'missing', mass.evidence)
+}
+{
     // REGRESSION: the comma of a mathematical interval is not a decimal comma. Four of
     // five real projects were told the "0,1" of a sigmoid range [0,1] or the "-1,1" of
     // a tanh range was a decimal comma inconsistent with the rest of the document, on

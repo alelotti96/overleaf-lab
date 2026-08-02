@@ -537,6 +537,11 @@ function LLMCompliancePane() {
         downloadReport,
         hasRubrics,
         notifyByEmail,
+        // overleaf-lab: false when this instance has no model backend, which disables
+        // the full button (with the reason) and leaves the fast one working.
+        fullReviewAvailable,
+        // Which of the two is running, so the notes below describe the right one.
+        runningMode,
         // overleaf-lab: null when the editor is not reachable from where this pane is
         // mounted, which is what decides whether a location is a button or text.
         gotoSource,
@@ -549,11 +554,22 @@ function LLMCompliancePane() {
     // off. The email line only appears where the instance can actually send one.
     const renderWaitNote = () => (
         <div style={{ marginTop: 8, fontSize: '0.85em', color: MUTED }}>
-            {t(
-                'review_runs_on_server',
-                'The review runs on the server. You can close this panel, the browser, or even shut down your computer: the finished report will be here when you open the project again.'
-            )}
-            {notifyByEmail && (
+            {/* overleaf-lab: the note that says WAITING IS NOT REQUIRED belongs to the
+                full review, which is minutes on a queue. A fast one is over before it
+                could be read, and telling somebody they may shut their computer down
+                for five seconds of work reads as a promise about the wrong thing. The
+                email line follows the same rule and the same reason the mailer does:
+                no mail is sent for a fast review at all. */}
+            {runningMode === 'fast'
+                ? t(
+                      'review_fast_running',
+                      'The fast review runs the code checks only, so it finishes in seconds.'
+                  )
+                : t(
+                      'review_runs_on_server',
+                      'The review runs on the server. You can close this panel, the browser, or even shut down your computer: the finished report will be here when you open the project again.'
+                  )}
+            {runningMode !== 'fast' && notifyByEmail && (
                 <>
                     {' '}
                     {t(
@@ -892,11 +908,38 @@ function LLMCompliancePane() {
                         overflowWrap: 'anywhere',
                     }}
                 >
-                    {t(
-                        'review_download_hint',
-                        'Tip: download this report to keep it. Running a new review is a heavy operation for the server, so avoid repeating it unnecessarily.'
-                    )}
+                    {/* The second half of this is about the FULL review: it is the one
+                        that costs the server minutes of model time. Telling somebody
+                        not to repeat a five-second run of local checks would argue
+                        against the one thing the fast mode is for. */}
+                    {result.mode === 'fast'
+                        ? t(
+                              'review_download_hint_fast',
+                              'Tip: download this report to keep it. This report is not stored in the project.'
+                          )
+                        : t(
+                              'review_download_hint',
+                              'Tip: download this report to keep it. Running a new review is a heavy operation for the server, so avoid repeating it unnecessarily.'
+                          )}
                 </div>
+
+                {/* overleaf-lab: WHICH REVIEW THIS REPORT CAME FROM, above the tally
+                    it qualifies. Six OK and twenty-four N/A is an excellent-looking
+                    row of numbers and a fast review reads exactly like that, so the
+                    sentence that explains the N/A column has to come before it rather
+                    than be discovered requirement by requirement further down. */}
+                {result.mode === 'fast' && (
+                    <div style={{ fontSize: '0.85em', marginBottom: 8, color: MUTED }}>
+                        <strong>{t('review_fast_badge', 'Fast review')}:</strong>{' '}
+                        {result.modeCoverage
+                            ? `${result.modeCoverage.checked}/${result.modeCoverage.total} `
+                            : ''}
+                        {t(
+                            'review_fast_result_note',
+                            'requirements checked by code. The others are marked N/A and need a full review.'
+                        )}
+                    </div>
+                )}
 
                 {/* overleaf-lab: compact counts summary */}
                 <div
@@ -940,7 +983,12 @@ function LLMCompliancePane() {
                                   'review_delta_rubric_changed',
                                   'No comparison with the previous review: the rubric has changed since then, so the same requirement may no longer mean the same thing.'
                               )
-                            : result.delta.reason === 'model_changed'
+                            : result.delta.reason === 'mode_changed'
+                              ? t(
+                                    'review_delta_mode_changed',
+                                    'No comparison with the previous review: the two were not run in the same mode, so they do not cover the same requirements.'
+                                )
+                              : result.delta.reason === 'model_changed'
                               ? t(
                                     'review_delta_model_changed',
                                     'No comparison with the previous review: it was run with a different model.'
@@ -1038,8 +1086,22 @@ function LLMCompliancePane() {
                 )}
 
                 <div style={{ color: MUTED, fontSize: '0.85em', marginTop: 6 }}>
-                    {t('model_label', 'Model')}: {result.model} - ~
-                    {result.documentTokensEstimate} {t('prompt_tokens', 'prompt tokens')}
+                    {/* overleaf-lab: the model and the prompt size are only there when
+                        a prompt was built. A fast review records neither, and printing
+                        "Model: null - ~null prompt tokens" under a page produced by
+                        parsers would be both ugly and false. */}
+                    {result.model && (
+                        <>
+                            {t('model_label', 'Model')}: {result.model} - ~
+                            {result.documentTokensEstimate}{' '}
+                            {t('prompt_tokens', 'prompt tokens')}
+                        </>
+                    )}
+                    {!result.model && (
+                        <>
+                            {t('review_by_code', 'Checked by code, with no language model')}
+                        </>
+                    )}
                     {result.documentFiles && result.documentFiles.length > 0 && (
                         <>
                             {' - '}
@@ -1158,7 +1220,7 @@ function LLMCompliancePane() {
                 overflow: 'hidden',
             }}
         >
-            {/* Header row: rubric selector + run button */}
+            {/* Header row: rubric selector */}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <select
                     className="form-select"
@@ -1174,22 +1236,74 @@ function LLMCompliancePane() {
                         </option>
                     ))}
                 </select>
-                {showRunButton && (
-                    <OLButton
-                        variant="primary"
-                        type="button"
-                        /* Wrapped, not passed by reference: React hands the click
-                           event to the handler as its first argument, which would
-                           arrive as `confirmed` and skip the document-type check on
-                           every single run. */
-                        onClick={() => runReview(false)}
-                        disabled={!selectedRubricId}
-                    >
-                        <MaterialIcon type="fact_check" />{' '}
-                        {t('run_review', 'Run review')}
-                    </OLButton>
-                )}
             </div>
+
+            {/* overleaf-lab: THE TWO REVIEWS, side by side, each with the one line
+                that tells them apart.
+
+                They are two buttons and not a dropdown next to one button because the
+                choice is not a setting: it is which of two different pieces of work to
+                ask for, and the cost of picking wrong is either twenty minutes of
+                waiting or a report that quietly covered a third of the rubric. The
+                explanations are permanent text rather than tooltips for the same
+                reason - a tooltip is read once, by the person who was already
+                wondering. */}
+            {showRunButton && (
+                <div style={{ marginTop: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <OLButton
+                            variant="primary"
+                            type="button"
+                            /* Wrapped, not passed by reference: React hands the click
+                               event to the handler as its first argument, which would
+                               arrive as `confirmed` and skip the document-type check on
+                               every single run. */
+                            onClick={() => runReview(false, 'full')}
+                            disabled={!selectedRubricId || !fullReviewAvailable}
+                        >
+                            <MaterialIcon type="fact_check" />{' '}
+                            {t('run_full_review', 'Full review')}
+                        </OLButton>
+                        <OLButton
+                            variant="secondary"
+                            type="button"
+                            onClick={() => runReview(false, 'fast')}
+                            disabled={!selectedRubricId}
+                        >
+                            <MaterialIcon type="code" />{' '}
+                            {t('run_fast_review', 'Fast review')}
+                        </OLButton>
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: '0.8em', color: MUTED }}>
+                        <div>
+                            <strong>{t('run_full_review', 'Full review')}:</strong>{' '}
+                            {t(
+                                'review_full_explainer',
+                                'Every requirement, including those that need the review model. Takes minutes.'
+                            )}
+                        </div>
+                        <div style={{ marginTop: 2 }}>
+                            <strong>{t('run_fast_review', 'Fast review')}:</strong>{' '}
+                            {t(
+                                'review_fast_explainer',
+                                'Only the requirements verified by code, in seconds. No language model involved: the others come back as not checked.'
+                            )}
+                        </div>
+                        {/* overleaf-lab: an instance with no model backend. Said HERE,
+                            under the disabled button, and not as an error after the
+                            click: a button that is enabled, pressed, and answers "not
+                            configured" teaches people the feature is broken. */}
+                        {!fullReviewAvailable && (
+                            <div style={{ marginTop: 4 }}>
+                                {t(
+                                    'review_full_unavailable',
+                                    'The full review is unavailable: this instance has no review model configured. The fast review does not need one.'
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* overleaf-lab: queued state - position note + cancel */}
             {phase === 'queued' && (

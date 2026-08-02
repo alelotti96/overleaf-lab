@@ -15,7 +15,9 @@ Scripts have been tested on Ubuntu 24.
 - Project history with restore functionality
 - Import Microsoft Word and Markdown documents; export projects as Word, Markdown, or HTML (Pandoc, experimental upstream feature)
 - Optional GitHub two-way synchronization (requires a GitHub OAuth App)
-- Optional AI Assistant (LLM): in-editor chat + Ask-AI-on-selection + inline completion + document compliance review (checks the whole project against admin-defined rubrics), backed by a local llama.cpp or any OpenAI-compatible API, with optional per-user OpenAI/Anthropic keys (encrypted at rest)
+- Optional AI Assistant (LLM): in-editor chat + Ask-AI-on-selection + inline completion + document compliance review (the whole project checked against admin-defined rubrics: 36 deterministic structural checks answered in code, model judgement with per-candidate voting for the rest, guided HTML reports with source excerpts and editor deep links, and a pool of review backends for multiple GPUs), backed by a local llama.cpp or any OpenAI-compatible API, with optional per-user OpenAI/Anthropic keys (encrypted at rest)
+- Optional publish module: a stable public link to a project's compiled PDF, with an optional password and a custom link name that can never be taken over by another project
+- Optional lists module: one-click generation and update of the symbols and acronyms lists, scanned from the sources and filled from a curated aerospace master list (no LLM involved)
 
 **Full TeXLive + Microsoft Fonts**:
 
@@ -189,9 +191,9 @@ Every AI prompt is editable by a super-admin in `/admin/llm/settings` (the "AI P
 
 ### Document compliance review
 
-A super-admin defines named **rubrics** (writing guidelines for theses / internships) in `/admin/llm/settings`, along with the **review model** and its **max context tokens**. In the editor, users open the AI Assistant rail, switch to the **Review** tab, pick a rubric, and run: the whole project (all `.tex` files) is checked against the rubric and a per-requirement report is produced (status, evidence, suggestion), with a **Download report** button.
+A super-admin defines named **rubrics** (writing guidelines for theses / internships) in `/admin/llm/settings`, along with the **review model** and its **max context tokens**. In the editor, users pick a rubric and run: the whole project is checked requirement by requirement and a report is produced (status, evidence quoting file and line, suggestion), downloadable as a self-contained HTML file with clickable source excerpts and deep links back into the editor. Requirements marked `[check: name]` in the rubric are answered by **deterministic code** (36 structural checks: captions, cross-references, acronyms, units, citations, and more) with no model call at all; the model handles the judgement calls, with per-candidate voting to keep them stable. See `overleaf-llm-image/README.md` ("How to write a rubric") for the full rubric syntax.
 
-Reviews are long, so they run **one at a time** with a queue: the UI shows the queue position, a running or queued review can be **cancelled** (and is cancelled automatically on page refresh), and a project too large for the review model's context window is refused rather than truncated. Point the review model at a large-context server (see the router below to run a separate review backend).
+Reviews are long, so they queue: with one review backend they run one at a time, with a configured **pool of backends** (one per GPU/server) they run concurrently, one review per backend. A running or queued review can be cancelled from its button; it **survives page reloads** and container restarts (interrupted reviews resume), and a project too large for the review model's context window is refused rather than truncated.
 
 ### Updating
 

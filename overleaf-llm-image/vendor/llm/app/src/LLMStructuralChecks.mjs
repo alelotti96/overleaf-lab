@@ -2273,8 +2273,14 @@ const SECTIONING_WORDS = new Set([
     'capitolo', 'capitoli', 'paragrafo', 'paragrafi', 'sezione', 'sezioni',
     'sottosezione', 'appendice', 'allegato', 'punto', 'tabella', 'figura',
     'equazione', 'formula',
+    // The PLURALS were missing, and "equazioni 33,34" handed a hand-written
+    // reference list over as a decimal comma: measured on the public-thesis
+    // corpus, where it flipped a point-convention document to "both in use".
+    'equazioni', 'formule', 'tabelle', 'figure', 'appendici', 'allegati',
     'chapter', 'section', 'subsection', 'subsubsection', 'appendix', 'annex',
     'table', 'figure', 'equation', 'step',
+    'chapters', 'sections', 'subsections', 'appendices', 'tables', 'figures',
+    'equations', 'steps',
     // The dotted abbreviations, without their stop (the reader below allows one).
     // 'sect' and 'chap' were missing, so the 3.2 of "Sect. 3.2" counted as a
     // decimal point and, in a comma-decimal document, handed the document's own
@@ -2385,6 +2391,20 @@ CHECKS['decimal-separator'] = {
                     !UNIT_AFTER_NUMBER.test(text.slice(m.index + m[0].length, m.index + m[0].length + 16))
                 ) {
                     sectionRefs += 1
+                    continue
+                }
+                // "alle 19,34" is a time of day, not a decimal: an Italian thesis
+                // that timestamps an observation writes it with the comma whatever
+                // its decimal convention is. Shape-gated hard (one or two digits,
+                // exactly two after the comma, an hour word right before), so
+                // "una massa di 19,34 kg" keeps counting. Measured on the
+                // public-thesis corpus.
+                if (
+                    m[2] === ',' &&
+                    m[3].length === 2 &&
+                    m[1].length <= 2 &&
+                    /(?:^|[^\p{L}])(?:alle|ore)[\s~]{1,4}$/u.test(text.slice(Math.max(0, m.index - 12), m.index))
+                ) {
                     continue
                 }
                 // Only the comma can be mistaken for an interval: an interval needs

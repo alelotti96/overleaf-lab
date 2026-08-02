@@ -113,7 +113,6 @@ const SPECIMENS = {
     'en-additionally': 'Additionally, the test was repeated.',
     'en-important-to-note': 'It is important to note that the sample was small.',
     'en-crucial-role': 'Latency plays a crucial role in the result.',
-    'en-moreover-furthermore': 'Moreover, the cost fell.',
     'it-importante-sottolineare': "E' importante sottolineare che il campione era ridotto.",
     'it-ruolo-cruciale': 'La cache gioca un ruolo cruciale.',
     'it-ruolo-fondamentale': 'La rete riveste un ruolo fondamentale.',
@@ -413,7 +412,7 @@ const proseChapter = extra => {
     const three = findClusters([
         {
             name: 'C',
-            text: 'It is important to note that the timing is crucial. Moreover, the sample was small.',
+            text: 'It is important to note that the timing is crucial. Additionally, the sample was small.',
         },
     ]).clusters
     check('three distinct markers in a paragraph are reported', three.length === 1, JSON.stringify(three))
@@ -431,7 +430,7 @@ const proseChapter = extra => {
     const split = findClusters([
         {
             name: 'C',
-            text: 'It is important to note that the timing is crucial.\n\nMoreover, the design is pivotal.',
+            text: 'It is important to note that the timing is crucial.\n\nAdditionally, the design is pivotal.',
         },
     ]).clusters
     check('markers do not cross a paragraph break', split.length === 0, JSON.stringify(split))
@@ -440,7 +439,7 @@ const proseChapter = extra => {
     const lone = analyzeAiWritingSignals([
         {
             name: 'Only chapter',
-            text: 'It is important to note that the timing is crucial. Moreover, the sample was small.',
+            text: 'It is important to note that the timing is crucial. Additionally, the sample was small.',
         },
     ])
     check('a cluster is reported even with a single chapter', lone.clusters.length === 1, JSON.stringify(lone.clusters))
@@ -533,7 +532,7 @@ const proseChapter = extra => {
         {
             name: 'Five',
             text: proseChapter(
-                `It is important to note that the timing is crucial. Moreover, the sample ${EM_DASH} small ${EM_DASH} was reused ${EM_DASH} throughout ${EM_DASH} the work.`
+                `It is important to note that the timing is crucial. Additionally, the sample ${EM_DASH} small ${EM_DASH} was reused ${EM_DASH} throughout ${EM_DASH} the work.`
             ),
         },
     ])
@@ -670,7 +669,7 @@ const proseChapter = extra => {
 // is a lie about how much was found, every one of them is stored next to its true
 // total, with the counting still running over the whole text.
 {
-    const marked = 'It is important to note that the timing is crucial. Moreover, the sample was small.'
+    const marked = 'It is important to note that the timing is crucial. Additionally, the sample was small.'
     const dashes = Array.from({ length: 30 }, () => `alpha ${EM_DASH} beta`).join(' ')
     const paragraphs = Array.from({ length: 10 }, () => marked).join('\n\n')
     const chapters = Array.from({ length: 8 }, (_, c) => ({
@@ -900,7 +899,7 @@ const proseChapter = extra => {
                     `A sentence ${EM_DASH} interrupted ${EM_DASH} by dashes ${EM_DASH} and ${EM_DASH} again.`,
                     '', // 2
                     // 3: three distinct lexical markers, so a cluster, in its own paragraph
-                    'It is important to note that the timing is crucial. Moreover, the sample was small.',
+                    'It is important to note that the timing is crucial. Additionally, the sample was small.',
                 ].join('\n'),
             },
         ],
@@ -961,7 +960,7 @@ const proseChapter = extra => {
     check('with no source, an excerpt still has its text', excerpts.length > 0 && typeof excerpts[0].text === 'string')
     check('and no file or line is invented for it', excerpts.every(e => e.file === undefined && e.line === undefined), JSON.stringify(excerpts[0]))
     const sink = []
-    collectClusters('C', 'It is important to note that the timing is crucial. Moreover, the sample was small.', sink)
+    collectClusters('C', 'It is important to note that the timing is crucial. Additionally, the sample was small.', sink)
     check('a cluster collected with no source keeps its excerpt', (sink[0]?.paragraphExcerpt || '').length > 0)
     check('and claims no location', sink[0] && !('file' in sink[0]) && !('line' in sink[0]), JSON.stringify(sink[0]))
 }

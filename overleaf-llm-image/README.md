@@ -163,12 +163,42 @@ the rubric is written directly controls the review quality:
   marker on the same requirement. If the document does not fit the context window for
   that pass, the requirement is refused honestly (n.a. with the reason) instead of
   silently falling back to per-chapter votes.
+- **End a requirement a parser can answer with `[check: name]`**: it is then decided
+  entirely in code, with no model call and no vote: deterministic, instant, and
+  identical on every run, with findings quoting file and line from the source bytes.
+  Prefer it over a model pass wherever a check covers the requirement: a
+  deterministic answer never flips between runs, and run-to-run flips are where most
+  review noise measurably comes from. A `[check:]` requirement whose check is not
+  available on the instance (for example `languagetool` without its container)
+  degrades to an honest n.a., never to a silent model fallback. The shipped checks:
+
+  `acronym-first-use`, `acronyms-declared-unused`, `acronyms-in-headings`,
+  `acronyms-missing-from-list`, `appendix-referenced`, `bib-duplicates`,
+  `bib-entries-complete`, `caption-position`, `citation-setup-authoryear`,
+  `citation-setup-consistent`, `citation-setup-numeric`, `citations-resolve`,
+  `crossrefs-resolve`, `decimal-separator`, `float-caption`, `float-centered`,
+  `float-referenced`, `has-abstract`, `has-bibliography`, `heading-sequence`,
+  `italic-coherence`, `language-support`, `long-sentences`, `manual-numbering`,
+  `math-notation`, `no-wikipedia`, `numbered-equations`, `reference-style-mixing`,
+  `symbol-list`, `tables-as-images`, `tie-before-ref`, `typographic-input`,
+  `unique-labels`, `unit-spacing`, `urls-in-text`, `work-markers`, plus
+  `languagetool` when its container is configured.
+
+- **Scan patterns are lines of the form `Label :: regex`** (conventionally grouped
+  at the end of the rubric). Every pattern runs over the whole project and its match
+  count reaches the model as a stated fact; the labelled ones are also what
+  `[per-candidate: Label]` builds its candidate passages from. Patterns are
+  case-insensitive JavaScript regular expressions, and a pattern that backtracks
+  pathologically is refused at save time (the admin page names it): keep negated
+  classes bounded (`[^X]{0,200}`, never `[^X]*`).
 - **Name one of the rubric's scan patterns with `[per-candidate: Label]`** to turn a
   diffuse judgement ("no qualitative claim without data") into closed questions: the
   code extracts every passage that pattern hits, the model answers yes/no per
   candidate in small batches, and the code builds the verdict quoting the source
   bytes. Open search over a chapter is where a judge misses cases; per-candidate asks
-  it only the question it is good at.
+  it only the question it is good at. A pattern that hits nothing yields an honest
+  n.a. ("no passage matches"), not an ok: a silent pattern is not evidence of
+  compliance.
 - **Attach contrastive examples to a requirement the model keeps flipping on**, with
   lines directly under it: `[example-violation: ...]` and `[example-compliant: ...]`
   (up to two each, kept short: every token is paid in that requirement's pass). They
@@ -186,33 +216,51 @@ call, not this repo's. A generic starter to paste into a new rubric and adapt:
 
 ```
 Master thesis / final report, written in English. You are reviewing LaTeX sources.
-1. The document is written in the third person: no first-person pronouns in the prose.
+1. The document is written in the third person: no first-person pronouns in the prose. [per-candidate: First person]
 2. Terminology and verb tenses are consistent across the document. [per-file]
 3. No evident spelling or grammar errors. [per-file]
-4. Every figure and every table has a caption.
-5. Every figure and every table is referred to explicitly in the text.
-6. Figure captions are below the figure; table captions are above the table.
-7. Cross-references are automatic (\ref and friends): no hand-written numbers such as "Figure 3", and no relative references such as "the figure below".
-8. All display equations are numbered, and every term appearing in them is defined in the text.
-9. No purely qualitative claim without supporting data (for example "the accuracy is very good").
-10. Every acronym is expanded at its first use in the text, and no acronym appears in a chapter or section title.
-11. Units are SI, with a space (or the \, thin space) between value and unit, and a consistent decimal separator.
-12. Every quantitative or qualitative statement that is not established knowledge carries a citation.
-13. The bibliography is managed through BibTeX entries with complete metadata, not bare links, and never cites Wikipedia.
-14. The in-text citation style is consistent and follows one of the formats your institution admits: state them here explicitly, otherwise this requirement cannot be checked.
-15. Abstract, introduction stating aims and structure, and conclusions with results, limitations and future work are all present.
-16. Code appears as text (lstlisting or verbatim), long listings in an appendix, never as an image.
+4. Every figure and every table has a caption. [check: float-caption]
+5. Every figure and every table is referred to explicitly in the text. [check: float-referenced]
+6. Figure captions are below the figure; table captions are above the table. [check: caption-position]
+7. Cross-references are automatic (\ref and friends): no hand-written numbers such as "Figure 3". [check: manual-numbering]
+8. No relative references such as "the figure below" or "the following section". [per-candidate: Positional references]
+9. All display equations are numbered. [check: numbered-equations]
+10. Every term appearing in an equation is defined in the text.
+11. No purely qualitative claim without supporting data (for example "the accuracy is very good"). [per-candidate: Vague qualifiers]
+12. Every acronym is expanded at its first use in the text. [check: acronym-first-use]
+13. No acronym appears in a chapter or section title. [check: acronyms-in-headings]
+14. Sentences longer than about 40 words are split. [check: long-sentences]
+15. Units carry a space (or the \, thin space) between value and unit. [check: unit-spacing]
+16. The decimal separator is consistent across the document. [check: decimal-separator]
+17. Every quantitative or qualitative statement that is not established knowledge carries a citation.
+18. The bibliography is managed through BibTeX entries with complete metadata. [check: bib-entries-complete]
+19. Wikipedia is never cited. [check: no-wikipedia]
+20. The in-text citation style is consistent and follows one of the formats your institution admits: state them here explicitly, otherwise this requirement cannot be checked.
+21. Abstract, introduction stating aims and structure, and conclusions with results, limitations and future work are all present.
+22. Code appears as text (lstlisting or verbatim), long listings in an appendix, never as an image. [check: tables-as-images]
+
+First person :: (?<![\w.@/])(?:I\b(?!\.)|(?:we|our|ours|us|my|mine)\b)
+Positional references :: \b(figure|table|section|paragraph|chapter)s?\s+(below|above|following|preceding)\b|\b(following|preceding|next)\s+(figure|table|section|chapter)s?\b
+Vague qualifiers :: \b(very|extremely|remarkably|significantly|highly|exceptionally)\s+(good|high|low|accurate|precise|fast|effective|efficient|robust|reliable)\b|\b(excellent|outstanding|remarkable|impressive)\b
 ```
 
-Requirement 14 is written the way it is on purpose: a requirement that names no
+Requirement 20 is written the way it is on purpose: a requirement that names no
 criterion cannot be verified by anyone, model or human, and the reviewer will fall
-back to checking internal consistency instead of the rule you meant.
+back to checking internal consistency instead of the rule you meant. Note how most
+starter requirements carry a `[check:]` or a `[per-candidate:]` marker: that is the
+recommended shape of a mature rubric, with the model kept for the judgements only a
+reader can make.
 - **Users** open the AI Assistant rail, switch to the **Review** tab, choose a rubric
   and run. Each item shows a status (ok / partial / missing / n.a.), the evidence, and
   a suggestion, with a **Download report** button (a self-contained HTML file, which
   any browser prints to PDF) so the result survives the non-persisted chat.
-- **Queue.** A review is long, so the backend runs **one at a time per web process**;
-  extra requests queue and the UI shows the position. A queued or running review can
+- **Queue.** A review is long. With a single review backend the web process runs
+  **one at a time** and extra requests queue with their position shown. With a pool
+  of review backends configured (admin page, "Review backends": one entry per
+  GPU/server) up to one review per backend runs concurrently: a review takes the
+  first free backend and never migrates mid-run, a backend that stops answering
+  steps out of the rotation, and the archived report records which backend served
+  it. A queued or running review can
   be **cancelled** from its button, and only from there: switching the Chat/Review
   tab does not cancel it, and neither does closing or reloading the page (see
   "Survives page reloads" below).

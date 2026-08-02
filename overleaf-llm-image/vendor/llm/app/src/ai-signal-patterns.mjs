@@ -88,12 +88,11 @@ export const LEXICAL_PATTERNS = [
             String.raw`play(?:s|ed|ing)?\s+an?\s+(?:crucial|pivotal|vital|key|significant|important|central)\s+role`
         ),
     },
-    {
-        id: 'en-moreover-furthermore',
-        lang: 'en',
-        label: 'moreover / furthermore',
-        source: marker(String.raw`(?:moreover|furthermore)\s*,`),
-    },
+    // 'moreover / furthermore' was removed after measuring its natural base rate
+    // on 75 published pre-2023 theses of this domain: 88% of HUMAN documents use
+    // it (median 2.3 hits per 10k words, flat across the AI epoch boundary). A
+    // marker most humans trip is not a marker, it is cluster fuel for false
+    // positives next to a student's name.
 
     // ---- Italian: the curated list ----
     {
@@ -157,12 +156,17 @@ export const LEXICAL_PATTERNS = [
         label: 'in continua evoluzione',
         source: marker(String.raw`in\s+(?:continua|costante|rapida)\s+evoluzione`),
     },
+    // The bare-word branch (cruciale / fondamentale alone) was removed after
+    // measuring its natural base rate: 90% of published pre-2023 Italian theses
+    // of this domain use those words, with a DELTA OF ZERO across the AI epoch
+    // boundary. The phrasal forms above (riveste un ruolo cruciale) survive:
+    // their base rate is 10%. What stays here is the genuinely rare tail.
     {
         id: 'it-cruciale-fondamentale',
         lang: 'it',
-        label: 'cruciale / fondamentale / imprescindibile',
+        label: 'imprescindibile / imperativo',
         source: marker(
-            String.raw`(?:cruciale|cruciali|fondamentale|fondamentali|imprescindibile|imprescindibili|imperativo|imperativa)`
+            String.raw`(?:imprescindibile|imprescindibili|imperativo|imperativa)`
         ),
     },
 ]
