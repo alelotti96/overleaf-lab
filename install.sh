@@ -63,28 +63,46 @@ fi
 
 # Check Docker permissions
 if ! docker ps &> /dev/null; then
-    echo -e "${YELLOW}Docker permission denied. Checking if you're in the docker group...${NC}"
-
-    if groups | grep -q docker; then
-        # User is in docker group but needs to activate it
-        echo "You're in the docker group but it's not active in this session."
-        echo "Re-launching installer with correct permissions..."
-        echo ""
-        exec sg docker -c "$0 $*"
-    else
-        # User is not in docker group
-        echo -e "${RED}You're not in the docker group.${NC}"
-        echo "Adding you to the docker group now..."
-        sudo usermod -aG docker $USER
-        echo ""
-        echo -e "${GREEN}Added to docker group!${NC}"
-        echo "Re-launching installer with correct permissions..."
-        echo ""
-        exec sg docker -c "$0 $*"
+    # overleaf-lab: `docker ps` can fail for two very different reasons: the daemon is
+    # stopped, or the daemon runs but this user is not in the docker group. They need
+    # different fixes, and treating a stopped daemon as a group problem causes an
+    # infinite `sg docker` re-exec loop (re-launching never helps a dead daemon). Use
+    # `sudo docker ps` to tell them apart: if sudo reaches the daemon, it is running.
+    if ! sudo docker ps &> /dev/null; then
+        echo -e "${YELLOW}Docker daemon is not running. Starting it...${NC}"
+        if ! sudo systemctl start docker; then
+            echo -e "${RED}Could not start the Docker daemon.${NC}"
+            echo "Start it manually (sudo systemctl start docker), then re-run this installer."
+            exit 1
+        fi
+        sleep 2  # let dockerd recreate /var/run/docker.sock
     fi
-else
-    echo -e "${GREEN}✓ Docker permissions OK${NC}"
+
+    # Daemon is up; make sure this user can reach the socket via the docker group.
+    if ! docker ps &> /dev/null; then
+        if groups | grep -q docker; then
+            echo "You're in the docker group but it's not active in this session."
+        else
+            echo -e "${RED}You're not in the docker group.${NC}"
+            echo "Adding you to the docker group now..."
+            sudo groupadd -f docker   # some installs (static binary, rootless) lack it
+            sudo usermod -aG docker $USER
+        fi
+        # overleaf-lab: re-launch once with the docker group active, guarding against
+        # an infinite loop: if we have already re-exec'd and docker still fails, the
+        # group is not the cause, so stop with a clear message instead of looping.
+        if [ -z "$OVERLEAF_DOCKER_REEXEC" ]; then
+            echo "Re-launching installer with docker group active..."
+            echo ""
+            exec sg docker -c "OVERLEAF_DOCKER_REEXEC=1 $0 $*"
+        fi
+        echo -e "${RED}Docker is running but still not reachable after adding the group.${NC}"
+        echo "The docker.sock group likely differs from the 'docker' group. Log out and"
+        echo "back in (or run: newgrp docker && docker ps), then re-run this installer."
+        exit 1
+    fi
 fi
+echo -e "${GREEN}✓ Docker permissions OK${NC}"
 
 # Check internet connection
 if ! ping -c 1 google.com &> /dev/null; then
@@ -133,11 +151,13 @@ if [ ! -f config.env.local ]; then
     echo "  - Overleaf users (create, activate, manage)"
     echo "  - Zotero integration (add/remove user bibliographies)"
     echo ""
-    echo "This is SEPARATE from Overleaf login (which you'll create via /launchpad)."
+    echo "This is SEPARATE from the Overleaf login (which you'll create via /launchpad)."
+    echo "TIP: use the SAME email below and at /launchpad - that Overleaf user is then"
+    echo "     automatically promoted to super_admin (full admin), with no extra step."
     echo ""
 
-    # Dashboard admin email
-    read -p "Dashboard admin email: " ADMIN_EMAIL
+    # Admin email: dashboard login AND the Overleaf user auto-promoted to super_admin.
+    read -p "Admin email (use this same email at /launchpad too): " ADMIN_EMAIL
     ADMIN_EMAIL=${ADMIN_EMAIL:-"admin@example.com"}
 
     # Dashboard admin password
@@ -365,54 +385,228 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         GITHUB_SYNC_CLIENT_SECRET=""
     fi
 
+    # -------------------------------------------------------------------------
+    # Optional features
+    # -------------------------------------------------------------------------
+    # Three features that ship with this repo but stay switched off until asked
+    # for. They all live in the SAME custom Docker image, so the build cost is
+    # paid once no matter how many of them are enabled, and not at all when none
+    # is. Every answer here can be changed later in config.env.local.
+    echo ""
+    echo "==============================================================================="
+    echo "OPTIONAL FEATURES"
+    echo "==============================================================================="
+    echo "Three features are shipped but switched off:"
+    echo "  1. AI assistant and compliance review"
+    echo "  2. Public PDF publishing"
+    echo "  3. Symbols and acronyms list generator"
+    echo ""
+    echo "All three live in ONE custom Docker image. Saying yes to ANY of them makes"
+    echo "install.sh build that image before starting the stack (~15-30 min, needs"
+    echo ">=8 GB RAM + network); saying no to all three keeps the stock image and"
+    echo "changes nothing. You can change any answer later by editing config.env.local"
+    echo "and running ./scripts/configure.sh."
+    echo ""
+
+    # (1) AI assistant (LLM) and compliance review
+    echo "==============================================================================="
+    echo "1. AI ASSISTANT AND COMPLIANCE REVIEW (optional)"
+    echo "==============================================================================="
+    echo "An in-editor AI assistant (chat, Ask-AI on a selection, inline completion) plus"
+    echo "the compliance review that checks a document against a rubric, both backed by an"
+    echo "OpenAI-compatible LLM: a local llama.cpp, a hosted API, or per-user keys."
+    echo ""
+    read -p "Enable the AI assistant and compliance review? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        ENABLE_LLM_MODULE="true"
+        read -p "Shared LLM endpoint URL (OpenAI-compatible, include /v1; e.g. local llama.cpp http://172.17.0.1:18080/v1; empty = configure later or rely on per-user keys): " LLM_API_URL
+        read -p "API key (leave empty for a local server with no auth): " LLM_API_KEY
+        read -p "Default model name(s), comma-separated (empty = scan later from the admin page): " LLM_MODEL_NAME
+        read -p "Let users bring their own OpenAI/Anthropic API keys? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            LLM_ALLOW_USER_SETTINGS="true"
+        else
+            LLM_ALLOW_USER_SETTINGS="false"
+        fi
+
+        # Optional: a local multi-model router in front of several llama-server backends
+        echo ""
+        echo "Note: this only applies if llama.cpp runs on THIS machine. If llama runs on another box, skip this and point LLM_API_URL at that box's router yourself."
+        read -p "Run a local multi-model LLM router on THIS host (bundles multiple local llama-server backends behind one endpoint)? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            SETUP_LLAMA_ROUTER="true"
+            read -p "Backend llama-server endpoints (comma-separated, each incl. /v1) [http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1]: " LLAMA_BACKENDS
+            LLAMA_BACKENDS=${LLAMA_BACKENDS:-"http://127.0.0.1:18080/v1,http://127.0.0.1:18081/v1"}
+            # Point Overleaf at the router (docker-bridge host IP) instead of a single backend
+            LLM_API_URL="http://172.17.0.1:18090/v1"
+            echo -e "${GREEN}The multi-model router will be installed as a systemd service (llama-router).${NC}"
+        else
+            SETUP_LLAMA_ROUTER="false"
+        fi
+
+        # Compliance review, optional checker 1: local spelling and grammar
+        echo ""
+        echo "Optional: spelling and grammar via a local LanguageTool container."
+        echo "It answers the rubric's \"no spelling or grammar errors\" requirement from a"
+        echo "rule base instead of from the model: the same answer on every run, in Italian"
+        echo "and English, with an exact file and line for each mistake."
+        echo "Cost: one more container next to Overleaf, ~700 MB image and ~1 GB of RAM."
+        echo "It publishes no port and nothing leaves this machine."
+        read -p "Run a local LanguageTool container for the review? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            ENABLE_LANGUAGETOOL="true"
+            echo ""
+            echo "Domain terms LanguageTool must NOT report, comma-separated: the words your"
+            echo "documents legitimately contain and a general dictionary flags anyway"
+            echo "(example: CubeSat,biblatex,Overleaf). Dropped matches are counted, never"
+            echo "hidden, and the list can be changed later in config.env.local."
+            read -p "Whitelisted terms (empty = none): " LLM_LANGUAGETOOL_DICT
+            echo -e "${GREEN}LanguageTool will run as a local container (internal network only)${NC}"
+        else
+            ENABLE_LANGUAGETOOL="false"
+            LLM_LANGUAGETOOL_DICT=""
+        fi
+
+        # Compliance review, optional checker 2: online bibliography verification
+        echo ""
+        echo "Optional: online bibliography verification against Crossref."
+        echo "Each .bib entry with a DOI is fetched and compared with the public record"
+        echo "(title, first author, year), so a DOI that resolves to somebody else's paper"
+        echo "is reported instead of passing. This is the ONLY part of the review that"
+        echo "leaves the machine, so it runs only if you give a contact address: Crossref"
+        echo "asks callers to put one in the User-Agent so they can reach whoever is"
+        echo "generating the traffic. Use a mailbox somebody reads."
+        read -p "Contact email for Crossref (empty = leave this check off): " LLM_BIB_VERIFY_MAILTO
+
+        echo ""
+        echo -e "${GREEN}AI assistant and compliance review will be enabled${NC}"
+    else
+        ENABLE_LLM_MODULE="false"
+        LLM_API_URL=""
+        LLM_API_KEY=""
+        LLM_MODEL_NAME=""
+        LLM_ALLOW_USER_SETTINGS="false"
+        SETUP_LLAMA_ROUTER="false"
+        ENABLE_LANGUAGETOOL="false"
+        LLM_LANGUAGETOOL_DICT=""
+        LLM_BIB_VERIFY_MAILTO=""
+    fi
+
+    # (2) Publish module (public PDF links)
+    echo ""
+    echo "==============================================================================="
+    echo "2. PUBLIC PDF PUBLISHING (optional)"
+    echo "==============================================================================="
+    echo "Adds a \"Publish\" button next to Share that serves a project's compiled PDF at a"
+    echo "stable public URL, with an optional password. Only the PDF is exposed, only for"
+    echo "projects whose owner presses the button, and unpublishing takes the URL down."
+    echo "Leave it off if this instance must expose nothing to the internet."
+    echo ""
+    read -p "Enable public PDF publishing? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        ENABLE_PUBLISH_MODULE="true"
+        echo -e "${GREEN}Public PDF publishing will be enabled${NC}"
+    else
+        ENABLE_PUBLISH_MODULE="false"
+    fi
+
+    # (3) Symbols and acronyms lists
+    echo ""
+    echo "==============================================================================="
+    echo "3. SYMBOLS AND ACRONYMS LIST GENERATOR (optional)"
+    echo "==============================================================================="
+    echo "Adds a toolbar button that scans a project and keeps its list of symbols and its"
+    echo "list of acronyms up to date. Pure parsing: NO language model, no API key and no"
+    echo "network are involved. It does still need the custom Docker image, so answering"
+    echo "yes here alone is enough to trigger the one-time build described above."
+    echo ""
+    read -p "Enable the symbols and acronyms list generator? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        ENABLE_LISTS_MODULE="true"
+        echo -e "${GREEN}The list generator will be enabled${NC}"
+    else
+        ENABLE_LISTS_MODULE="false"
+    fi
+
     # Create config.env.local
     cp config.env config.env.local
 
     # Update values
-    sed -i "s|LAB_NAME=.*|LAB_NAME=\"${LAB_NAME}\"|" config.env.local
-    sed -i "s|ADMIN_EMAIL=.*|ADMIN_EMAIL=\"${ADMIN_EMAIL}\"|" config.env.local
-    sed -i "s|ENABLE_PUBLIC_ZOTERO_SIGNUP=.*|ENABLE_PUBLIC_ZOTERO_SIGNUP=\"${ENABLE_PUBLIC_ZOTERO_SIGNUP}\"|" config.env.local
-    sed -i "s|ENABLE_OVERLEAF_PUBLIC_REGISTRATION=.*|ENABLE_OVERLEAF_PUBLIC_REGISTRATION=\"${ENABLE_OVERLEAF_PUBLIC_REGISTRATION}\"|" config.env.local
+    sed -i "s|^LAB_NAME=.*|LAB_NAME=\"${LAB_NAME}\"|" config.env.local
+    sed -i "s|^ADMIN_EMAIL=.*|ADMIN_EMAIL=\"${ADMIN_EMAIL}\"|" config.env.local
+    sed -i "s|^ENABLE_PUBLIC_ZOTERO_SIGNUP=.*|ENABLE_PUBLIC_ZOTERO_SIGNUP=\"${ENABLE_PUBLIC_ZOTERO_SIGNUP}\"|" config.env.local
+    sed -i "s|^ENABLE_OVERLEAF_PUBLIC_REGISTRATION=.*|ENABLE_OVERLEAF_PUBLIC_REGISTRATION=\"${ENABLE_OVERLEAF_PUBLIC_REGISTRATION}\"|" config.env.local
     # Password is hashed - write empty placeholder (hash is passed via environment to configure.sh)
-    sed -i "s|DASHBOARD_ADMIN_PASSWORD=.*|DASHBOARD_ADMIN_PASSWORD=\"\"  # Hashed at install time|" config.env.local
-    sed -i "s|SMTP_HOST=.*|SMTP_HOST=\"${SMTP_HOST}\"|" config.env.local
-    sed -i "s|SMTP_PORT=.*|SMTP_PORT=\"${SMTP_PORT}\"|" config.env.local
-    sed -i "s|SMTP_USER=.*|SMTP_USER=\"${SMTP_USER}\"|" config.env.local
-    sed -i "s|SMTP_PASS=.*|SMTP_PASS=\"${SMTP_PASS}\"|" config.env.local
-    sed -i "s|EMAIL_FROM_ADDRESS=.*|EMAIL_FROM_ADDRESS=\"${SMTP_FROM}\"|" config.env.local
+    sed -i "s|^DASHBOARD_ADMIN_PASSWORD=.*|DASHBOARD_ADMIN_PASSWORD=\"\"  # Hashed at install time|" config.env.local
+    sed -i "s|^SMTP_HOST=.*|SMTP_HOST=\"${SMTP_HOST}\"|" config.env.local
+    sed -i "s|^SMTP_PORT=.*|SMTP_PORT=\"${SMTP_PORT}\"|" config.env.local
+    sed -i "s|^SMTP_USER=.*|SMTP_USER=\"${SMTP_USER}\"|" config.env.local
+    sed -i "s|^SMTP_PASS=.*|SMTP_PASS=\"${SMTP_PASS}\"|" config.env.local
+    sed -i "s|^EMAIL_FROM_ADDRESS=.*|EMAIL_FROM_ADDRESS=\"${SMTP_FROM}\"|" config.env.local
 
     # Set MongoDB version (4.4 for old CPUs without AVX)
     if [ -n "$MONGO_VERSION" ]; then
-        sed -i "s|MONGO_VERSION=.*|MONGO_VERSION=\"${MONGO_VERSION}\"|" config.env.local
+        sed -i "s|^MONGO_VERSION=.*|MONGO_VERSION=\"${MONGO_VERSION}\"|" config.env.local
     fi
 
     # Set GitHub synchronization
-    sed -i "s|ENABLE_GITHUB_SYNC=.*|ENABLE_GITHUB_SYNC=\"${ENABLE_GITHUB_SYNC}\"|" config.env.local
+    sed -i "s|^ENABLE_GITHUB_SYNC=.*|ENABLE_GITHUB_SYNC=\"${ENABLE_GITHUB_SYNC}\"|" config.env.local
     if [ "$ENABLE_GITHUB_SYNC" = "true" ]; then
-        sed -i "s|GITHUB_SYNC_CLIENT_ID=.*|GITHUB_SYNC_CLIENT_ID=\"${GITHUB_SYNC_CLIENT_ID}\"|" config.env.local
-        sed -i "s|GITHUB_SYNC_CLIENT_SECRET=.*|GITHUB_SYNC_CLIENT_SECRET=\"${GITHUB_SYNC_CLIENT_SECRET}\"|" config.env.local
+        sed -i "s|^GITHUB_SYNC_CLIENT_ID=.*|GITHUB_SYNC_CLIENT_ID=\"${GITHUB_SYNC_CLIENT_ID}\"|" config.env.local
+        sed -i "s|^GITHUB_SYNC_CLIENT_SECRET=.*|GITHUB_SYNC_CLIENT_SECRET=\"${GITHUB_SYNC_CLIENT_SECRET}\"|" config.env.local
     fi
 
     # Set OIDC configuration
-    sed -i "s|ENABLE_OIDC=.*|ENABLE_OIDC=\"${ENABLE_OIDC}\"|" config.env.local
+    sed -i "s|^ENABLE_OIDC=.*|ENABLE_OIDC=\"${ENABLE_OIDC}\"|" config.env.local
     if [ "$ENABLE_OIDC" = "true" ]; then
-        sed -i "s|OIDC_PROVIDER_NAME=.*|OIDC_PROVIDER_NAME=\"${OIDC_PROVIDER_NAME}\"|" config.env.local
-        sed -i "s|OIDC_CLIENT_ID=.*|OIDC_CLIENT_ID=\"${OIDC_CLIENT_ID}\"|" config.env.local
-        sed -i "s|OIDC_CLIENT_SECRET=.*|OIDC_CLIENT_SECRET=\"${OIDC_CLIENT_SECRET}\"|" config.env.local
-        sed -i "s|OIDC_ISSUER=.*|OIDC_ISSUER=\"${OIDC_ISSUER}\"|" config.env.local
-        sed -i "s|OIDC_AUTHORIZATION_URL=.*|OIDC_AUTHORIZATION_URL=\"${OIDC_AUTHORIZATION_URL}\"|" config.env.local
-        sed -i "s|OIDC_TOKEN_URL=.*|OIDC_TOKEN_URL=\"${OIDC_TOKEN_URL}\"|" config.env.local
-        sed -i "s|OIDC_USER_INFO_URL=.*|OIDC_USER_INFO_URL=\"${OIDC_USER_INFO_URL}\"|" config.env.local
-        sed -i "s|OIDC_END_SESSION_URL=.*|OIDC_END_SESSION_URL=\"${OIDC_END_SESSION_URL}\"|" config.env.local
-        sed -i "s|OIDC_SCOPE=.*|OIDC_SCOPE=\"${OIDC_SCOPE}\"|" config.env.local
-        sed -i "s|OIDC_ALLOWED_DOMAINS=.*|OIDC_ALLOWED_DOMAINS=\"${OIDC_ALLOWED_DOMAINS}\"|" config.env.local
-        sed -i "s|OIDC_ADDITIONAL_TENANT_IDS=.*|OIDC_ADDITIONAL_TENANT_IDS=\"${OIDC_ADDITIONAL_TENANT_IDS}\"|" config.env.local
-        sed -i "s|OIDC_GROUP_FILTERING_ENABLED=.*|OIDC_GROUP_FILTERING_ENABLED=\"${OIDC_GROUP_FILTERING_ENABLED}\"|" config.env.local
-        sed -i "s|OIDC_ALLOWED_GROUPS=.*|OIDC_ALLOWED_GROUPS=\"${OIDC_ALLOWED_GROUPS}\"|" config.env.local
+        sed -i "s|^OIDC_PROVIDER_NAME=.*|OIDC_PROVIDER_NAME=\"${OIDC_PROVIDER_NAME}\"|" config.env.local
+        sed -i "s|^OIDC_CLIENT_ID=.*|OIDC_CLIENT_ID=\"${OIDC_CLIENT_ID}\"|" config.env.local
+        sed -i "s|^OIDC_CLIENT_SECRET=.*|OIDC_CLIENT_SECRET=\"${OIDC_CLIENT_SECRET}\"|" config.env.local
+        sed -i "s|^OIDC_ISSUER=.*|OIDC_ISSUER=\"${OIDC_ISSUER}\"|" config.env.local
+        sed -i "s|^OIDC_AUTHORIZATION_URL=.*|OIDC_AUTHORIZATION_URL=\"${OIDC_AUTHORIZATION_URL}\"|" config.env.local
+        sed -i "s|^OIDC_TOKEN_URL=.*|OIDC_TOKEN_URL=\"${OIDC_TOKEN_URL}\"|" config.env.local
+        sed -i "s|^OIDC_USER_INFO_URL=.*|OIDC_USER_INFO_URL=\"${OIDC_USER_INFO_URL}\"|" config.env.local
+        sed -i "s|^OIDC_END_SESSION_URL=.*|OIDC_END_SESSION_URL=\"${OIDC_END_SESSION_URL}\"|" config.env.local
+        sed -i "s|^OIDC_SCOPE=.*|OIDC_SCOPE=\"${OIDC_SCOPE}\"|" config.env.local
+        sed -i "s|^OIDC_ALLOWED_DOMAINS=.*|OIDC_ALLOWED_DOMAINS=\"${OIDC_ALLOWED_DOMAINS}\"|" config.env.local
+        sed -i "s|^OIDC_ADDITIONAL_TENANT_IDS=.*|OIDC_ADDITIONAL_TENANT_IDS=\"${OIDC_ADDITIONAL_TENANT_IDS}\"|" config.env.local
+        sed -i "s|^OIDC_GROUP_FILTERING_ENABLED=.*|OIDC_GROUP_FILTERING_ENABLED=\"${OIDC_GROUP_FILTERING_ENABLED}\"|" config.env.local
+        sed -i "s|^OIDC_ALLOWED_GROUPS=.*|OIDC_ALLOWED_GROUPS=\"${OIDC_ALLOWED_GROUPS}\"|" config.env.local
     fi
+
+    # Set AI assistant (LLM) configuration
+    # (LLM_KEY_SECRET is intentionally NOT written here - configure.sh manages it)
+    sed -i "s|^ENABLE_LLM_MODULE=.*|ENABLE_LLM_MODULE=\"${ENABLE_LLM_MODULE}\"|" config.env.local
+    if [ "$ENABLE_LLM_MODULE" = "true" ]; then
+        sed -i "s|^LLM_API_URL=.*|LLM_API_URL=\"${LLM_API_URL}\"|" config.env.local
+        sed -i "s|^LLM_API_KEY=.*|LLM_API_KEY=\"${LLM_API_KEY}\"|" config.env.local
+        sed -i "s|^LLM_MODEL_NAME=.*|LLM_MODEL_NAME=\"${LLM_MODEL_NAME}\"|" config.env.local
+        sed -i "s|^LLM_ALLOW_USER_SETTINGS=.*|LLM_ALLOW_USER_SETTINGS=\"${LLM_ALLOW_USER_SETTINGS}\"|" config.env.local
+        # Compliance review checkers. Anchored on ^ so the value is only written on
+        # the real assignment and never inside the documentation above it.
+        sed -i "s|^ENABLE_LANGUAGETOOL=.*|ENABLE_LANGUAGETOOL=\"${ENABLE_LANGUAGETOOL}\"|" config.env.local
+        sed -i "s|^LLM_LANGUAGETOOL_DICT=.*|LLM_LANGUAGETOOL_DICT=\"${LLM_LANGUAGETOOL_DICT}\"|" config.env.local
+        sed -i "s|^LLM_BIB_VERIFY_MAILTO=.*|LLM_BIB_VERIFY_MAILTO=\"${LLM_BIB_VERIFY_MAILTO}\"|" config.env.local
+    fi
+
+    # Set the other two custom-image modules (independent of the LLM one)
+    sed -i "s|^ENABLE_PUBLISH_MODULE=.*|ENABLE_PUBLISH_MODULE=\"${ENABLE_PUBLISH_MODULE}\"|" config.env.local
+    sed -i "s|^ENABLE_LISTS_MODULE=.*|ENABLE_LISTS_MODULE=\"${ENABLE_LISTS_MODULE}\"|" config.env.local
 
     echo ""
     echo -e "${GREEN}✓ Configuration created${NC}"
+
+    if [ "$ENABLE_LLM_MODULE" = "true" ] || [ "$ENABLE_PUBLISH_MODULE" = "true" ] || [ "$ENABLE_LISTS_MODULE" = "true" ]; then
+        echo ""
+        echo -e "${YELLOW}Optional features enabled: the custom image is built automatically${NC}"
+        echo "  in step 6 before the stack starts (~15-30 min, needs >=8 GB RAM + network)."
+    fi
 else
     echo -e "${GREEN}✓ Configuration file found, skipping wizard${NC}"
 
@@ -575,6 +769,37 @@ if [ "${ENABLE_PANDOC_CONVERSIONS:-true}" = "true" ]; then
     fi
 fi
 
+# Build the custom image when ANY of the three modules it carries is enabled (AI
+# assistant, publish, symbols/acronyms lists). configure.sh points OVERLEAF_IMAGE at
+# it under exactly the same condition, so it MUST exist before `bin/up` or the
+# sharelatex container fails to start. Skip the (15-30 min) rebuild if already present,
+# so re-running install.sh is cheap and a pre-loaded image is honoured.
+# The reference is spelled out rather than read from OVERLEAF_IMAGE: config.env.local
+# still holds the STOCK image name (configure.sh swaps it in memory only), so using it
+# here would inspect the stock image and skip a build that is actually needed.
+if [ "${ENABLE_LLM_MODULE:-false}" = "true" ] \
+   || [ "${ENABLE_PUBLISH_MODULE:-false}" = "true" ] \
+   || [ "${ENABLE_LISTS_MODULE:-false}" = "true" ]; then
+    LLM_IMAGE_REF="overleaf-lab/sharelatex-llm:${OVERLEAF_IMAGE_TAG:-6.2.0-ext-v5.0}"
+    echo ""
+    if docker image inspect "$LLM_IMAGE_REF" >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ Custom module image already present ($LLM_IMAGE_REF), skipping build${NC}"
+    else
+        echo "Building the custom module image ($LLM_IMAGE_REF)..."
+        echo "One-time build, ~15-30 min (webpack + npm, needs >=8 GB RAM + network)."
+        chmod +x ./scripts/build-llm-image.sh
+        if ./scripts/build-llm-image.sh; then
+            echo -e "${GREEN}✓ Custom module image built${NC}"
+        else
+            echo -e "${RED}ERROR: Failed to build the custom module image.${NC}"
+            echo "The stack is configured to use $LLM_IMAGE_REF and cannot start without it."
+            echo "Fix the cause (network / disk / RAM), then finish with:"
+            echo "  ./scripts/build-llm-image.sh && cd overleaf-toolkit && bin/up -d"
+            exit 1
+        fi
+    fi
+fi
+
 # -----------------------------------------------------------------------------
 # 6. Start Overleaf
 # -----------------------------------------------------------------------------
@@ -712,6 +937,23 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Optional: local multi-model LLM router (systemd service)
+# -----------------------------------------------------------------------------
+# If the user opted in during the LLM wizard, install the llama-router service
+# now (systemd is usable at this point). A failure here must warn but NOT abort
+# the install, so it is guarded with '|| echo'.
+if [ "${SETUP_LLAMA_ROUTER:-false}" = "true" ]; then
+    echo ""
+    echo "Setting up the local multi-model LLM router (llama-router systemd service)..."
+    chmod +x ./scripts/setup-llama-router.sh
+    # Bind the router to the Docker bridge host IP: the wizard points LLM_API_URL
+    # at 172.17.0.1, so only containers and the host need to reach it. The router
+    # has no authentication; export ROUTER_HOST yourself (e.g. 0.0.0.0) before
+    # running install.sh if you really want to expose it more widely.
+    ROUTER_HOST="${ROUTER_HOST:-172.17.0.1}" ./scripts/setup-llama-router.sh "$LLAMA_BACKENDS" || echo -e "${YELLOW}WARNING: llama-router setup failed; you can run ./scripts/setup-llama-router.sh manually later${NC}"
+fi
+
+# -----------------------------------------------------------------------------
 # Installation Complete
 # -----------------------------------------------------------------------------
 echo ""
@@ -742,7 +984,8 @@ echo "Next steps:"
 echo ""
 echo "  1. Create Overleaf admin user:"
 echo "     Visit: ${OVERLEAF_URL:-http://localhost}/launchpad"
-echo "     Register your first Overleaf admin account"
+echo "     Register with email: ${ADMIN_EMAIL}"
+echo "     (use exactly this email so it is auto-promoted to super_admin)"
 echo ""
 echo "  2. Access dashboard (already configured):"
 echo "     Visit: http://localhost:${FLASK_PORT:-5000}"

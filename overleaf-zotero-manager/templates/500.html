@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Server error - {{ lab_name }} Admin{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card mt-4">
+            <div class="card-body text-center py-5">
+                <i class="bi bi-exclamation-triangle text-danger" style="font-size: 3rem;"></i>
+                <h2 class="mt-3">Something went wrong</h2>
+                <p class="text-muted">
+                    The page could not be produced. The details are in the dashboard
+                    log; nothing has been changed by this request.
+                </p>
+                <a class="btn btn-primary mt-2" href="{{ url_for('dashboard') }}">
+                    <i class="bi bi-house"></i> Back to the dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

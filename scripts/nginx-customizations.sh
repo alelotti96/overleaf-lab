@@ -11,7 +11,7 @@ if [ -f "$NGINX_CONF" ]; then
     if grep -q "OVERLEAF_LAB_NGINX_PATCH" "$NGINX_CONF"; then
         echo "Nginx customizations: already applied"
     else
-        echo "Applying nginx customizations (hide signup + fix logout redirect + header color)..."
+        echo "Applying nginx customizations (hide signup + fix logout redirect + header/footer color)..."
 
         # -------------------------------------------------------------------
         # Build the CSS injected into every page's <head>
@@ -24,15 +24,39 @@ if [ -f "$NGINX_CONF" ]; then
         #    white one and offers no env var for the navbar color).
         if [ -n "$HEADER_BG_COLOR" ]; then
             HEADER_TEXT_COLOR="${HEADER_TEXT_COLOR:-#ffffff}"
-            # Top-level navbar text/links white (incl. dropdown TOGGLE buttons,
-            # which are <button class="dropdown-toggle"> without .nav-link);
-            # but keep the dropdown MENU items dark - they sit on a white panel.
-            CUSTOM_CSS="${CUSTOM_CSS}nav.navbar-main,nav.website-redesign-navbar{background-color:${HEADER_BG_COLOR}!important;}nav.navbar-main a,nav.navbar-main .navbar-title,nav.navbar-main .navbar-brand,nav.navbar-main .nav-link,nav.navbar-main .dropdown-toggle{color:${HEADER_TEXT_COLOR}!important;}nav.navbar-main .dropdown-menu .dropdown-item{color:#212529!important;}"
-            echo "  Header color: ${HEADER_BG_COLOR} (text ${HEADER_TEXT_COLOR})"
+            # Dark navbar. We scope on .navbar-container (the div that wraps the
+            # whole navbar in the 6.2 redesign) rather than the outer <nav> class,
+            # because the nav element's class varies (navbar-main vs
+            # website-redesign-navbar) while .navbar-container is the stable, always
+            # present wrapper (confirmed in the live DOM). Top-level links/toggle go
+            # white; the dropdown panel gets the header colour and its items the text
+            # colour with a subtle hover, so submenu items are always readable
+            # regardless of Overleaf's default (no dark-on-dark, no white-on-white).
+            CUSTOM_CSS="${CUSTOM_CSS}nav.navbar-main,nav.website-redesign-navbar,.navbar-container{background-color:${HEADER_BG_COLOR}!important;}.navbar-container a,.navbar-container .navbar-title,.navbar-container .navbar-brand,.navbar-container .nav-link,.navbar-container .dropdown-toggle{color:${HEADER_TEXT_COLOR}!important;}.navbar-container .dropdown-menu{--bs-dropdown-bg:${HEADER_BG_COLOR};--bs-dropdown-color:${HEADER_TEXT_COLOR};--bs-dropdown-link-color:${HEADER_TEXT_COLOR};--bs-dropdown-link-hover-color:${HEADER_TEXT_COLOR};--bs-dropdown-link-hover-bg:rgba(255,255,255,0.12);--bs-dropdown-link-active-color:${HEADER_TEXT_COLOR};--bs-dropdown-link-active-bg:rgba(255,255,255,0.2);--bs-dropdown-border-color:rgba(255,255,255,0.15);background-color:${HEADER_BG_COLOR}!important;border:1px solid rgba(255,255,255,0.15)!important;}.navbar-container .dropdown-menu .dropdown-item{color:${HEADER_TEXT_COLOR}!important;background-color:transparent!important;}.navbar-container .dropdown-menu .dropdown-item:hover,.navbar-container .dropdown-menu .dropdown-item:focus,.navbar-container .dropdown-menu .dropdown-item:active,.navbar-container .dropdown-menu .dropdown-item.active{background-color:rgba(255,255,255,0.12)!important;color:${HEADER_TEXT_COLOR}!important;}.navbar-container a:hover,.navbar-container a:focus,.navbar-container .nav-link:hover,.navbar-container .nav-link:focus,.navbar-container .dropdown-toggle:hover,.navbar-container .dropdown-toggle:focus,.navbar-container .dropdown-toggle.show,.navbar-container .dropdown-toggle[aria-expanded=true],.navbar-container .btn:hover,.navbar-container .btn:focus{background-color:transparent!important;color:${HEADER_TEXT_COLOR}!important;box-shadow:none!important;}"
+            # 3) Same treatment for the footer, which has no dark-theme styling and
+            #    stays a white strip with grey text under the dark dashboard. We
+            #    cannot make this conditional on the theme: layout-base.pug hardcodes
+            #    data-theme="light" on <body> even on the dark pages, so there is no
+            #    DOM marker to scope a dark-only rule on. Applying the header colours
+            #    unconditionally sidesteps that and gives a matching dark band top and
+            #    bottom in either theme. Both footer roots are covered (site-footer is
+            #    the thin footer used on app pages, fat-footer the marketing one) and
+            #    the descendants are reset wholesale, since the inner markup differs
+            #    between the pug and the React variants of each.
+            CUSTOM_CSS="${CUSTOM_CSS}footer.site-footer,footer.fat-footer{background-color:${HEADER_BG_COLOR}!important;border-top:1px solid rgba(255,255,255,0.1)!important;}footer.site-footer *,footer.fat-footer *{background-color:transparent!important;color:${HEADER_TEXT_COLOR}!important;}footer.site-footer .text-muted,footer.fat-footer .text-muted{opacity:0.75;}footer.site-footer a:hover,footer.site-footer a:focus,footer.fat-footer a:hover,footer.fat-footer a:focus{text-decoration:underline;}"
+            echo "  Header/footer color: ${HEADER_BG_COLOR} (text ${HEADER_TEXT_COLOR})"
         fi
 
         # Add sub_filter to inject the CSS and increase proxy buffers for OIDC.
         # The single-quoted sed is broken to splice in "${CUSTOM_CSS}".
+        #
+        # NOTE: we deliberately do NOT set proxy_read_timeout / proxy_send_timeout
+        # here. The CEP nginx template already defines them (10m = 600s) inside this
+        # same `location / {` block, which (a) already exceeds the non-streaming LLM
+        # chat's 300s server-side timeout, so no override is needed, and (b) makes any
+        # addition a DUPLICATE directive - nginx aborts at boot with "[emerg] ...
+        # directive is duplicate" and never listens (the container stays Up, so the
+        # failure is only visible in the logs). See the LLM module notes.
         sed -i '/location \/ {/a\
         # OVERLEAF_LAB_NGINX_PATCH\
         sub_filter "</head>" "<style>'"${CUSTOM_CSS}"'</style></head>";\

@@ -10,7 +10,9 @@ import secrets
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash, abort
+import re
+
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash, abort, Response
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -109,10 +111,13 @@ def logout():
 @login_required
 def dashboard():
     """Main dashboard."""
+    review_stats = overleaf_manager.get_review_stats()
     stats = {
         'overleaf_users': overleaf_manager.get_user_count(),
         'zotero_proxies': zotero_manager.get_proxy_count(),
-        'active_sessions': overleaf_manager.get_session_count()
+        'active_sessions': overleaf_manager.get_session_count(),
+        'reviews_total': review_stats.get('total', 0),
+        'reviews_pending': overleaf_manager.get_pending_review_count(),
     }
     return render_template('dashboard.html', stats=stats)
 
@@ -286,6 +291,109 @@ def zotero_page():
 def sessions_page():
     """Active sessions and projects page."""
     return render_template('sessions.html')
+
+
+@app.route('/reviews')
+@login_required
+def reviews_page():
+    """Compliance reviews carried out through the LLM module."""
+    return render_template('reviews.html')
+
+
+@app.route('/api/reviews', methods=['GET'])
+@login_required
+def get_reviews():
+    """List stored compliance reviews, newest first.
+
+    Reads the collection the LLM module writes to. It stays empty until the first
+    review is run, and an absent collection is reported as an empty list rather
+    than as an error, so the page works on an installation that has never used the
+    review feature.
+    """
+    reviews = overleaf_manager.list_reviews()
+    return jsonify({
+        'reviews': reviews,
+        'pending': overleaf_manager.list_pending_reviews(),
+        'stats': overleaf_manager.get_review_stats(),
+    })
+
+
+@app.route('/api/reviews/<review_id>/download', methods=['GET'])
+@login_required
+def download_review(review_id):
+    """One review as a JSON attachment, full report body included.
+
+    The listing endpoint strips the report body on purpose; this one exists to
+    take it home. The point is history: an archive of downloaded reports is what
+    lets the rubric and the checks be measured against real use over time,
+    instead of against whatever the retention window still holds.
+    """
+    # The id reaches Mongo as an ObjectId, so anything that is not 24 hex chars
+    # is refused before it becomes a query.
+    if not re.fullmatch(r'[0-9a-f]{24}', str(review_id)):
+        abort(404)
+    doc = overleaf_manager.get_review_document(review_id)
+    if doc is None:
+        abort(404)
+    stamp = str(doc.get('finishedAt') or doc.get('createdAt') or '')[:10] or 'undated'
+    # The file name carries the project and the day, so a folder of downloads
+    # stays legible without opening anything. Slugified to what every filesystem
+    # accepts.
+    slug = re.sub(r'[^A-Za-z0-9._-]+', '-', str(doc.get('projectName') or 'project')).strip('-')[:60]
+    filename = f"review-{slug or 'project'}-{stamp}-{review_id[:8]}.json"
+    return Response(
+        json.dumps(doc, indent=2, ensure_ascii=False, default=str),
+        mimetype='application/json',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+@app.route('/api/reviews/<review_id>/report.html', methods=['GET'])
+@login_required
+def download_review_html(review_id):
+    """The student-facing HTML report of one review, as an attachment.
+
+    This is the very document the editor's download button produces: the store
+    renders it once at completion with the same shared builder and archives it,
+    so what the staff downloads here and what the student saved are one file.
+    Reviews stored before the archiving feature have no copy: 404, and the row's
+    JSON button is the fallback.
+    """
+    if not re.fullmatch(r'[0-9a-f]{24}', str(review_id)):
+        abort(404)
+    doc = overleaf_manager.get_review_html(review_id)
+    if doc is None:
+        abort(404)
+    stamp = str(doc.get('finishedAt') or doc.get('createdAt') or '')[:10] or 'undated'
+    slug = re.sub(r'[^A-Za-z0-9._-]+', '-', str(doc.get('projectName') or 'project')).strip('-')[:60]
+    filename = f"review-{slug or 'project'}-{stamp}-{review_id[:8]}.html"
+    return Response(
+        doc['html'],
+        mimetype='text/html',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+@app.route('/api/reviews/export', methods=['GET'])
+@login_required
+def export_reviews():
+    """Every stored review as JSON Lines, one review per line, oldest first.
+
+    Streamed, because the report bodies are the heavy part and the export must
+    not build the whole archive in memory. JSONL rather than a JSON array so
+    that two exports taken months apart can be concatenated and deduplicated by
+    _id with ordinary tools.
+    """
+    def generate():
+        for doc in overleaf_manager.iter_review_documents():
+            yield json.dumps(doc, ensure_ascii=False, default=str) + '\n'
+
+    stamp = datetime.now().strftime('%Y-%m-%d')
+    return Response(
+        generate(),
+        mimetype='application/x-ndjson',
+        headers={'Content-Disposition': f'attachment; filename="reviews-export-{stamp}.jsonl"'},
+    )
 
 @app.route('/api/sessions', methods=['GET'])
 @login_required

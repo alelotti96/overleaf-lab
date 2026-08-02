@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+
+{% block title %}Reviews - {{ lab_name }} Admin{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2><i class="bi bi-clipboard-check"></i> Compliance Reviews</h2>
+        <hr>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="mb-0" id="stat-total">-</h3>
+                <small class="text-muted">reviews stored</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="mb-0" id="stat-week">-</h3>
+                <small class="text-muted">in the last 7 days</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="mb-0" id="stat-users">-</h3>
+                <small class="text-muted">people who ran one</small>
+            </div>
+        </div>
+    </div>
+    <!-- Shown as its own number rather than folded into "reviews stored": a review
+         that did not finish produced nothing anybody can open, and a rising count
+         here is the signal that the model backend is unhealthy. -->
+    <div class="col-md-2">
+        <div class="card text-center" id="stat-failed-card">
+            <div class="card-body">
+                <h3 class="mb-0" id="stat-failed">-</h3>
+                <small class="text-muted">did not finish</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4" id="pending-row" style="display: none;">
+    <div class="col-12">
+        <div class="card border-warning">
+            <div class="card-header bg-warning-subtle">
+                <h5 class="mb-0"><i class="bi bi-hourglass-split"></i> In progress</h5>
+            </div>
+            <div class="card-body" id="pending-container"></div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-list-ul"></i> Latest reviews</h5>
+                <div class="d-flex gap-2">
+                    <!-- The whole archive, one JSON line per review: this is how a
+                         history accumulates outside the retention window. -->
+                    <a class="btn btn-sm btn-outline-secondary" href="/api/reviews/export"
+                       title="Every stored review as JSON Lines, report bodies included">
+                        <i class="bi bi-download"></i> Export all
+                    </a>
+                    <button class="btn btn-sm btn-outline-primary" onclick="loadReviews()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="reviews-container">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <p class="text-muted small mt-2">
+            Reports are kept for twelve months and then removed automatically. The
+            report body is not shown here: this page is for seeing who ran what and
+            how it went, not for reading the findings. To keep a history beyond the
+            retention window, download single reports from the table or use Export
+            all: the files include the full findings.
+        </p>
+    </div>
+</div>
+
+<script>
+    function escapeHtml(value) {
+        const div = document.createElement('div')
+        div.textContent = value === null || value === undefined ? '' : String(value)
+        return div.innerHTML
+    }
+
+    // The delta is only meaningful when the previous review used the same rubric and
+    // the same model; the backend already returns null when it does not, so an empty
+    // cell here means "not comparable", not "nothing changed".
+    // A review that never finished has no verdicts to show. The backend sends null
+    // rather than 0 for every tally on those rows precisely so that this function can
+    // tell "nothing was found" from "nothing was looked at": rendered as zeros they
+    // would be indistinguishable from a thesis with no findings against it, which is
+    // the one row nobody would stop to read.
+    function renderTally(value, cssClass) {
+        if (value === null || value === undefined) {
+            return '<td class="text-center text-muted">-</td>'
+        }
+        return '<td class="text-center ' + cssClass + '">' + value + '</td>'
+    }
+
+    function renderDelta(review) {
+        if (review.resolved === null && review.regressed === null) {
+            return '<span class="text-muted">-</span>'
+        }
+        const parts = []
+        if (review.resolved) {
+            parts.push('<span class="text-success">-' + review.resolved + '</span>')
+        }
+        if (review.regressed) {
+            parts.push('<span class="text-danger">+' + review.regressed + '</span>')
+        }
+        return parts.length ? parts.join(' ') : '<span class="text-muted">=</span>'
+    }
+
+    // A queued or running job only exists while the work is owed: the module deletes
+    // it as soon as the review ends, so anything here is genuinely in flight. The
+    // progress figures are mirrored by the module one requirement at a time, which
+    // is why they can lag a few seconds behind the editor panel.
+    function renderPending(pending) {
+        const row = document.getElementById('pending-row')
+        const container = document.getElementById('pending-container')
+        if (!pending.length) {
+            row.style.display = 'none'
+            return
+        }
+        row.style.display = ''
+
+        let html = ''
+        for (const job of pending) {
+            const badge = job.status === 'running'
+                ? '<span class="badge bg-primary">running</span>'
+                : job.status === 'abandoned'
+                    ? '<span class="badge bg-danger">abandoned</span>'
+                    : '<span class="badge bg-secondary">queued</span>'
+
+            html += '<div class="mb-3">'
+            html += '<div class="d-flex justify-content-between align-items-center">'
+            html += '<div>' + badge + ' <strong>' + escapeHtml(job.project_name) + '</strong>' +
+                ' <span class="text-muted small">' + escapeHtml(job.user_email) + '</span></div>'
+            html += '<div class="text-muted small">queued at ' + escapeHtml(job.created_at || '') +
+                (job.attempts > 1 ? ' - attempt ' + job.attempts : '') + '</div>'
+            html += '</div>'
+
+            if (job.status === 'running' && job.percent !== null) {
+                html += '<div class="progress mt-2" style="height: 6px;">' +
+                    '<div class="progress-bar" style="width: ' + job.percent + '%"></div></div>'
+                html += '<div class="small text-muted mt-1">' +
+                    job.passes_done + '/' + job.passes_total + ' - ' +
+                    escapeHtml(job.current_requirement || '') + '</div>'
+            } else if (job.status === 'abandoned') {
+                html += '<div class="small text-danger mt-1">' +
+                    'Resumed too many times without finishing. It will not be retried.' +
+                    '</div>'
+            }
+            html += '</div>'
+        }
+        container.innerHTML = html
+    }
+
+    function loadReviews() {
+        const container = document.getElementById('reviews-container')
+        fetch('/api/reviews')
+            .then(response => response.json())
+            .then(data => {
+                const reviews = data.reviews || []
+                const stats = data.stats || {}
+                renderPending(data.pending || [])
+                document.getElementById('stat-total').textContent = stats.total || 0
+                document.getElementById('stat-week').textContent = stats.last_week || 0
+                document.getElementById('stat-users').textContent =
+                    new Set(reviews.map(r => r.user_email)).size
+                const failedCount = stats.failed || 0
+                document.getElementById('stat-failed').textContent = failedCount
+                // Coloured only when there is something to look at, so an install with
+                // a healthy backend does not carry a permanent red card.
+                document.getElementById('stat-failed-card').className =
+                    'card text-center' + (failedCount ? ' border-danger' : '')
+
+                if (!reviews.length) {
+                    container.innerHTML =
+                        '<p class="text-muted mb-0">No review has been stored yet. ' +
+                        'Reports appear here once someone runs a review from the editor.</p>'
+                    return
+                }
+
+                let html = '<div class="table-responsive"><table class="table table-sm align-middle">'
+                html += '<thead><tr>' +
+                    '<th>When</th><th>User</th><th>Project</th><th>Rubric</th>' +
+                    '<th class="text-center">OK</th><th class="text-center">Partial</th>' +
+                    '<th class="text-center">Missing</th><th class="text-center">Since prev.</th>' +
+                    '<th>Model</th><th class="text-end">Took</th><th></th>' +
+                    '</tr></thead><tbody>'
+
+                for (const review of reviews) {
+                    // The rubric cell doubles as the row's status: a failed review
+                    // says so where the eye already goes, and names the error code,
+                    // so the row cannot be mistaken for a completed one at a glance.
+                    const label = review.failed
+                        ? '<span class="badge bg-danger">did not finish</span>' +
+                          '<span class="small text-danger ms-1">' +
+                          escapeHtml(review.error_code || 'failed') + '</span>'
+                        : '<span class="badge bg-secondary">' + escapeHtml(review.rubric_name) + '</span>'
+
+                    html += '<tr' + (review.failed ? ' class="table-danger"' : '') + '>' +
+                        '<td class="text-nowrap">' + escapeHtml(review.finished_at || review.created_at) + '</td>' +
+                        '<td>' + escapeHtml(review.user_email) + '</td>' +
+                        '<td>' + escapeHtml(review.project_name) + '</td>' +
+                        '<td>' + label + '</td>' +
+                        renderTally(review.ok, 'text-success') +
+                        renderTally(review.partial, 'text-warning') +
+                        renderTally(review.missing, 'text-danger') +
+                        '<td class="text-center">' + renderDelta(review) + '</td>' +
+                        '<td class="small text-muted">' + escapeHtml(review.model) + '</td>' +
+                        '<td class="text-end text-muted">' +
+                            (review.duration_min ? review.duration_min + ' min' : '-') +
+                        '</td>' +
+                        // Two downloads per row: the HTML is the very page the
+                        // student saved (archived at completion), the JSON is the
+                        // data for analysis. HTML only exists for reviews stored
+                        // after the archiving feature; the JSON travels with every
+                        // row, failures included, because the error is part of the
+                        // history as much as any report. Text labels, not icon
+                        // font glyphs: a missing glyph renders as garbage.
+                        '<td class="text-end text-nowrap">' +
+                            (review.has_html
+                                ? '<a class="btn btn-sm btn-outline-secondary me-1" href="/api/reviews/' +
+                                  encodeURIComponent(review.id) + '/report.html" ' +
+                                  'title="The report page the student downloaded">HTML</a>'
+                                : '') +
+                            '<a class="btn btn-sm btn-outline-secondary" href="/api/reviews/' +
+                            encodeURIComponent(review.id) + '/download" ' +
+                            'title="Full report data as JSON">JSON</a>' +
+                        '</td>' +
+                        '</tr>'
+                }
+                html += '</tbody></table></div>'
+                container.innerHTML = html
+            })
+            .catch(error => {
+                container.innerHTML =
+                    '<div class="alert alert-danger mb-0">Could not load the reviews: ' +
+                    escapeHtml(error.message) + '</div>'
+            })
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        loadReviews()
+        // A review takes minutes, so a slow refresh is enough to watch one go by
+        // without hammering Mongo from an open tab.
+        setInterval(loadReviews, 30000)
+    })
+</script>
+{% endblock %}
+

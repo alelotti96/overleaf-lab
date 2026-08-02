@@ -264,6 +264,64 @@ if ! grep -q '^HEADER_BG_COLOR=' "$VARIABLES_ENV"; then
     fi
 fi
 
+# 9) Custom-image modules: opt-in. The AI assistant, the publish module and the
+#    symbols/acronyms lists all ship in the SAME locally-built
+#    overleaf-lab/sharelatex-llm, built FROM overleafcep/sharelatex:<version>, and
+#    configure.sh swaps the image in as soon as ANY ONE of them is on. On a version
+#    update it MUST be rebuilt on the NEW base BEFORE the new image is pulled and
+#    started below, or the sharelatex container will fail to come up. Skipped and
+#    silent when all three are off.
+#    ("|| true": _read_local returns non-zero for a flag an older config.env.local
+#    does not have yet, and this script runs under set -e.)
+LLM_ENABLED_VAL="$(_read_local ENABLE_LLM_MODULE || true)"
+PUBLISH_ENABLED_VAL="$(_read_local ENABLE_PUBLISH_MODULE || true)"
+LISTS_ENABLED_VAL="$(_read_local ENABLE_LISTS_MODULE || true)"
+MODULE_FLAGS_ON=""
+if [ "${LLM_ENABLED_VAL}" = "true" ]; then
+    MODULE_FLAGS_ON="${MODULE_FLAGS_ON}ENABLE_LLM_MODULE "
+fi
+if [ "${PUBLISH_ENABLED_VAL}" = "true" ]; then
+    MODULE_FLAGS_ON="${MODULE_FLAGS_ON}ENABLE_PUBLISH_MODULE "
+fi
+if [ "${LISTS_ENABLED_VAL}" = "true" ]; then
+    MODULE_FLAGS_ON="${MODULE_FLAGS_ON}ENABLE_LISTS_MODULE "
+fi
+if [ -n "${MODULE_FLAGS_ON}" ] && [ "$CURRENT_VERSION" != "$NEW_VERSION" ]; then
+    echo ""
+    echo "-------------------------------------------------------------------"
+    echo "Custom-image modules are ENABLED: ${MODULE_FLAGS_ON% }"
+    echo ""
+    echo "The custom image overleaf-lab/sharelatex-llm is built FROM"
+    echo "overleafcep/sharelatex:${NEW_VERSION}, so it must be REBUILT on this new"
+    echo "base before the new image is started below. Otherwise the running image"
+    echo "would still be FROM the previous base and the update is incomplete."
+    echo ""
+    echo "The rebuild re-runs the anchor-based core patcher against the NEW base"
+    echo "source: if upstream drifted at a patch point, the build FAILS LOUDLY."
+    echo "If that happens, update overleaf-llm-image/patches/apply-core-patches.mjs"
+    echo "to match the new source, then rebuild, before deploying."
+    echo "-------------------------------------------------------------------"
+    echo ""
+    read -p "Rebuild the custom module image now with ./scripts/build-llm-image.sh? (y/N): " LLM_REBUILD_REPLY
+    if [[ $LLM_REBUILD_REPLY =~ ^[Yy]$ ]]; then
+        # Align config.env.local to the new tag first, so build.sh (which reads
+        # OVERLEAF_IMAGE_TAG from config) builds FROM the NEW base.
+        if [ -f "$CONFIG_LOCAL" ]; then
+            sed -i "s|^OVERLEAF_IMAGE_TAG=.*|OVERLEAF_IMAGE_TAG=\"${NEW_VERSION}\"|" "$CONFIG_LOCAL"
+        fi
+        echo ""
+        echo "Building overleaf-lab/sharelatex-llm on ${NEW_VERSION} (this can take 15-30 min)..."
+        ./scripts/build-llm-image.sh
+        echo "Custom module image rebuilt on ${NEW_VERSION}."
+    else
+        echo ""
+        echo "Skipping the custom image rebuild. WARNING: until you run"
+        echo "./scripts/build-llm-image.sh on the new base, the sharelatex container"
+        echo "may fail to start (the custom image is still FROM the previous base)."
+    fi
+    echo ""
+fi
+
 # Pull the Pandoc conversion image if conversions are enabled
 # (with sandboxed compiles it runs as a sibling container, so it must be present locally)
 ENABLE_PANDOC_VAL=$(grep '^ENABLE_PANDOC_CONVERSIONS=' "$VARIABLES_ENV" 2>/dev/null | head -1 | cut -d'=' -f2 | tr -d '[:space:]')

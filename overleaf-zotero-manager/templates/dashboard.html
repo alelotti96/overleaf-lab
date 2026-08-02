@@ -55,6 +55,29 @@
     </div>
 </div>
 
+<div class="row mb-4">
+    <div class="col-md-4">
+        {# The card turns amber while something is running or waiting, so that a
+           glance at the home page answers "is the review backend busy?" #}
+        <div class="card text-white {% if stats.reviews_pending %}bg-warning{% else %}bg-secondary{% endif %}">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-clipboard-check"></i> Reviews
+                </h5>
+                <h2 class="card-text">
+                    {{ stats.reviews_total }}
+                    {% if stats.reviews_pending %}
+                        <small class="fs-6">+ {{ stats.reviews_pending }} in progress</small>
+                    {% endif %}
+                </h2>
+                <a href="{{ url_for('reviews_page') }}" class="btn btn-light btn-sm">
+                    View Reviews <i class="bi bi-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- System Status -->
 <div class="row">
     <div class="col-12">

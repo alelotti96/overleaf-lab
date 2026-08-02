@@ -230,9 +230,18 @@
                                 </h5>
                                 <ol>
                                     <li>Open your project on <strong>{{ lab_name }} Overleaf</strong></li>
+                                    <li>
+                                        If the project already contains a bibliography file, delete
+                                        it first and take note of its exact name: Overleaf will not
+                                        hold two files with the same name, and reusing the old name
+                                        means the LaTeX source needs no changes at all.
+                                    </li>
                                     <li>Click <strong>"New File"</strong> → <strong>"From External URL"</strong></li>
                                     <li>Paste one of the URLs above</li>
-                                    <li>Name the file: <code>references.bib</code></li>
+                                    <li>
+                                        Name the file, for example <code>bibliography.bib</code>, or
+                                        reuse the name of the file you just deleted
+                                    </li>
                                     <li>Click <strong>"Create"</strong></li>
                                 </ol>
                             </div>
@@ -242,27 +251,37 @@
                                 <h5 class="mb-3">
                                     <span class="step-number">5</span>Cite references in your document
                                 </h5>
-                                <p>Add to your LaTeX document:</p>
+                                <div class="alert alert-success py-2">
+                                    <strong>Reused the name of an existing bibliography file?</strong>
+                                    Then there is nothing to change in your document: it already
+                                    points at that name. Carry on citing as usual with
+                                    <code>\cite{citation_key}</code>.
+                                </div>
+                                <p class="mt-3">Otherwise, point the document at the new file:</p>
                                 <pre><code>\documentclass{article}
-\usepackage{biblatex}
-\addbibresource{references.bib}
+\usepackage{natbib}
+\bibliographystyle{plain}
 
 \begin{document}
 Your text here \cite{citation_key}
 
-\printbibliography
+\bibliography{bibliography}
 \end{document}</code></pre>
                                 <p class="mt-2">
                                     <small class="text-muted">
-                                        Or use <code>\bibliography{references}</code> with
-                                        <code>\bibliographystyle{plain}</code> for BibTeX
+                                        The name inside <code>\bibliography{...}</code> is the file
+                                        name without the <code>.bib</code> extension, and has to
+                                        match the file created above. With biblatex the equivalent
+                                        is <code>\addbibresource{bibliography.bib}</code> plus
+                                        <code>\printbibliography</code>; check which of the two your
+                                        document already loads before adding either.
                                     </small>
                                 </p>
                             </div>
 
                             <div class="alert alert-info mt-4">
                                 <i class="bi bi-info-circle me-2"></i>
-                                <strong>Tip:</strong> Refresh the <code>references.bib</code> file in
+                                <strong>Tip:</strong> Refresh the linked bibliography file in
                                 {{ lab_name }} Overleaf to get the latest updates from your Zotero library!
                             </div>
                         </div>

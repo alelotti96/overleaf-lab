@@ -1,0 +1,110 @@
+[
+  {
+    "id": "caption-removed",
+    "class": "structure",
+    "description": "A figure loses its \\caption, so a caption requirement must fail.",
+    "find": "\\\\caption\\{",
+    "replace": "\\\\CAPTIONREMOVEDBYMETAEVAL{",
+    "expect": ["caption"]
+  },
+  {
+    "id": "broken-reference",
+    "class": "structure",
+    "description": "A \\ref points at a label that does not exist.",
+    "find": "\\\\ref\\{[^}]+\\}",
+    "replace": "\\\\ref{metaevalGhostLabel}",
+    "expect": ["metaevalghostlabel"]
+  },
+  {
+    "id": "label-never-referenced",
+    "class": "structure",
+    "description": "A FIGURE label is renamed, so that figure is no longer referenced anywhere.",
+    "comment": "Anchored on \\begin{figure} on purpose. Renaming any \\label at random can land on a listing or a section heading, where 'this figure is never cited in the text' does not apply, and the mutant then measures nothing while looking like a miss.",
+    "find": "(\\\\begin\\{figure\\}[\\s\\S]{0,600}?)\\\\label\\{[^}]+\\}",
+    "replace": "$1\\\\label{metaevalOrphanFigure}",
+    "expect": ["metaevalorphanfigure"]
+  },
+  {
+    "id": "equation-unnumbered",
+    "class": "structure",
+    "description": "A numbered equation becomes an unnumbered one.",
+    "find": "\\\\begin\\{equation\\}",
+    "replace": "\\\\begin{equation*}",
+    "expect": ["equation*"]
+  },
+  {
+    "id": "citation-removed",
+    "class": "citation",
+    "description": "A citation is dropped from a sentence that carries a quantitative claim.",
+    "find": " \\\\cite\\{[^}]+\\}",
+    "replace": "",
+    "expect": ["cite", "citation"]
+  },
+  {
+    "id": "wikipedia-source",
+    "class": "citation",
+    "description": "A Wikipedia entry is added to the bibliography.",
+    "file": "/references.bib",
+    "find": "^",
+    "replace": "@misc{metaevalWiki,\n  title = {Light field},\n  url = {https://en.wikipedia.org/wiki/Light_field},\n  note = {Accessed 2026}\n}\n\n",
+    "expect": ["wikipedia"]
+  },
+  {
+    "id": "first-person",
+    "class": "language",
+    "description": "A first-person sentence is inserted (adapt the wording to the document's language).",
+    "find": "\\\\chapter\\{",
+    "replace": "I decided to write this chapter myself, and we believe it is correct.\n\n\\\\chapter{",
+    "expect": ["i decided", "we believe"]
+  },
+  {
+    "id": "unsupported-superlative",
+    "class": "language",
+    "description": "An unsupported qualitative claim is inserted.",
+    "find": "\\\\chapter\\{",
+    "replace": "The accuracy of the proposed method is extremely good and definitely the best available.\n\n\\\\chapter{",
+    "expect": ["extremely good", "best available"]
+  },
+  {
+    "id": "spelling-error",
+    "class": "language",
+    "description": "A conspicuous misspelling is inserted in running text.",
+    "find": "\\\\chapter\\{",
+    "replace": "This sectionn contains a delibrate misspeling for evaluation purposes.\n\n\\\\chapter{",
+    "expect": ["sectionn", "delibrate", "misspeling"]
+  },
+  {
+    "id": "manual-figure-number",
+    "class": "structure",
+    "description": "A cross-reference is written by hand instead of with \\ref.",
+    "find": "\\\\ref\\{[^}]+\\}",
+    "replace": "Figure 3 (see the figure below)",
+    "expect": ["figure 3", "figure below", "manual", "\\ref"]
+  },
+  {
+    "id": "unit-spacing",
+    "class": "formatting",
+    "description": "A value and its unit are written without any separator.",
+    "find": "\\\\chapter\\{",
+    "replace": "The focal length used in this work is 12.5mm and the pitch is 5.5um.\n\n\\\\chapter{",
+    "expect": ["12.5mm", "5.5um"]
+  },
+  {
+    "id": "wrong-unit-dimension",
+    "class": "formatting",
+    "description": "A speed is declared with the unit of an acceleration.",
+    "comment": "Detected by a requirement about dimensional correctness, which is a different question from spacing and separators. Splitting the two is what makes both measurable.",
+    "find": "\\\\chapter\\{",
+    "replace": "The orbital speed of the target is 7654\\\\,m/s^2 at the reference altitude.\n\n\\\\chapter{",
+    "expect": ["7654", "m/s^2"]
+  },
+  {
+    "id": "acronym-not-defined",
+    "class": "acronym",
+    "description": "A plausible acronym is used without ever being spelled out.",
+    "comment": "Use a REAL acronym of the field, not an invented token: a model can reasonably fail to read 'QZXT' as an acronym at all, and the mutant then measures the mutation's plausibility rather than the reviewer.",
+    "find": "\\\\chapter\\{",
+    "replace": "The subsystem is monitored by the OBDH unit during every orbital pass.\n\n\\\\chapter{",
+    "expect": ["obdh"]
+  }
+]

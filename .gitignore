@@ -4,6 +4,20 @@ config.env.local
 # Email whitelist (site-specific)
 scripts/whitelisted_emails.txt
 
+# Local documents used to try the compliance review out. Real theses are someone
+# else's work and institutional templates are not ours to redistribute, so none of
+# this belongs in the repo: the review feature ships with a starter rubric instead.
+# The leading slash matters: without it these patterns match a folder of that name
+# ANYWHERE in the repo, and "templates/" silently swallowed the dashboard's Jinja
+# templates, which is how a new page shipped without its own HTML.
+/Documenti di esempio/
+/sample-documents/
+/templates/
+/tesi-esempio/
+# Course guides: institutional documents belonging to the degree programmes,
+# authored and updated by the teaching staff on the instance itself.
+/guide-corsi/
+
 # Generated files
 overleaf-toolkit/
 data/
@@ -16,3 +30,7 @@ logs/
 .DS_Store
 Thumbs.db
 .claude/settings.local.json
+
+# Scratch git worktrees used to keep parallel work off the main tree. They hold a
+# full checkout of the repo, so committing them would nest the repo inside itself.
+/.claude/worktrees/

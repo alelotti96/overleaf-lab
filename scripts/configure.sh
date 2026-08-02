@@ -28,17 +28,23 @@ if [ ! -f "config.env.local" ]; then
     exit 1
 fi
 
-# Source config but handle special characters in PASSWORD_VALIDATION_PATTERN
-# The $ in patterns like "aa11$8" gets interpreted, so we read it separately
+# Load defaults from the template (config.env) FIRST, then apply the user's
+# config.env.local as overrides. config.env.local is a one-time copy of config.env
+# (install.sh does `cp config.env config.env.local`), so without this any variable
+# added to the template later (e.g. the BRANDING section) stays unset on existing
+# installs and its default is silently inactive. Sourcing config.env first fixes
+# that for every current and future template variable; the user's file still wins.
+# The $ in patterns like "aa11$8" gets interpreted, so PASSWORD is re-read below.
+source config.env
 source config.env.local
 
-# Read PASSWORD_VALIDATION_PATTERN literally (without shell expansion)
-# Escape $ as $$ for docker-compose
-PASSWORD_VALIDATION_PATTERN=$(grep '^PASSWORD_VALIDATION_PATTERN=' config.env.local | sed 's/^PASSWORD_VALIDATION_PATTERN=//' | tr -d '"' | sed 's/\$/\$\$/g')
-PASSWORD_VALIDATION_MIN_LENGTH=$(grep '^PASSWORD_VALIDATION_MIN_LENGTH=' config.env.local | sed 's/^PASSWORD_VALIDATION_MIN_LENGTH=//' | tr -d '"')
+# Read PASSWORD_VALIDATION_PATTERN literally (without shell expansion), preferring
+# config.env.local and falling back to the template. Escape $ as $$ for docker-compose.
+PASSWORD_VALIDATION_PATTERN=$(grep -h '^PASSWORD_VALIDATION_PATTERN=' config.env.local config.env 2>/dev/null | head -1 | sed 's/^PASSWORD_VALIDATION_PATTERN=//' | tr -d '"' | sed 's/\$/\$\$/g')
+PASSWORD_VALIDATION_MIN_LENGTH=$(grep -h '^PASSWORD_VALIDATION_MIN_LENGTH=' config.env.local config.env 2>/dev/null | head -1 | sed 's/^PASSWORD_VALIDATION_MIN_LENGTH=//' | tr -d '"')
 
-# Read EMAIL_FROM_ADDRESS literally
-EMAIL_FROM_ADDRESS=$(grep '^EMAIL_FROM_ADDRESS=' config.env.local | sed 's/^EMAIL_FROM_ADDRESS=//' | tr -d '"')
+# Read EMAIL_FROM_ADDRESS literally (config.env.local preferred, template fallback)
+EMAIL_FROM_ADDRESS=$(grep -h '^EMAIL_FROM_ADDRESS=' config.env.local config.env 2>/dev/null | head -1 | sed 's/^EMAIL_FROM_ADDRESS=//' | tr -d '"')
 
 # Generate OVERLEAF_INVITE_TOKEN_SECRET if missing (required by Overleaf CE >= 6.2.0,
 # the container refuses to start without it)
@@ -67,6 +73,85 @@ fi
 # Pandoc conversions (Word/Markdown import-export): enabled by default
 ENABLE_PANDOC_CONVERSIONS="${ENABLE_PANDOC_CONVERSIONS:-true}"
 PANDOC_IMAGE="${PANDOC_IMAGE:-overleafcep/pandoc-ol:3.10.0.0}"
+
+# Custom-image modules: opt-in image swap.
+# The AI assistant, the publish module and the symbols/acronyms lists all ship in
+# the SAME locally-built image (overleaf-lab/sharelatex-llm), so ANY ONE of them
+# being enabled requires that image, mirroring the local/sharelatex-texlive-full
+# swap. Gating the swap on the LLM flag alone used to leave publish-only or
+# lists-only installs running the stock image, where those modules simply do not
+# exist and the buttons never appear.
+# The swap only overrides the in-memory shell variables that flow into
+# overleaf.rc and docker-compose.override.yml below; config.env.local is NOT
+# modified, so flipping every flag back to false and re-running configure.sh
+# cleanly restores the stock image. When all are false, the stock
+# OVERLEAF_IMAGE/OVERLEAF_IMAGE_TAG are left untouched.
+ENABLE_LLM_MODULE="${ENABLE_LLM_MODULE:-false}"
+ENABLE_PUBLISH_MODULE="${ENABLE_PUBLISH_MODULE:-false}"
+ENABLE_LISTS_MODULE="${ENABLE_LISTS_MODULE:-false}"
+ENABLE_LANGUAGETOOL="${ENABLE_LANGUAGETOOL:-false}"
+
+# Which flags asked for the custom image (also printed, so the reason is never
+# a mystery when the stack suddenly wants an image that is not built yet).
+# (plain ifs, not "test && assign": under set -e a failing && list aborts the script)
+CUSTOM_IMAGE_REASONS=""
+if [ "${ENABLE_LLM_MODULE}" = "true" ]; then
+    CUSTOM_IMAGE_REASONS="${CUSTOM_IMAGE_REASONS}ENABLE_LLM_MODULE "
+fi
+if [ "${ENABLE_PUBLISH_MODULE}" = "true" ]; then
+    CUSTOM_IMAGE_REASONS="${CUSTOM_IMAGE_REASONS}ENABLE_PUBLISH_MODULE "
+fi
+if [ "${ENABLE_LISTS_MODULE}" = "true" ]; then
+    CUSTOM_IMAGE_REASONS="${CUSTOM_IMAGE_REASONS}ENABLE_LISTS_MODULE "
+fi
+CUSTOM_IMAGE_REASONS="${CUSTOM_IMAGE_REASONS% }"
+
+# LanguageTool is read by the compliance review, which lives in the LLM module:
+# without it the container would run for nobody. Refuse the orphan quietly.
+if [ "${ENABLE_LANGUAGETOOL}" = "true" ] && [ "${ENABLE_LLM_MODULE}" != "true" ]; then
+    echo -e "${YELLOW}Warning: ENABLE_LANGUAGETOOL is true but the AI assistant is off.${NC}"
+    echo -e "${YELLOW}         Only the compliance review reads LanguageTool, so the${NC}"
+    echo -e "${YELLOW}         container is NOT started. Enable the AI assistant too.${NC}"
+    ENABLE_LANGUAGETOOL="false"
+fi
+
+if [ -n "${CUSTOM_IMAGE_REASONS}" ]; then
+    # Conflict guard: the custom image and a texlive-full custom image can't both
+    # own OVERLEAF_IMAGE. The custom image is built FROM the standard base; to also
+    # keep the extra TeX Live packages you would have to rebuild overleaf-llm-image
+    # FROM local/sharelatex-texlive-full instead (see overleaf-llm-image/README).
+    # For now the custom image wins and we warn.
+    if [ "${OVERLEAF_IMAGE}" != "overleafcep/sharelatex" ] && [ "${OVERLEAF_IMAGE}" != "overleaf-lab/sharelatex-llm" ]; then
+        echo -e "${YELLOW}Warning: ${CUSTOM_IMAGE_REASONS} overrides your custom OVERLEAF_IMAGE=${OVERLEAF_IMAGE}.${NC}"
+        echo -e "${YELLOW}         The module and texlive-full images can't both own OVERLEAF_IMAGE.${NC}"
+        echo -e "${YELLOW}         To keep extra TeX Live packages, rebuild overleaf-llm-image${NC}"
+        echo -e "${YELLOW}         FROM local/sharelatex-texlive-full (see overleaf-llm-image/README).${NC}"
+    fi
+    OVERLEAF_IMAGE="overleaf-lab/sharelatex-llm"
+    OVERLEAF_IMAGE_TAG="6.2.0-ext-v5.0"
+    echo "Custom image required by: ${CUSTOM_IMAGE_REASONS}"
+    echo "Using ${OVERLEAF_IMAGE}:${OVERLEAF_IMAGE_TAG}"
+    echo "  (build it first with ./scripts/build-llm-image.sh - see overleaf-llm-image/README)"
+fi
+
+if [ "${ENABLE_LLM_MODULE}" = "true" ]; then
+    # Per-user LLM API key encryption secret (input to the AES-256-GCM key
+    # derivation used by the vendored LLM module to encrypt User.llmApiKey at
+    # rest). CRITICAL: generate it ONCE and reuse it forever - rotating or
+    # losing it makes all previously stored user keys undecryptable and forces
+    # every user to re-enter their key. Reuse any existing value (from
+    # config.env.local or the environment); never overwrite. Mirrors the
+    # OVERLEAF_INVITE_TOKEN_SECRET generate-and-persist pattern above.
+    if [ -z "$LLM_KEY_SECRET" ]; then
+        echo "Generating LLM_KEY_SECRET (encrypts per-user LLM API keys at rest)..."
+        LLM_KEY_SECRET=$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null || openssl rand -hex 32)
+        if grep -q '^LLM_KEY_SECRET=' config.env.local; then
+            sed -i "s|^LLM_KEY_SECRET=.*|LLM_KEY_SECRET=\"${LLM_KEY_SECRET}\"|" config.env.local
+        else
+            printf '\n# LLM per-user API key encryption secret (auto-generated; do NOT change or lose)\nLLM_KEY_SECRET="%s"\n' "$LLM_KEY_SECRET" >> config.env.local
+        fi
+    fi
+fi
 
 # Get absolute paths
 INSTALL_DIR="$PROJECT_ROOT"
@@ -197,13 +282,19 @@ fi
 echo "[2/4] Configuring Zotero Proxies..."
 
 if [ -d "zotero-proxies" ]; then
-    # Create empty .env for now (users will be added via dashboard)
-    cat > zotero-proxies/.env <<EOF
+    # Seed an empty .env only if missing. This file holds REAL per-user Zotero API
+    # keys (added by the dashboard); an unconditional `cat >` would wipe them on every
+    # configure.sh run. Same guard the docker-compose.yml below already uses.
+    if [ ! -f "zotero-proxies/.env" ]; then
+        cat > zotero-proxies/.env <<EOF
 # Zotero user credentials will be added here by the dashboard
 # or manually in the format:
 # USERNAME_API_KEY=your_api_key
 # USERNAME_USER_ID=your_user_id
 EOF
+    else
+        echo "  Keeping existing zotero-proxies/.env (has user credentials)"
+    fi
 
     # Create docker-compose.yml for Zotero per-user proxy containers
     # User services will be added by the dashboard when users configure Zotero
@@ -236,6 +327,27 @@ if [ -d "overleaf-toolkit" ]; then
         HEADER_EXTRAS='[{"text":"Admin Dashboard","url":"'"${DASHBOARD_URL}"'"},{"text":"LaTeX Tutorial","url":"https://www.overleaf.com/learn/latex/Learn_LaTeX_in_30_minutes","class":"subdued"},{"text":"Zotero","dropdown":[{"text":"Integration Setup","url":"'"${DASHBOARD_SIGNUP_URL}"'"}]}]'
     else
         HEADER_EXTRAS='[{"text":"Admin Dashboard","url":"'"${DASHBOARD_URL}"'"},{"text":"LaTeX Tutorial","url":"https://www.overleaf.com/learn/latex/Learn_LaTeX_in_30_minutes","class":"subdued"}]'
+    fi
+
+    # overleaf-lab: append site-specific menu entries from config.env.local
+    # (HEADER_EXTRAS_CUSTOM = a JSON fragment of extra items WITHOUT the outer [ ]).
+    # variables.env is regenerated on every run, so put custom menus here instead of
+    # hand-editing variables.env, which configure.sh overwrites. Empty = no change.
+    if [ -n "${HEADER_EXTRAS_CUSTOM}" ]; then
+        HEADER_EXTRAS="${HEADER_EXTRAS%]}, ${HEADER_EXTRAS_CUSTOM}]"
+    fi
+
+    # overleaf-lab: MongoDB 8.0.5+ refuses to start on Linux kernel >= 6.19 (a tcmalloc
+    # rseq bug, MongoDB SERVER-121912) and crash-loops. 8.0.4 is the last unaffected 8.0
+    # patch, and Overleaf 6.x still accepts it (it requires a server >= 8.0). Pin to 8.0.4
+    # only on affected kernels and only when the rolling "8.0" tag is in use, so hosts on
+    # older kernels keep getting 8.0.x patch updates. Drop the pin once MongoDB ships a
+    # fixed 8.0.x (SERVER-125742).
+    _kver=$(uname -r 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+')
+    if [ -n "$_kver" ] && [ "$(printf '%s\n6.19\n' "$_kver" | sort -V | head -1)" = "6.19" ] \
+       && [ "${MONGO_VERSION:-8.0}" = "8.0" ]; then
+        echo "  Kernel $(uname -r): pinning MONGO_VERSION=8.0.4 (SERVER-121912, kernel >= 6.19)"
+        MONGO_VERSION="8.0.4"
     fi
 
     # Create overleaf.rc if it doesn't exist or update it
@@ -425,6 +537,92 @@ GITHUB_SYNC_CLIENT_SECRET=${GITHUB_SYNC_CLIENT_SECRET}
 EOF
     fi
 
+    # Add AI assistant (LLM) configuration if enabled.
+    # Values are inlined directly (like the OIDC/GitHub blocks above) so URLs and
+    # keys are written verbatim without _replace_var escaping. When disabled,
+    # NOTHING LLM-related is written and variables.env is unchanged from stock.
+    if [ "${ENABLE_LLM_MODULE:-false}" = "true" ]; then
+        cat >> overleaf-toolkit/config/variables.env <<EOF
+
+# AI assistant (LLM) - OpenAI-compatible endpoint (opt-in via ENABLE_LLM_MODULE)
+LLM_ENABLED=true
+LLM_API_URL=${LLM_API_URL}
+LLM_ALLOW_USER_SETTINGS=${LLM_ALLOW_USER_SETTINGS:-false}
+# Admin-managed settings persisted on the sharelatex data volume
+LLM_ADMIN_SETTINGS_PATH=/var/lib/overleaf/data/llm-admin-settings.json
+# Secret used to encrypt per-user API keys at rest (AES-256-GCM); auto-generated
+# and persisted in config.env.local. Changing/losing it invalidates stored keys.
+LLM_KEY_SECRET=${LLM_KEY_SECRET}
+EOF
+        # Optional values: only written when set (empty = module defaults / auto-discovery)
+        if [ -n "${LLM_API_KEY}" ]; then
+            echo "LLM_API_KEY=${LLM_API_KEY}" >> overleaf-toolkit/config/variables.env
+        fi
+        if [ -n "${LLM_MODEL_NAME}" ]; then
+            echo "LLM_MODEL_NAME=${LLM_MODEL_NAME}" >> overleaf-toolkit/config/variables.env
+        fi
+        if [ -n "${LLM_COMPLETION_MODEL}" ]; then
+            echo "LLM_COMPLETION_MODEL=${LLM_COMPLETION_MODEL}" >> overleaf-toolkit/config/variables.env
+        fi
+        if [ -n "${LLM_REVIEW_MAX_TOKENS}" ]; then
+            echo "LLM_REVIEW_MAX_TOKENS=${LLM_REVIEW_MAX_TOKENS}" >> overleaf-toolkit/config/variables.env
+        fi
+
+        # Compliance review, optional checker 1: local LanguageTool container.
+        # The URL is the compose service name, never something the user types: the
+        # container is on the internal network only and has no authentication.
+        if [ "${ENABLE_LANGUAGETOOL}" = "true" ]; then
+            cat >> overleaf-toolkit/config/variables.env <<EOF
+# Spelling and grammar via the local LanguageTool container (ENABLE_LANGUAGETOOL)
+LLM_LANGUAGETOOL_URL=http://languagetool:8010
+EOF
+            if [ -n "${LLM_LANGUAGETOOL_DICT}" ]; then
+                echo "LLM_LANGUAGETOOL_DICT=${LLM_LANGUAGETOOL_DICT}" >> overleaf-toolkit/config/variables.env
+            fi
+        fi
+
+        # Compliance review, optional checker 2: online bibliography verification.
+        # The address alone is the switch (it is what Crossref asks callers to put
+        # in the User-Agent), so an empty value writes nothing and opens no socket.
+        if [ -n "${LLM_BIB_VERIFY_MAILTO}" ]; then
+            echo "# Crossref contact address: enables online bibliography verification" >> overleaf-toolkit/config/variables.env
+            echo "LLM_BIB_VERIFY_MAILTO=${LLM_BIB_VERIFY_MAILTO}" >> overleaf-toolkit/config/variables.env
+        fi
+    fi
+
+    # Publish module (public PDF links): opt-in via ENABLE_PUBLISH_MODULE. Ships in
+    # the same custom image as the LLM module but is independent of it: enabling one
+    # does not require the other. When disabled, nothing is written and the module
+    # stays unloaded (the toolbar button hides itself).
+    if [ "${ENABLE_PUBLISH_MODULE:-false}" = "true" ]; then
+        cat >> overleaf-toolkit/config/variables.env <<EOF
+
+# Publish document (public PDF links) - opt-in via ENABLE_PUBLISH_MODULE
+PUBLISH_ENABLED=true
+EOF
+    fi
+
+    # Symbols and acronyms lists: opt-in via ENABLE_LISTS_MODULE. Needs no model
+    # server, only the custom image. Unlike publish, this module loads BY DEFAULT
+    # once it is in the image, so the "off" answer has to be written explicitly
+    # whenever that image is in use - otherwise a user who said no to the lists
+    # but yes to the AI assistant would get the buttons anyway. With the stock
+    # image nothing is written: the module is not there to switch off.
+    if [ "${ENABLE_LISTS_MODULE}" = "true" ]; then
+        cat >> overleaf-toolkit/config/variables.env <<EOF
+
+# Symbols and acronyms lists - opt-in via ENABLE_LISTS_MODULE
+LISTS_ENABLED=true
+EOF
+    elif [ -n "${CUSTOM_IMAGE_REASONS}" ]; then
+        cat >> overleaf-toolkit/config/variables.env <<EOF
+
+# Symbols and acronyms lists: off (ENABLE_LISTS_MODULE is not true). Written
+# explicitly because the module ships in the custom image and loads by default.
+LISTS_ENABLED=false
+EOF
+    fi
+
     # Replace variables in variables.env
     # Use sed with escaped pattern for literal ${VAR} replacement
     _replace_var() {
@@ -446,8 +644,21 @@ EOF
     _replace_var "USE_SECURE_COOKIES" "${USE_SECURE_COOKIES}"
     _replace_var "DASHBOARD_URL" "${DASHBOARD_URL}"
     _replace_var "DASHBOARD_SIGNUP_URL" "${DASHBOARD_SIGNUP_URL}"
-    # HEADER_EXTRAS contains JSON - use awk for safe replacement
-    awk -v val="$HEADER_EXTRAS" '{gsub(/\${HEADER_EXTRAS}/, val)}1' overleaf-toolkit/config/variables.env > overleaf-toolkit/config/variables.env.tmp && mv overleaf-toolkit/config/variables.env.tmp overleaf-toolkit/config/variables.env
+    # HEADER_EXTRAS contains JSON. The replacement is spliced with index/substr,
+    # NOT with gsub: in a gsub replacement "&" means "the matched text", so a
+    # value like "Thesis & Internship" came out as "Thesis ${HEADER_EXTRAS}
+    # Internship" (observed on the live menu). The value travels through ENVIRON
+    # rather than -v, because -v also interprets backslash escapes.
+    HEADER_EXTRAS="$HEADER_EXTRAS" awk '{
+        needle = "${HEADER_EXTRAS}"
+        out = ""
+        rest = $0
+        while ((i = index(rest, needle)) > 0) {
+            out = out substr(rest, 1, i - 1) ENVIRON["HEADER_EXTRAS"]
+            rest = substr(rest, i + length(needle))
+        }
+        print out rest
+    }' overleaf-toolkit/config/variables.env > overleaf-toolkit/config/variables.env.tmp && mv overleaf-toolkit/config/variables.env.tmp overleaf-toolkit/config/variables.env
     # PASSWORD_VALIDATION_PATTERN may contain $ like "a1$" - awk handles this correctly
     _replace_var "PASSWORD_VALIDATION_PATTERN" "${PASSWORD_VALIDATION_PATTERN}"
     _replace_var "PASSWORD_VALIDATION_MIN_LENGTH" "${PASSWORD_VALIDATION_MIN_LENGTH}"
@@ -532,6 +743,39 @@ YAML_EOF
     sed -i "s|\${OVERLEAF_IMAGE}|${OVERLEAF_IMAGE}|g" overleaf-toolkit/config/docker-compose.override.yml
     sed -i "s|\${OVERLEAF_IMAGE_TAG}|${OVERLEAF_IMAGE_TAG}|g" overleaf-toolkit/config/docker-compose.override.yml
     sed -i "s|\${SUPER_ADMIN_EMAIL}|${SUPER_ADMIN_EMAIL:-}|g" overleaf-toolkit/config/docker-compose.override.yml
+
+    # LanguageTool: the local proof-reader the compliance review calls. Appended
+    # AFTER the substitutions above so nothing in it can be rewritten by them.
+    # Turning the flag off and re-running removes the service from the override,
+    # and the next `bin/up -d` removes the container with it.
+    if [ "${ENABLE_LANGUAGETOOL}" = "true" ]; then
+        cat >> overleaf-toolkit/config/docker-compose.override.yml <<'YAML_EOF'
+
+  # overleaf-lab: local proof-reader for the compliance review (LLM module).
+  # Opt-in via ENABLE_LANGUAGETOOL; the web container reaches it as
+  # http://languagetool:8010 on the compose network.
+  # NO ports: the LanguageTool API is unauthenticated, so it must never be
+  # published on the host. ~700 MB image, 0.5-1 GB resident.
+  languagetool:
+    image: erikvl87/languagetool:6.4
+    container_name: languagetool
+    restart: unless-stopped
+    environment:
+      - Java_Xms=512m
+      - Java_Xmx=1g
+      # Do NOT set maxTextLength below 18000: that is the chunk size the module
+      # sends, and a lower limit turns every request into a 413 that the review
+      # can only report as a failure of the service.
+    expose:
+      - '8010'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- --post-data="text=test&language=en-US" http://localhost:8010/v2/check > /dev/null || exit 1']
+      interval: 60s
+      timeout: 10s
+      retries: 3
+YAML_EOF
+        echo "LanguageTool enabled: added the languagetool service (internal network only)"
+    fi
 
     echo -e "${GREEN}✓ Overleaf Toolkit configured${NC}"
 else

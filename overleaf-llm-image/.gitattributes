@@ -1,0 +1,6 @@
+# These files are consumed inside a Linux Docker build; force LF so a Windows
+# checkout can never inject CRLF (which would break the shell scripts and the
+# Dockerfile RUN steps).
+*.sh        text eol=lf
+*.mjs       text eol=lf
+Dockerfile  text eol=lf

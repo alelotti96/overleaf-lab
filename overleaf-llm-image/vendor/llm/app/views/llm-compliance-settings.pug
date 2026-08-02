@@ -1,0 +1,28 @@
+extends ../../../../app/views/layout-react
+
+block entrypointVar
+    - entrypoint = 'modules/llm/pages/admin/llm-compliance-settings'
+
+block vars
+    - isWebsiteRedesign = true
+
+block append meta
+    //- overleaf-lab: only what the compliance page needs. The chat and completion
+    //- settings stay on the LLM page; allowedModels is here because the review
+    //- model is picked from the same list.
+    meta(name='ol-allowedModels' data-type='string' content=(allowedModels || []).join(','))
+    meta(name='ol-complianceRubrics' data-type='json' content=JSON.stringify(complianceRubrics || []))
+    meta(name='ol-reviewModel' data-type='string' content=reviewModel)
+    meta(name='ol-reviewModelBackup' data-type='string' content=reviewModelBackup)
+    //- overleaf-lab: the review backend pool. Empty on an install with one backend,
+    //- which is the configuration this page has always described.
+    meta(name='ol-reviewEndpoints' data-type='json' content=JSON.stringify(reviewEndpoints || []))
+    meta(name='ol-maxContextTokens' data-type='string' content=String(maxContextTokens))
+    meta(name='ol-reviewMaxTokens' data-type='string' content=String(reviewMaxTokens))
+    meta(name='ol-reviewEnabled' data-type='json' content=JSON.stringify(reviewEnabled))
+    meta(name='ol-reviewSystemPrompt' data-type='string' content=reviewSystemPrompt)
+    meta(name='ol-promptDefaults' data-type='json' content=JSON.stringify(promptDefaults || {}))
+
+block content
+    main#main-content.content.content-alt
+        #llm-compliance-settings-root
