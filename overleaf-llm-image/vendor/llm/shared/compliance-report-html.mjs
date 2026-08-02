@@ -135,6 +135,16 @@ const CHROME_EN = {
   notIncludedNote:
     "Nothing in the main file pulls these in, so they do not reach the PDF and were left out of the review. If one of them should be in the document, add its <code>\\input</code> and run the review again.",
   model: model => `Model: ${model}`,
+  // overleaf-lab: the fast-review banner. It is the first thing under the header
+  // because everything below it has to be read in its light: a page with three
+  // findings on it means something entirely different when twenty-seven requirements
+  // were not looked at, and the n.a. rows say so one by one but only to whoever reads
+  // that far.
+  fastTitle: "Fast review",
+  fastBanner: (checked, total) =>
+    `${checked} of ${total} requirements were checked: the ones a program can decide on its own. The rest are marked n.a. and need a full review, which is the one that uses the review model.`,
+  fastBannerPlain:
+    "Only the requirements a program can decide on its own were checked. The rest are marked n.a. and need a full review, which is the one that uses the review model.",
   promptTokens: n => `about ${n} prompt tokens`,
   took: min => `took ${min} min`,
   deltaFirst:
@@ -142,6 +152,8 @@ const CHROME_EN = {
   deltaRubricChanged:
     "Not compared with the previous review: the rubric changed in between, so the same requirement may no longer mean the same thing.",
   deltaModelChanged: "Not compared with the previous review: that one ran on a different model.",
+  deltaModeChanged:
+    "Not compared with the previous review: the two were not run in the same mode, so they do not cover the same requirements.",
   deltaUnchanged: "No verdict changed since the previous review.",
   deltaSince: when => `Since the previous review${when ? ` (${when})` : ""}:`,
   deltaFixed: "fixed:",
@@ -251,6 +263,11 @@ const CHROME_IT = {
   notIncludedNote:
     "Nulla nel file principale li include, quindi non arrivano al PDF e sono rimasti fuori dalla review. Se uno di questi deve stare nel documento, aggiungi il suo <code>\\input</code> e rilancia la review.",
   model: model => `Modello: ${model}`,
+  fastTitle: "Review rapida",
+  fastBanner: (checked, total) =>
+    `Sono stati controllati ${checked} requisiti su ${total}: quelli che un programma può decidere da solo. Gli altri sono segnati n.d. e richiedono una review completa, che è quella che usa il modello di revisione.`,
+  fastBannerPlain:
+    "Sono stati controllati solo i requisiti che un programma può decidere da solo. Gli altri sono segnati n.d. e richiedono una review completa, che è quella che usa il modello di revisione.",
   promptTokens: n => `circa ${n} token di prompt`,
   took: min => `durata ${min} min`,
   deltaFirst:
@@ -259,6 +276,8 @@ const CHROME_IT = {
     "Nessun confronto con la review precedente: nel frattempo la rubrica è cambiata, quindi lo stesso requisito può non voler dire più la stessa cosa.",
   deltaModelChanged:
     "Nessun confronto con la review precedente: quella è stata eseguita con un altro modello.",
+  deltaModeChanged:
+    "Nessun confronto con la review precedente: le due non sono state eseguite nella stessa modalità, quindi non coprono gli stessi requisiti.",
   deltaUnchanged: "Nessun verdetto è cambiato rispetto alla review precedente.",
   deltaSince: when => `Rispetto alla review precedente${when ? ` (${when})` : ""}:`,
   deltaFixed: "risolto:",
@@ -869,7 +888,10 @@ ${passed.map((item) => renderItem(item)).join("\n")}
     loose.map((item) => ({ line: 0, item })),
     "file-loose"
   ) : ""}` : `<p class="meta">${escapeHtml(T.nothingToFixNote)}</p>`;
-  const metaParts = [escapeHtml(T.model(result.model))];
+  // overleaf-lab: a model line only when a model was involved. A fast review records
+  // no model (see the controller), and "Model: null" over a page produced by parsers
+  // would be both ugly and false; the banner below says what produced this report.
+  const metaParts = result.model ? [escapeHtml(T.model(result.model))] : [];
   // overleaf-lab: WHICH BACKEND ANSWERED, when the instance runs a pool of them.
   // Arrives already written in the report's language (the reviewer builds it with its
   // own L(), which knows the rubric's language) rather than through a T key: this is
@@ -908,7 +930,18 @@ ${passed.map((item) => renderItem(item)).join("\n")}
   // that in fact measured five fewer requirements than the one before it.
   const notRecheckedCount = result.delta?.notRecheckedCount || 0;
   const notRecheckedHtml = notRecheckedCount ? `<p class="meta">${escapeHtml(T.deltaNotRechecked(notRecheckedCount))}</p>` : "";
-  const deltaHtml = !result.delta ? "" : !result.delta.comparable ? `<p class="meta">${escapeHtml(result.delta.reason === "rubric_changed" ? T.deltaRubricChanged : result.delta.reason === "model_changed" ? T.deltaModelChanged : T.deltaFirst)}</p>` : (result.delta.resolved?.length || 0) === 0 && (result.delta.regressed?.length || 0) === 0 ? `<div class="delta"><p class="meta">${escapeHtml(T.deltaUnchanged)}</p>${notRecheckedHtml}</div>` : `<div class="delta"><strong>${escapeHtml(T.deltaSince(result.delta.previousAt ? new Date(result.delta.previousAt).toLocaleDateString() : ""))}</strong>
+  // overleaf-lab: the fast-review banner, drawn from the mode the run recorded and
+  // never inferred from the items. Counting the n.a. rows would look equivalent and is
+  // not: a full review also produces n.a. rows (a check that found no material to
+  // judge, a pass that failed), and a banner built on that count would appear over
+  // reports that are not fast at all.
+  const coverage = result.modeCoverage;
+  const fastHtml = result.mode !== "fast" ? "" : `<div class="fastbar"><strong>${escapeHtml(T.fastTitle)}</strong> ${escapeHtml(
+    coverage && typeof coverage.checked === "number" && typeof coverage.total === "number"
+      ? T.fastBanner(coverage.checked, coverage.total)
+      : T.fastBannerPlain
+  )}</div>`;
+  const deltaHtml = !result.delta ? "" : !result.delta.comparable ? `<p class="meta">${escapeHtml(result.delta.reason === "rubric_changed" ? T.deltaRubricChanged : result.delta.reason === "mode_changed" ? T.deltaModeChanged : result.delta.reason === "model_changed" ? T.deltaModelChanged : T.deltaFirst)}</p>` : (result.delta.resolved?.length || 0) === 0 && (result.delta.regressed?.length || 0) === 0 ? `<div class="delta"><p class="meta">${escapeHtml(T.deltaUnchanged)}</p>${notRecheckedHtml}</div>` : `<div class="delta"><strong>${escapeHtml(T.deltaSince(result.delta.previousAt ? new Date(result.delta.previousAt).toLocaleDateString() : ""))}</strong>
     <ul>
       ${(result.delta.resolved || []).map((d) => `<li class="fixed">${escapeHtml(T.deltaFixed)} ${escapeHtml(shortRequirement(d.requirement))}</li>`).join("")}
       ${(result.delta.regressed || []).map((d) => `<li class="broke">${escapeHtml(T.deltaNew)} ${escapeHtml(shortRequirement(d.requirement))}</li>`).join("")}
@@ -1153,6 +1186,11 @@ ${passed.map((item) => renderItem(item)).join("\n")}
   .files li{margin:.12rem 0}
   .skipped{font-size:.87rem;background:var(--partial-tint);border:1px solid var(--partial-br);border-left:3px solid var(--partial);border-radius:8px;padding:.6rem .75rem;margin:.8rem 0}
   .skipped strong{color:var(--partial)}
+  /* The fast-review banner: the same quiet surface as the delta, one notch of accent
+     on the left so it is not skipped, and never a status colour - "this run looked at
+     less" is a fact about the run, not a finding against the document. */
+  .fastbar{font-size:.9rem;background:var(--surface);border:1px solid var(--hairline);border-left:3px solid var(--partial);border-radius:10px;padding:.7rem .85rem;margin:1rem 0}
+  .fastbar strong{color:var(--partial)}
   .delta{font-size:.9rem;background:var(--surface);border:1px solid var(--hairline);border-radius:10px;padding:.7rem .85rem;margin:1rem 0}
   .delta ul{margin:.35rem 0 0;padding-left:1.15rem}
   .delta li{margin:.12rem 0}
@@ -1270,6 +1308,7 @@ ${passed.map((item) => renderItem(item)).join("\n")}
     ${barHtml}
     ${chipsHtml}
   </section>
+  ${fastHtml}
   ${deltaHtml}
   ${skippedHtml}
   ${notIncludedHtml}

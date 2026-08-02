@@ -41,20 +41,27 @@ function makeJob(id, status, userId = 'u1') {
     }
 }
 
-function harness(job, { loggedInAs = 'u1', viaProject = 'p1' } = {}) {
+function harness(job, { loggedInAs = 'u1', viaProject = 'p1', fast = false } = {}) {
     const jobs = new Map([[job.id, job]])
-    const queue = job.status === 'queued' ? ['other-1', job.id, 'other-2'] : []
+    const waiting = job.status === 'queued' ? ['other-1', job.id, 'other-2'] : []
+    // The two lanes: a full review waits in `queue` for a GPU, a fast one waits in
+    // `fastQueue` for one of the few in-process slots. A cancel has to reach into
+    // whichever list is holding this job.
+    const queue = fast ? [] : waiting
+    const fastQueue = fast ? waiting : []
     const forgotten = []
     // eslint-disable-next-line no-new-func
     const cancelReview = new Function(
         'jobs',
         'queue',
+        'fastQueue',
         'SessionManager',
         'ComplianceStore',
         `${source}; return cancelReview`
     )(
         jobs,
         queue,
+        fastQueue,
         { getLoggedInUserId: () => loggedInAs },
         { forgetJobQuietly: id => forgotten.push(id) }
     )
@@ -67,6 +74,7 @@ function harness(job, { loggedInAs = 'u1', viaProject = 'p1' } = {}) {
     }
     return {
         queue,
+        fastQueue,
         forgotten,
         call: async () =>
             cancelReview({ params: { jobId: job.id, Project_id: viaProject }, session: {} }, res).then(() => answered),
@@ -93,6 +101,25 @@ function harness(job, { loggedInAs = 'u1', viaProject = 'p1' } = {}) {
     check('without disturbing the jobs around it', h.queue.length === 2)
     check('and is forgotten in the store', h.forgotten.includes('j-queue'), JSON.stringify(h.forgotten))
     check('a queued review carries a finish time', typeof job.finishedAt === 'number')
+}
+
+// ---- a QUEUED FAST review waits in the other lane, and must be reachable there ----
+// A fast review never enters the GPU queue, so a cancel that only looked at `queue`
+// left its id sitting in the fast lane: harmless at dispatch (the status is checked
+// there) but not harmless in the position count, which is the number the panel shows
+// to everybody waiting behind it.
+{
+    const job = makeJob('j-fast', 'queued')
+    job.mode = 'fast'
+    const h = harness(job, { fast: true })
+    await h.call()
+    check('a queued fast review is marked cancelled', job.status === 'cancelled', job.status)
+    check(
+        'and is pulled out of the fast lane',
+        !h.fastQueue.includes('j-fast'),
+        JSON.stringify(h.fastQueue)
+    )
+    check('without disturbing the fast jobs around it', h.fastQueue.length === 2)
 }
 
 // ---- somebody else's review is untouchable ----

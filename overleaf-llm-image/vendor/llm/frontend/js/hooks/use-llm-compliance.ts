@@ -29,6 +29,18 @@ export interface ComplianceRubric {
 
 export type ComplianceStatus = 'ok' | 'partial' | 'missing' | 'na'
 
+// overleaf-lab: the two reviews this panel can start.
+//
+//   full  every requirement, the model-judged ones included. Queued on a backend,
+//         minutes, one email at the end.
+//   fast  only the requirements a program decides on its own. No queue, no model,
+//         seconds. The rest come back n.a. with the reason, never as a verdict.
+//
+// It travels with the request, with the running job and with the finished report,
+// because every one of those is somewhere a reader could otherwise mistake one for
+// the other.
+export type ReviewMode = 'full' | 'fast'
+
 // overleaf-lab: the source lines behind a location, attached by the controller at
 // completion from the documents the review already had in memory. Raw text: whoever
 // renders it escapes it, and a string escaped twice is a string with `&amp;lt;` in it.
@@ -68,9 +80,18 @@ export interface ComplianceItem {
 export interface ComplianceResult {
     ok: true
     rubric: ComplianceRubric
-    model: string
-    documentTokensEstimate: number
-    maxContextTokens: number
+    // Null on a fast review: no model was involved, and naming one would be the
+    // plainest untruth the report could carry.
+    model: string | null
+    // overleaf-lab: which review produced this, and how much of the rubric it covered.
+    // Absent on every report archived before the two modes existed, which were all
+    // full reviews: readers treat a missing mode as 'full'.
+    mode?: ReviewMode
+    modeCoverage?: { checked: number; total: number } | null
+    // Null on a fast review for the same reason as `model`: no prompt was built, so
+    // there is no prompt size to state.
+    documentTokensEstimate: number | null
+    maxContextTokens: number | null
     summary: string
     items: ComplianceItem[]
     // When the review finished, and how long it took. Kept in the report itself so a
@@ -99,7 +120,10 @@ export interface ComplianceResult {
 
 export interface ComplianceDelta {
     comparable: boolean
-    reason?: 'no_previous' | 'rubric_changed' | 'model_changed'
+    // 'mode_changed': the previous review was not run in the same mode, so the two do
+    // not cover the same requirements and comparing them would report every unchecked
+    // requirement as one that got fixed.
+    reason?: 'no_previous' | 'rubric_changed' | 'model_changed' | 'mode_changed'
     previousAt?: string
     resolved?: { requirement: string; from: string; to: string }[]
     regressed?: { requirement: string; from: string; to: string }[]
@@ -167,6 +191,11 @@ interface RubricsResponse {
     // overleaf-lab: true when the instance has a mail transport configured, so the
     // panel can promise a notification only where one will really be sent.
     notifyByEmail?: boolean
+    // overleaf-lab: false when no model backend is configured on this instance. The
+    // full review then cannot run at all and the panel says so on the button instead
+    // of letting it be clicked into an error; the fast one is unaffected, which is the
+    // whole reason it exists for installs with no GPU.
+    fullReviewAvailable?: boolean
 }
 
 // overleaf-lab: the standalone report renderer lives in shared/, because the
@@ -232,6 +261,14 @@ export const useLLMCompliance = () => {
     const [rubricsLoaded, setRubricsLoaded] = useState(false)
     // overleaf-lab: default false, so a failed or old response never promises a mail.
     const [notifyByEmail, setNotifyByEmail] = useState(false)
+    // overleaf-lab: default TRUE, unlike the flag above, and for the mirrored reason.
+    // The failure this one guards is disabling a working button on a response that did
+    // not arrive; the backend says `false` explicitly when there is no model backend,
+    // and a missing field means an older backend that only ever had the full review.
+    const [fullReviewAvailable, setFullReviewAvailable] = useState(true)
+    // The mode of the run currently on screen (or the last one asked for), so the
+    // panel can tell the reader which of the two it is watching.
+    const [runningMode, setRunningMode] = useState<ReviewMode>('full')
     const [selectedRubricId, setSelectedRubricId] = useState('')
     const [phase, setPhase] = useState<CompliancePhase>('idle')
     const [position, setPosition] = useState(0)
@@ -260,6 +297,10 @@ export const useLLMCompliance = () => {
     const lastUsedRubricRef = useRef<string | null>(null)
     const rubricsRef = useRef<ComplianceRubric[]>([])
     const userChoseRubricRef = useRef(false)
+    // The mode of the last run this page asked for. In a ref because "Run it anyway"
+    // has to re-send it after a type-mismatch answer, and that callback must not
+    // change identity every time a mode is picked.
+    const lastModeRef = useRef<ReviewMode>('full')
 
     // overleaf-lab: keep the phase ref in sync for the beforeunload handler.
     useEffect(() => {
@@ -393,6 +434,7 @@ export const useLLMCompliance = () => {
                     : ''
                 setSelectedRubricId(remembered || loadedRubrics[0]?.id || '')
                 setNotifyByEmail(Boolean(data.notifyByEmail))
+                setFullReviewAvailable(data.fullReviewAvailable !== false)
                 setRubricsLoaded(true)
             } catch (err) {
                 console.error('[LLMCompliance] Failed to fetch rubrics:', err)
@@ -432,6 +474,14 @@ export const useLLMCompliance = () => {
                     setPhase('error')
                     return
                 }
+
+                // overleaf-lab: which review this poll is watching, taken from the
+                // server rather than from what this page last clicked. They can
+                // differ: a reload re-attaches to whatever was already running, and
+                // that may have been started from another tab in the other mode.
+                setRunningMode(
+                    json.mode === 'fast' || json.result?.mode === 'fast' ? 'fast' : 'full'
+                )
 
                 switch (json.status) {
                     case 'queued':
@@ -532,8 +582,16 @@ export const useLLMCompliance = () => {
     // "is this really the right rubric for this document?" question. It is never
     // remembered across runs: the next review asks again, because the mistake it
     // guards against is precisely the one you make without thinking about it.
-    const runReview = useCallback(async (confirmed = false) => {
+    //
+    // `mode` IS remembered, and only for the length of that question. "Run it anyway"
+    // is the same review the user asked for a moment ago, and defaulting it to full
+    // there would answer a fast click with twenty minutes of GPU - which is the one
+    // outcome somebody pressing the fast button is explicitly avoiding.
+    const runReview = useCallback(async (confirmed = false, requestedMode?: ReviewMode) => {
         if (!selectedRubricId) return
+        const mode: ReviewMode = requestedMode || lastModeRef.current
+        lastModeRef.current = mode
+        setRunningMode(mode)
 
         setResult(null)
         setErrorInfo(null)
@@ -553,7 +611,7 @@ export const useLLMCompliance = () => {
                         'X-CSRF-Token': csrfToken,
                     },
                     credentials: 'same-origin',
-                    body: JSON.stringify({ rubricId: selectedRubricId, confirmed }),
+                    body: JSON.stringify({ rubricId: selectedRubricId, confirmed, mode }),
                 }
             )
 
@@ -655,6 +713,15 @@ export const useLLMCompliance = () => {
                 // A review started by THIS mount takes precedence over adoption.
                 if (phaseRef.current !== 'idle') return
 
+                // Adopted with its mode, so the wait note and the badge describe the
+                // review that is actually running and not the one this page defaults
+                // to. Also seeds `lastModeRef`: after a reload, "Run it anyway" on an
+                // adopted type-mismatch has to re-send the mode that hit it.
+                const adoptedMode: ReviewMode =
+                    json.mode === 'fast' || json.result?.mode === 'fast' ? 'fast' : 'full'
+                lastModeRef.current = adoptedMode
+                setRunningMode(adoptedMode)
+
                 switch (json.status) {
                     case 'queued':
                     case 'running':
@@ -723,7 +790,12 @@ export const useLLMCompliance = () => {
         const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(
             now.getDate()
         )}-${pad(now.getHours())}${pad(now.getMinutes())}`
-        const filename = `review-${safeRubricName}-${stamp}.html`
+        // overleaf-lab: the mode is in the FILE NAME of a fast report. Two reports of
+        // the same rubric minutes apart end up in the same Downloads folder, and the
+        // one that covered three requirements out of thirty must not be openable a
+        // week later without that being the first thing its name says.
+        const modeTag = result.mode === 'fast' ? 'fast-' : ''
+        const filename = `review-${modeTag}${safeRubricName}-${stamp}.html`
 
         const blob = new Blob([html], {
             type: 'text/html;charset=utf-8',
@@ -764,6 +836,11 @@ export const useLLMCompliance = () => {
         rubricsLoaded,
         hasRubrics: rubrics.length > 0,
         notifyByEmail,
+        // overleaf-lab: false only when this instance has no model backend at all.
+        // The panel disables the full button and says why; the fast one still runs.
+        fullReviewAvailable,
+        // Which of the two reviews is running, or produced what is on screen.
+        runningMode,
         selectedRubricId,
         setSelectedRubricId: chooseRubric,
         phase,

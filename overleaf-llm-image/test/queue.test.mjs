@@ -593,12 +593,24 @@ for (const errorCode of ['backend_error', 'model_unavailable', 'json_mode_broken
     const dStart = anchor('the finished result', "rubric: { id: rubric.id, name: rubric.name },")
     const dEnd = anchor('the end of the meta block', 'completedAt: new Date().toISOString()', dStart)
     const block = src.slice(dStart, dEnd)
-    check('the result still carries the bare model id', /\n\s*model: reviewModelNow\(\),/.test(block), block.slice(0, 200))
-    check('and now names the backend that served it', /endpoint: \{/.test(block))
+    check(
+        'the result still carries the bare model id',
+        /\n\s*model: fast \? null : reviewModelNow\(\),/.test(block),
+        block.slice(0, 200)
+    )
+    check('and now names the backend that served it', /endpoint: fast[\s\S]{0,120}id: endpoint\.id/.test(block))
     check('by id and label, never by url', /id: endpoint\.id/.test(block) && !/url:/.test(block))
     check(
         'with a report line only when a pool is configured',
-        /endpointNote: poolIsConfigured\(\)/.test(block)
+        /endpointNote:[\s\S]{0,40}poolIsConfigured\(\)/.test(block)
+    )
+    // overleaf-lab: and a review that ran no model names none. A fast review calls
+    // nothing, so a model id and a backend label on its report would be an invention
+    // in the two fields the delta and the audit trail are built on.
+    check(
+        'a fast review names neither a model nor a backend',
+        /model: fast \? null/.test(block) && /endpoint: fast\s*\n?\s*\? null/.test(block),
+        block.slice(0, 200)
     )
     check('written through L(), so it speaks the rubric language', /endpointNote:[\s\S]*?\bL\(/.test(block))
 }

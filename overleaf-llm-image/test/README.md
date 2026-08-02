@@ -33,6 +33,7 @@ works as a pre-commit or CI gate.
 | `image_metrics` | the measured resolution of raster figures: every image header the module reads, each one valid, truncated and corrupt (including a JPEG whose comment payload contains frame-header bytes, which is what a naive reader reports as the image size), every shape of `\includegraphics` width spec, the hand-computed DPI cases, that an estimated DPI always carries the `\textwidth` it assumed while an absolute width does not move when that assumption does, the caps with their true totals, and that nothing in the block states a threshold |
 | `model_calls` | the seams between a model call and the item it becomes: the answer count a batched call is grammar-bound to return, which question each answer belongs to (by the index the model emits, position only as the fallback), which calls are allowed to be nondeterministic, the gate a double-check has to pass before it may close a violation, and the sentences the code writes around what came back (the split-vote marker in both languages, the LanguageTool findings the reader is owed, the refusals that speak the rubric's language) |
 | `bounded_reads` | the two readers that fetch bytes from elsewhere: a project file is refused on its declared size and the transfer is cancelled as soon as the count crosses the cap, and a bibliographic registry's answer is read up to a bound and no further |
+| `fast_review` | the fast mode, whose failures all look like a normal report: that its plan contains no step that would reach a model and costs zero passes (with the filter removed as a mutation, to prove the assertion bites), that a requirement it did not look at comes back n.a. with the reason in both languages instead of a verdict or a missing row, that it starts on an instance with no backend configured while the full review is refused there, that it never enters the GPU queue and is never persisted as work owed, that the delta refuses to compare the two modes (mutation again: without the guard a fast run reports every unchecked requirement as fixed) while same-mode comparisons still work, that the mode reaches the archive and the stored HTML, and that no email is sent for a fast run |
 
 ### Where an audit finding lands
 
@@ -47,6 +48,7 @@ works as a pre-commit or CI gate.
 | what a call asks for and what the answer is allowed to change | `model_calls` |
 | size caps on anything read from another service | `bounded_reads` |
 | queue, cancel, persistence, restart | `backend_error`, `cancel`, `store` |
+| which requirements a run actually looked at, and what it may claim about the ones it did not | `fast_review` |
 | admin endpoints and what they send outward | `admin_scan` |
 | the document the student reads | `report` |
 | report language | `language` |
