@@ -105,7 +105,7 @@ function errorMessage(err: unknown) {
         case 'no_list_file':
             return 'The project has no list file of this kind any more.'
         case 'no_list_container':
-            return 'The list file has no table or description list to add rows to.'
+            return 'The list file has no table, description list or acronym environment to add rows to.'
         case 'document_too_large':
             // The module rewrites the whole document it merges into, and it will not
             // rewrite one it has only partly read: doing so would delete everything
@@ -194,7 +194,7 @@ function ListPanel({
                         : status.reason === 'document_too_large'
                           ? `${status.path} is too large for this module to read in full, so it will not rewrite it. Splitting it into chapters with \\input is the usual fix.`
                           : status.path
-                            ? `Found in ${status.path}, but it has no table or description list to add rows to. Add a table with one row by hand and this button will copy its shape from then on.`
+                            ? `Found in ${status.path}, but it has no table, description list or acronym environment to add rows to. Add one row by hand and this button will copy its shape from then on.`
                             : 'Not available in this project.'}
                 </OLFormText>
             </OLFormGroup>
@@ -421,7 +421,7 @@ export default function ProjectListsButton() {
                     leadingIcon={<MaterialIcon type="format_list_bulleted" />}
                     onClick={() => setShowModal(true)}
                 >
-                    {t('lists', 'Lists')}
+                    {t('acronyms_and_symbols', 'Acronyms and symbols')}
                 </OLButton>
             </div>
             <OLModal show={showModal} onHide={() => setShowModal(false)}>

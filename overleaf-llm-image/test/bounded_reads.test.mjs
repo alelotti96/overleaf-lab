@@ -59,12 +59,21 @@ function streamOf(chunks) {
 // ===========================================================================
 // project files: the cap binds before the bytes are ours
 // ===========================================================================
-const readBytes = new Function(
+const readBytesRaw = new Function(
     'fetchWithLimit',
     'AUX_FETCH_TIMEOUT_MS',
     `${slice(src, 'const readProjectFileBytes = async', '// overleaf-lab: the ladder of ways', 'readProjectFileBytes')};
      return readProjectFileBytes`
 )
+// The real fetchWithLimit runs the consume step INSIDE its armed window (that is
+// the whole M2 fix: the body read must be abortable). The fake honours the same
+// contract, or the reader would get the raw response back instead of its own
+// consumer's result.
+const readBytes = (impl, timeout) =>
+    readBytesRaw(async (url, options, timeoutMs, jobSignal, consume) => {
+        const response = await impl(url, options)
+        return consume ? consume(response) : response
+    }, timeout)
 
 const headersOf = map => ({ get: name => (name.toLowerCase() in map ? map[name.toLowerCase()] : null) })
 

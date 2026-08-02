@@ -3543,5 +3543,27 @@ check(
     }
 }
 
+// ===========================================================================
+// the acronym scan cap: partial is said, unbounded is refused
+// ===========================================================================
+// The two per-acronym scans cost one pass over the whole project per declared
+// acronym. A pasted mega-list times a large document used to be an event-loop
+// freeze reachable from the fast review; the cap bounds the product and the
+// evidence must SAY the scan was partial, or a capped "all used" reads as a
+// verdict over entries nobody looked at.
+{
+    const declarations = Array.from({ length: 600 }, (_, i) => R`\acro{A${i}X}{Long form ${i}}`).join('\n')
+    const r = runCheck('acronyms-declared-unused', doc(`${declarations}\nProse that uses none of them.`))
+    check('a 600-entry list is scanned up to the cap, not in full', /500/.test(r.evidence), r.evidence.slice(0, 160))
+    check(
+        'and the evidence admits the scan was partial',
+        /first 500 of 600|primi 500 acronimi dichiarati su 600/.test(r.evidence),
+        r.evidence.slice(-160)
+    )
+    // Under the cap nothing changes: no note, full count.
+    const small = runCheck('acronyms-declared-unused', doc(R`\acro{ADCS}{Attitude Determination and Control System}` + '\nProse without it.'))
+    check('under the cap the note stays away', !/first \d+ of|primi \d+/.test(small.evidence), small.evidence)
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES')
 process.exit(ok ? 0 : 1)

@@ -230,6 +230,7 @@ function startHarness({ backend = null } = {}) {
         'jobs',
         'queue',
         'fastQueue',
+        'startsInFlight',
         'ComplianceStore',
         'getLLMFeatureFlags',
         'getComplianceRubrics',
@@ -261,6 +262,7 @@ function startHarness({ backend = null } = {}) {
         jobs,
         queue,
         fastQueue,
+        new Map(),
         { rubricFingerprint: () => 'fp', rememberJobQuietly: job => remembered.push(job.id) },
         async () => ({ reviewEnabled: true }),
         async () => [{ id: 'r1', name: 'Thesis', guidelines: '1. One.\n2. Two.', scanPatterns: '' }],
@@ -351,6 +353,24 @@ function startHarness({ backend = null } = {}) {
         h4.jobs.get(typo.jobId).mode === 'full' && h4.queue.length === 1,
         h4.jobs.get(typo.jobId).mode
     )
+
+    // The dedup may only hand back the live job when it IS what was asked for.
+    // Reusing across modes answered a "full review" click with the jobId of the
+    // running fast one: ok:true, and the full review never ran.
+    const h5 = startHarness({ backend: 'http://gpu:8080/v1' })
+    const liveFast = await h5.start('fast')
+    const fullDuringFast = await h5.start('full')
+    check(
+        'a full click during a live fast review is refused out loud, not silently joined',
+        fullDuringFast && fullDuringFast.ok === false && fullDuringFast.error === 'different_review_running',
+        JSON.stringify(fullDuringFast)
+    )
+    const sameAgain = await h5.start('fast')
+    check(
+        'asking again for the same review still joins the live job',
+        sameAgain.ok === true && sameAgain.jobId === liveFast.jobId,
+        JSON.stringify(sameAgain)
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -376,7 +396,7 @@ function startHarness({ backend = null } = {}) {
         ['the JSON schema probe', 'const probeResponse = fast ? null :'],
         ['the document-type question', '} else if (!fast && !job.confirmed && expectedDocument) {'],
         ['the adversarial double-checks', 'const consider = predicate => {'],
-        ['the closing summary', 'const response = fast'],
+        ['the closing summary', 'const data = fast'],
         ['the bibliography check', 'if (fast && isBibVerifyEnabled()) {'],
     ]
     for (const [what, text] of guards) {

@@ -533,9 +533,13 @@ function findListRegion(text, kind) {
     return null
 }
 
+// `acronym` is the environment of the acronym package, and it is its own third
+// shape: rows are `\acro{SHORT}{Long form}` commands, not cells and not items.
+// A thesis that loads the package keeps its whole list in one, so a module that
+// only knew tables told exactly those authors their list "has no table".
 const CONTAINER_ENVIRONMENTS = [
     'longtable', 'tabular', 'tabularx', 'tabulary', 'xltabular', 'supertabular',
-    'longtabu', 'tabu', 'description', 'itemize',
+    'longtabu', 'tabu', 'description', 'itemize', 'acronym',
 ]
 
 function readBracedArgument(text, openIndex, maxChars = 4000) {
@@ -610,8 +614,17 @@ function findContainer(text, region) {
         end: region.start + env.end,
         columns: 0,
         isDescription: env.name === 'description' || env.name === 'itemize',
+        isAcroEnv: env.name === 'acronym',
     }
-    if (!container.isDescription) {
+    if (container.isAcroEnv) {
+        // `\begin{acronym}[WYSIWYM]` carries the width sample as an optional
+        // argument. It is part of the \begin line, not a row, and an EMPTY list
+        // must not have the first generated row spliced into the middle of it.
+        const ahead = /^\s{0,40}\[[^\]]{0,200}\]/.exec(
+            text.slice(container.bodyStart, container.bodyStart + 300)
+        )
+        if (ahead) container.bodyStart += ahead[0].length
+    } else if (!container.isDescription) {
         const spec = readColumnSpec(text, container.bodyStart)
         container.columns = spec ? countColumns(spec.spec) : 0
         // The spec is part of the \begin line, not of the body: rows start after it.
@@ -629,6 +642,16 @@ function findContainer(text, region) {
 // because nothing follows, so a trailing row with no terminator is accepted too.
 const ROW_TERMINATOR = /\\\\\s{0,40}(?:\[[^\]]{0,40}\]\s{0,40})?$/
 const ITEM_ROW = /^(\s{0,200}\\item\s{0,40}\[)([^\]]{0,200})(\]\s{0,40})([\s\S]{0,600})$/
+// One row of an `acronym` environment. Groups mirror ITEM_ROW: open, key, the
+// middle up to the long form (which keeps the author's column spacing and the
+// optional [custom short] argument), value, close. `\acrodef` is accepted as a
+// row too: it declares exactly like `\acro` and a list that uses it must not
+// have its entries re-added under the other spelling.
+// `(?:o|odef)` and not `o(?:def)?`: the suite's tripwire bans any optional atom
+// glued to a whitespace run, harmless here or not, because the safe spellings
+// are cheap and the dangerous ones all look exactly like the harmless ones.
+const ACRO_ROW =
+    /^(\s{0,200}\\acr(?:o|odef)\s{0,40}\{)([^{}]{1,200})(\}\s{0,40}(?:\[[^\]]{0,200}\]\s{0,40})?\{)([^{}]{0,300})(\}\s{0,200})$/
 
 function splitCells(row) {
     const cells = []
@@ -803,6 +826,21 @@ function parseRows(text, container, kind) {
         offset += line.length + 1
         const trimmed = line.trim()
         if (!trimmed || trimmed.startsWith('%')) continue
+        if (container.isAcroEnv) {
+            const acro = ACRO_ROW.exec(line)
+            if (!acro) continue
+            rows.push({
+                raw: line,
+                start: lineStart,
+                end: lineStart + line.length,
+                cells: null,
+                item: null,
+                acro,
+                keys: entryKeys(kind, acro[2]),
+                hasValue: acro[4].trim().length > 0,
+            })
+            continue
+        }
         if (container.isDescription) {
             const item = ITEM_ROW.exec(line)
             if (!item) continue
@@ -910,6 +948,14 @@ function renderUnit(unit) {
 
 function buildRow(kind, template, key, definition) {
     if (!template) return null
+    if (template.acro) {
+        // The middle group is copied whole so the new row keeps the template's
+        // column spacing, minus the optional [custom short] argument, which
+        // belongs to THAT acronym and not to the new one.
+        const open = template.acro[1]
+        const mid = template.acro[3].replace(/\[[^\]]{0,200}\]\s{0,40}/, '')
+        return `${open}${key.replace(/&/g, '\\&')}${mid}${definition}}`
+    }
     if (template.item) {
         const open = template.item[1]
         const close = template.item[3]
@@ -952,7 +998,27 @@ function hasUnlabelledItems(text, container) {
     return /\\item(?![ \t]*\[)/.test(text.slice(container.bodyStart, container.bodyEnd))
 }
 
+// The same promise, for the acronym environment: an `\acro` this parser could
+// not read as a row (two on one line, a nested brace in the long form) is an
+// entry that EXISTS, and writing next to entries it cannot see is how a module
+// adds a duplicate. Comment lines are skipped exactly as parseRows skips them.
+function hasUnreadAcroRows(text, container, rows) {
+    if (!container.isAcroEnv) return false
+    let declared = 0
+    for (const line of text.slice(container.bodyStart, container.bodyEnd).split('\n')) {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith('%')) continue
+        declared += (line.match(/\\acro(?:def)?(?![a-zA-Z@])/g) || []).length
+    }
+    return declared > rows.length
+}
+
 function templateForEmptyContainer(kind, container, indent) {
+    if (container.isAcroEnv) {
+        // Groups mirror ACRO_ROW the way the description template mirrors
+        // ITEM_ROW: buildRow reads [1] and [3] and closes the row itself.
+        return { acro: ['', `${indent}\\acro{`, '', '}{', '', '}'], cells: null, item: null, raw: '' }
+    }
     if (container.isDescription) {
         return { item: ['', `${indent}\\item[`, '', '] ', ''], cells: null, raw: '' }
     }
@@ -1379,6 +1445,9 @@ function applyAdditions(text, container, rows, additions, kind) {
     const indent = rows.length > 0 ? indentOf(rows[0].raw) : `${indentOf(text.slice(endLineStart))}    `
     let template = chooseTemplate(rows)
     if (!template && hasUnlabelledItems(text, container)) return { text, inserted: 0, unsupported: true }
+    // Unlike the unlabelled-items case this one refuses even WITH a template:
+    // the rows the parser did read are not the problem, the ones it did not are.
+    if (hasUnreadAcroRows(text, container, rows)) return { text, inserted: 0, unsupported: true }
     if (!template) template = templateForEmptyContainer(kind, container, indent)
     if (!template) return { text, inserted: 0, unsupported: true }
     // A file written on Windows ends every line with a carriage return. The
@@ -1951,7 +2020,8 @@ function kindOf(req) {
 const ERROR_MESSAGES = {
     unknown_list: 'There is no list of that kind. The two kinds are "acronyms" and "symbols".',
     no_list_file: 'The project has no list file of this kind.',
-    no_list_container: 'The list file has no table or description list to add rows to.',
+    no_list_container:
+        'The list file has no table, description list or acronym environment to add rows to.',
     unsupported_layout:
         'The layout of this list is not one the module can write into. Add one entry by hand in the shape you want and press the button again: every later row copies it.',
     document_too_large:

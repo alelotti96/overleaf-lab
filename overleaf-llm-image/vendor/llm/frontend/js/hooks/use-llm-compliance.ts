@@ -229,6 +229,16 @@ export function useGotoSource(): GotoSource | null {
             return null
         }
         return (path: string, line?: number) => {
+            // Never race the boot. While the editor is still opening its initial
+            // document, a second openDocWithId and the boot's own open abort each
+            // other (the manager guards opens with an epoch, and the loser surfaces
+            // "something went wrong opening this document"). Saying "not yet" makes
+            // the deep-link path below retry once loading settles, and makes a
+            // manual click during boot a no-op, both of which are what a reader
+            // arriving from a report link actually wants.
+            if (editorManager.isLoading) {
+                return false
+            }
             // The review writes project paths with a leading slash; the file tree does
             // not carry one. Both spellings are tried, because an archived result may
             // have been written by an older run with a different convention.
@@ -239,9 +249,23 @@ export function useGotoSource(): GotoSource | null {
             }
             const found = findEntityByPath(clean) || findEntityByPath(raw)
             // THE SECOND GATE. A path only opens something if the project actually has a
-            // document at it; a folder or a binary file is not something openDocWithId
-            // can show, and a path that is in no project at all resolves to nothing.
-            if (!found || found.type !== 'doc' || !found.entity?._id) {
+            // document at it; a folder is not something the editor can show, and a path
+            // that is in no project at all resolves to nothing.
+            if (!found || !found.entity?._id) {
+                return false
+            }
+            // A fileRef is openable too, just not at a line: the file view has no
+            // cursor. The case that makes this worth having is not an image, it is
+            // the bibliography: a .bib kept fresh by an external tool arrives as an
+            // uploaded FILE, the bibliography check quotes it with a line number,
+            // and a chip that silently did nothing on exactly those findings broke
+            // this module's promise that every drawn control does something.
+            if (found.type !== 'doc') {
+                const openFileWithId = editorManager?.openFileWithId
+                if (found.type === 'fileRef' && openFileWithId) {
+                    openFileWithId(found.entity._id)
+                    return true
+                }
                 return false
             }
             const jump =

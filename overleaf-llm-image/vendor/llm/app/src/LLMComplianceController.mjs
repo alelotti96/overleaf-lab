@@ -20,6 +20,12 @@ import { findIncludeGraphics, imageDimensions, analyzeFigures, imageMetricsFactL
 // progress, cancel, and result rather than holding a request open.
 const jobs = new Map() // jobId -> job
 const queue = [] // array of jobId, FIFO
+// overleaf-lab: (userId:projectId) -> promise held while a POST /start is between
+// its first admission check and jobs.set. That stretch contains an await (the
+// enqueue-time type check reads the whole project), so without this gate K
+// simultaneous POSTs from one user all passed the meter and all paid the full
+// project read before the first of them registered a job for the others to join.
+const startsInFlight = new Map()
 // overleaf-lab: THE FAST LANE, which is deliberately not the queue above.
 //
 // A fast review calls no model, so the resource the queue exists to share - a GPU
@@ -150,7 +156,15 @@ function recordTimings(timings) {
 // instance quietly loses a third of its capacity with no failure anywhere to see.
 const AUX_FETCH_TIMEOUT_MS = 60 * 1000
 
-async function fetchWithLimit(url, options, timeoutMs, jobSignal) {
+// `consume` runs INSIDE the armed window and receives the response; whatever it
+// returns is what the call returns. It exists because the timer and the cancel
+// listener used to be dropped the moment the HEADERS arrived, and the callers'
+// `await response.json()` then read the body with nobody able to abort it: a
+// backend that sent headers and stalled (dead upstream behind a keep-alive
+// proxy) left the job 'running' for ever, its endpoint out of the rotation, the
+// breaker never tripped and cancel answering ok while stopping nothing. Exactly
+// the wedge the paragraph above says this function exists to prevent.
+async function fetchWithLimit(url, options, timeoutMs, jobSignal, consume) {
     const controller = new AbortController()
     const abort = () => controller.abort()
     if (jobSignal) {
@@ -162,7 +176,8 @@ async function fetchWithLimit(url, options, timeoutMs, jobSignal) {
     }
     const timer = setTimeout(abort, timeoutMs)
     try {
-        return await fetch(url, { ...options, signal: controller.signal })
+        const response = await fetch(url, { ...options, signal: controller.signal })
+        return consume ? await consume(response) : response
     } finally {
         clearTimeout(timer)
         if (jobSignal) {
@@ -196,16 +211,13 @@ async function countPromptTokens(llmApiUrl, llmApiKey, text, model, jobSignal) {
         if (model) {
             body.model = model
         }
-        const response = await fetchWithLimit(
+        const data = await fetchWithLimit(
             `${llmApiUrl}/tokenize`,
             { method: 'POST', headers, body: JSON.stringify(body) },
             AUX_FETCH_TIMEOUT_MS,
-            jobSignal
+            jobSignal,
+            response => (response.ok ? response.json() : null)
         )
-        if (!response.ok) {
-            return null
-        }
-        const data = await response.json()
         if (Array.isArray(data && data.tokens)) {
             return data.tokens.length
         }
@@ -648,11 +660,17 @@ function collectListingLabels(text) {
     return found
 }
 
+// overleaf-lab: every negated class in the collectors below is BOUNDED, exactly
+// as in the checks module. `[^}]+` after a literal anchor is quadratic on a file
+// of unclosed braces (each anchor scans to EOF and fails), these collectors run
+// BEFORE the too_long guard, and scanPatternIsTooSlow does not cover them
+// because they are ours, not the rubric's. 400 is the same generous bound the
+// checks module settled on: no real key, label or path reaches it.
 function collectLabels(docs) {
     const labels = new Map()
     for (const doc of docs) {
         const lineOf = makeLineLookup(doc.text)
-        for (const match of doc.text.matchAll(/\\label\{([^}]+)\}/g)) {
+        for (const match of doc.text.matchAll(/\\label\{([^}]{1,400})\}/g)) {
             if (!labels.has(match[1])) {
                 labels.set(match[1], {
                     path: doc.path,
@@ -701,7 +719,7 @@ function collectDuplicateLabels(docs) {
             }
             places.get(key).push(`${doc.path}:${lineOf(index)}`)
         }
-        for (const match of doc.text.matchAll(/\\label\{([^}]+)\}/g)) {
+        for (const match of doc.text.matchAll(/\\label\{([^}]{1,400})\}/g)) {
             add(match[1], match.index)
         }
         for (const listing of collectListingLabels(doc.text)) {
@@ -726,19 +744,19 @@ function collectReferencedLabels(docs) {
         // \hyperref[label]{text} form is a genuine label use and is collected below,
         // from the BRACKETS, which is where hyperref puts the label.
         for (const match of doc.text.matchAll(
-            /\\(?!href\b|hyperref\b)(?:auto|eq|cpage|Cpage|page|name|labelc|label|sub|c|C|v|V)?ref\*?\{([^}]+)\}/g
+            /\\(?!href\b|hyperref\b)(?:auto|eq|cpage|Cpage|page|name|labelc|label|sub|c|C|v|V)?ref\*?\{([^}]{1,400})\}/g
         )) {
             for (const part of match[1].split(',')) {
                 referenced.add(part.trim())
             }
         }
         // \hyperref[label]{text} addresses the label in brackets.
-        for (const match of doc.text.matchAll(/\\hyperref\[([^\]]+)\]/g)) {
+        for (const match of doc.text.matchAll(/\\hyperref\[([^\]]{1,400})\]/g)) {
             referenced.add(match[1].trim())
         }
         // \crefrange{first}{last} names two labels, one per argument.
         for (const match of doc.text.matchAll(
-            /\\[cC]refrange\*?\{([^}]+)\}\{([^}]+)\}/g
+            /\\[cC]refrange\*?\{([^}]{1,400})\}\{([^}]{1,400})\}/g
         )) {
             referenced.add(match[1].trim())
             referenced.add(match[2].trim())
@@ -757,7 +775,7 @@ function collectAcronyms(docs) {
     const declared = new Map()
     const used = new Set()
     for (const doc of docs) {
-        for (const match of doc.text.matchAll(/\\acro\{([^}]+)\}/g)) {
+        for (const match of doc.text.matchAll(/\\acro\{([^}]{1,400})\}/g)) {
             if (!declared.has(match[1])) {
                 declared.set(match[1], doc.path)
             }
@@ -766,7 +784,7 @@ function collectAcronyms(docs) {
         // \DeclareAcronym: a \gls of one of those is a legitimate use, not the LaTeX
         // error that "used but never declared" claims it is.
         for (const match of doc.text.matchAll(
-            /\\(?:newacronym|newglossaryentry|DeclareAcronym)(?:\[[^\]]*\])?\{([^}]+)\}/g
+            /\\(?:newacronym|newglossaryentry|DeclareAcronym)(?:\[[^\]]{0,400}\])?\{([^}]{1,400})\}/g
         )) {
             if (!declared.has(match[1])) {
                 declared.set(match[1], doc.path)
@@ -775,7 +793,7 @@ function collectAcronyms(docs) {
         // Usage commands. \acs, \acl, \acf, \acp, \acsp, \aclp, \Ac..., \gls, \Gls,
         // \glspl, \acrshort, \acrlong, \acrfull, with or without a star.
         for (const match of doc.text.matchAll(
-            /\\(?:[Aa]c(?:s|l|f|p|sp|lp|fp)?|[Gg]ls(?:pl)?|acr(?:short|long|full)(?:pl)?)\*?(?:\[[^\]]*\])?\{([^}]+)\}/g
+            /\\(?:[Aa]c(?:s|l|f|p|sp|lp|fp)?|[Gg]ls(?:pl)?|acr(?:short|long|full)(?:pl)?)\*?(?:\[[^\]]{0,400}\])?\{([^}]{1,400})\}/g
         )) {
             used.add(match[1].trim())
         }
@@ -789,12 +807,18 @@ function collectAcronyms(docs) {
     const blanked = docs
         .map(doc =>
             doc.text
-                .replace(/\\begin\{acronyms?\*?\}[\s\S]*?\\end\{acronyms?\*?\}/g, m =>
+                // The environment bound (20k) matches the checks module's region cap;
+                // the row pattern uses the safe `\s{0,40}(?:X\s{0,40})?` spelling, not
+                // `\s*X?\s*`, which backtracks quadratically on whitespace runs.
+                .replace(/\\begin\{acronyms?\*?\}[\s\S]{0,20000}?\\end\{acronyms?\*?\}/g, m =>
                     m.replace(/[^\n]/g, ' ')
                 )
-                .replace(/\\acro\{[^}]*\}\s*(?:\[[^\]]*\])?\s*\{[^}]*\}/g, m => m.replace(/[^\n]/g, ' '))
                 .replace(
-                    /\\(?:newacronym|newglossaryentry|DeclareAcronym)\s*(?:\[[^\]]*\])?\{[^}]*\}(?:\{[^}]*\})*/g,
+                    /\\acro\{[^}]{0,400}\}\s{0,40}(?:\[[^\]]{0,400}\]\s{0,40})?\{[^}]{0,400}\}/g,
+                    m => m.replace(/[^\n]/g, ' ')
+                )
+                .replace(
+                    /\\(?:newacronym|newglossaryentry|DeclareAcronym)\s{0,40}(?:\[[^\]]{0,400}\]\s{0,40})?\{[^}]{0,400}\}(?:\{[^}]{0,400}\})*/g,
                     m => m.replace(/[^\n]/g, ' ')
                 )
         )
@@ -891,7 +915,7 @@ function findIncompleteBibEntries(docs) {
 // not have to be a .bib: a hand-written thebibliography in a .tex is the whole
 // bibliography of many internship reports, and reading only .bib files made every
 // \cite in such a document look undefined and every entry look uncited.
-const BIBITEM_KEY = /\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}/g
+const BIBITEM_KEY = /\\bibitem\s{0,40}(?:\[[^\]]{0,200}\]\s{0,40})?\{([^}]{1,400})\}/g
 
 function collectCitations(docs) {
     const defined = new Map()
@@ -915,7 +939,7 @@ function collectCitations(docs) {
         }
         // \cite, \citep, \citet, \nocite, starred and optional-argument forms.
         for (const match of doc.text.matchAll(
-            /\\(?:no)?cite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{([^}]+)\}/g
+            /\\(?:no)?cite[a-zA-Z]*\*?(?:\[[^\]]{0,400}\]){0,2}\{([^}]{1,400})\}/g
         )) {
             for (const key of match[1].split(',')) {
                 const trimmed = key.trim()
@@ -1138,7 +1162,7 @@ function buildStructuralFacts(strippedDocs, cap = 10, activeChecks = new Set()) 
     const captions = []
     for (const doc of strippedDocs) {
         const at = makeLineLookup(doc.text)
-        for (const m of doc.text.matchAll(/\\caption\s*(?:\[[^\]]*\])?\s*\{/g)) {
+        for (const m of doc.text.matchAll(/\\caption\s{0,40}(?:\[[^\]]{0,400}\]\s{0,40})?\{/g)) {
             const braced = readBracedArgument(doc.text, m.index + m[0].length - 1)
             if (!braced || typeof braced.value !== 'string') continue
             captions.push({ path: doc.path, line: at(m.index), text: braced.value })
@@ -1217,8 +1241,8 @@ function buildStructuralFacts(strippedDocs, cap = 10, activeChecks = new Set()) 
             const prose = blankEnvironments(doc.text, SENTENCE_NON_PROSE_ENVIRONMENTS)
                 // Headings carry no final period, so their words joined whatever
                 // sentence came next; same for their \addcontentsline companion.
-                .replace(/\\(chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\s*(\[[^\]]*\])?\s*\{[^}\n]*\}/g, blank)
-                .replace(/\\addcontentsline\s*\{[^}]*\}\s*\{[^}]*\}\s*\{[^}\n]*\}/g, blank)
+                .replace(/\\(chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\s{0,40}(?:\[[^\]]{0,400}\]\s{0,40})?\{[^}\n]{0,400}\}/g, blank)
+                .replace(/\\addcontentsline\s{0,40}\{[^}]{0,400}\}\s{0,40}\{[^}]{0,400}\}\s{0,40}\{[^}\n]{0,400}\}/g, blank)
                 .replace(/\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$/g, blank)
                 .replace(/(?<!\\)\$[^$\n]{0,400}?(?<!\\)\$/g, blank)
             // Sentences end at ./!/? before whitespace, before a LaTeX line break
@@ -1513,7 +1537,7 @@ function buildScanHints(strippedDocs, customPatterns = [], activeChecks = new Se
     const captions = count(/\\caption\s*[[{]/g)
     const equations = count(/\\begin\{(?:equation|align|gather|multline|flalign)/g)
     const refs = count(/\\(?:auto|eq|cpage|Cpage|page|name|labelc|label|sub|c|C|v|V)?ref\*?\{/g)
-    const cites = count(/\\(?:no)?cite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{/g)
+    const cites = count(/\\(?:no)?cite[a-zA-Z]*\*?(?:\[[^\]]{0,400}\]){0,2}\{/g)
     const listings = count(/\\begin\{(?:lstlisting|verbatim|minted)/g)
 
     // The count and the excerpts answer two different questions, so the sentence says
@@ -1660,7 +1684,7 @@ function parseScanPatterns(text) {
 // the structural checks build (LLMStructuralChecks, in `result`).
 function neutraliseWarningMarker(text) {
     return String(text ?? '')
-        .replace(/\[\s*warning\s*:([^\]]*)\]/gi, '(warning:$1)')
+        .replace(/\[\s{0,40}warning\s{0,40}:([^\]]{0,400})\]/gi, '(warning:$1)')
         .replace(/\[\s*warning\s*:/gi, '(warning:')
 }
 
@@ -2986,7 +3010,7 @@ const REQUIREMENT_MATERIAL = [
     {
         kind: 'citations',
         names: /\b(?:cite|citep|citet|bibitem|bibliography|printbibliography)\b/i,
-        occurs: /\\(?:no)?cite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{|\\bibitem\b/g,
+        occurs: /\\(?:no)?cite[a-zA-Z]*\*?(?:\[[^\]]{0,400}\]){0,2}\{|\\bibitem\b/g,
     },
     {
         kind: 'crossrefs',
@@ -3472,7 +3496,7 @@ function partitionByInclusion(docs) {
         seen.add(path)
         const doc = byPath.get(path)
         ordered.push(doc)
-        const include = /\\(?:input|include|subfile)\s*\{([^}]*)\}/g
+        const include = /\\(?:input|include|subfile)\s{0,40}\{([^}]{0,400})\}/g
         let match
         while ((match = include.exec(doc.text)) !== null) {
             const target = resolve(match[1])
@@ -3519,7 +3543,7 @@ const FRONT_MATTER_TITLE = 'Front matter (before the first chapter)'
 // chapter, and folding them into the nearest one would ask a chapter-scoped check to
 // judge a bibliography database as if it were prose.
 function segmentChapters(docs) {
-    const CHAPTER = /\\chapter\s*\*?\s*(?:\[[^\]]*\])?\s*\{/g
+    const CHAPTER = /\\chapter\s{0,40}(?:\*\s{0,40})?(?:\[[^\]]{0,400}\]\s{0,40})?\{/g
     const segments = []
     let current = null
     const open = title => {
@@ -3787,7 +3811,7 @@ function buildSkeleton(docs, segments) {
                 `${countOf(/\\begin\{(?:equation|align|gather|multline|flalign)/g)} equations, ` +
                 `${countOf(/\\cite[a-zA-Z]*\s*[[{]/g)} citations`
         )
-        const heading = /\\(section|subsection|subsubsection)\s*\*?\s*(?:\[[^\]]*\])?\s*\{/g
+        const heading = /\\(section|subsection|subsubsection)\s{0,40}(?:\*\s{0,40})?(?:\[[^\]]{0,400}\]\s{0,40})?\{/g
         let match
         while ((match = heading.exec(text)) !== null) {
             const brace = text.indexOf('{', match.index)
@@ -3798,7 +3822,7 @@ function buildSkeleton(docs, segments) {
         // The opening of the chapter, with the heading command itself removed so the
         // sample is prose rather than markup.
         const body = text
-            .replace(/\\chapter\s*\*?\s*(?:\[[^\]]*\])?\s*\{[^}]*\}/, '')
+            .replace(/\\chapter\s{0,40}(?:\*\s{0,40})?(?:\[[^\]]{0,400}\]\s{0,40})?\{[^}]{0,400}\}/, '')
             .replace(/\s+/g, ' ')
             .trim()
         if (body) {
@@ -4131,53 +4155,58 @@ const scrubUrls = text =>
 // only to refuse early (a wrong one costs nothing, since the reader below counts the
 // bytes it actually receives), and the transfer is cancelled the moment the count
 // crosses the cap.
-const readProjectFileBytes = async (url, headers, maxBytes) => {
-    const response = await fetchWithLimit(url, { headers }, AUX_FETCH_TIMEOUT_MS)
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
-    }
-    const declared = Number.parseInt(response.headers && response.headers.get('content-length'), 10)
-    if (Number.isFinite(declared) && declared > maxBytes) {
-        throw new Error('file too large')
-    }
-    const body = response.body
-    if (!body || typeof body.getReader !== 'function') {
-        // No stream (a mocked or already-buffered response): the cap is still a cap.
-        const buffer = Buffer.from(await response.arrayBuffer())
-        if (buffer.length > maxBytes) {
+const readProjectFileBytes = async (url, headers, maxBytes, jobSignal) =>
+    // The whole read runs as the consume step, INSIDE fetchWithLimit's armed
+    // window: the byte-counting loop below is exactly the kind of body read
+    // that used to run with the timer already cancelled. The jobSignal makes a
+    // user cancel stop an in-flight image download instead of only being
+    // noticed after it.
+    fetchWithLimit(url, { headers }, AUX_FETCH_TIMEOUT_MS, jobSignal, async response => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`)
+        }
+        const declared = Number.parseInt(response.headers && response.headers.get('content-length'), 10)
+        if (Number.isFinite(declared) && declared > maxBytes) {
             throw new Error('file too large')
         }
-        return buffer
-    }
-    const reader = body.getReader()
-    const chunks = []
-    let read = 0
-    let tooLarge = false
-    try {
-        for (;;) {
-            const { done, value } = await reader.read()
-            if (done) {
-                break
+        const body = response.body
+        if (!body || typeof body.getReader !== 'function') {
+            // No stream (a mocked or already-buffered response): the cap is still a cap.
+            const buffer = Buffer.from(await response.arrayBuffer())
+            if (buffer.length > maxBytes) {
+                throw new Error('file too large')
             }
-            read += value.byteLength || value.length || 0
-            if (read > maxBytes) {
-                tooLarge = true
-                break
-            }
-            chunks.push(Buffer.from(value))
+            return buffer
         }
-    } finally {
+        const reader = body.getReader()
+        const chunks = []
+        let read = 0
+        let tooLarge = false
         try {
-            await reader.cancel()
-        } catch (err) {
-            // The body may already be closed; nothing to do about it.
+            for (;;) {
+                const { done, value } = await reader.read()
+                if (done) {
+                    break
+                }
+                read += value.byteLength || value.length || 0
+                if (read > maxBytes) {
+                    tooLarge = true
+                    break
+                }
+                chunks.push(Buffer.from(value))
+            }
+        } finally {
+            try {
+                await reader.cancel()
+            } catch (err) {
+                // The body may already be closed; nothing to do about it.
+            }
         }
-    }
-    if (tooLarge) {
-        throw new Error('file too large')
-    }
-    return Buffer.concat(chunks)
-}
+        if (tooLarge) {
+            throw new Error('file too large')
+        }
+        return Buffer.concat(chunks)
+    })
 
 // overleaf-lab: the ladder of ways to read a project file's content. Overleaf stores
 // file content in the filestore service on older releases and in the history blob
@@ -4192,7 +4221,7 @@ const readProjectFileBytes = async (url, headers, maxBytes) => {
 // filestore HTTP path below works anyway; keeping a third, never-exercised code
 // path in a vendored module is cost without coverage.
 // Returns { strategies, filestoreUrl, historyUrl }; strategies read Buffers.
-async function buildFileReadStrategies(projectId, maxBytes) {
+async function buildFileReadStrategies(projectId, maxBytes, jobSignal) {
     const strategies = []
 
     const filestoreUrl =
@@ -4203,7 +4232,7 @@ async function buildFileReadStrategies(projectId, maxBytes) {
         strategies.push({
             name: 'filestore service',
             url: fileUrl,
-            read: ref => readProjectFileBytes(fileUrl(ref), undefined, maxBytes),
+            read: ref => readProjectFileBytes(fileUrl(ref), undefined, maxBytes, jobSignal),
         })
     }
 
@@ -4246,7 +4275,7 @@ async function buildFileReadStrategies(projectId, maxBytes) {
                     if (!ref.hash) {
                         throw new Error('file has no history hash')
                     }
-                    return readProjectFileBytes(blobUrl(ref), headers, maxBytes)
+                    return readProjectFileBytes(blobUrl(ref), headers, maxBytes, jobSignal)
                 },
             })
         }
@@ -4394,7 +4423,7 @@ const normalizeGraphicsPath = p =>
         .replace(/^\/+/, '')
         .toLowerCase()
 
-async function measureProjectFigures(projectId, strippedDocs) {
+async function measureProjectFigures(projectId, strippedDocs, jobSignal) {
     try {
         const { figures } = findIncludeGraphics(strippedDocs)
         if (!figures.length) {
@@ -4479,7 +4508,7 @@ async function measureProjectFigures(projectId, strippedDocs) {
 
         const measured = new Map()
         if (wanted.size > 0) {
-            const { strategies } = await buildFileReadStrategies(projectId, MAX_IMAGE_BYTES)
+            const { strategies } = await buildFileReadStrategies(projectId, MAX_IMAGE_BYTES, jobSignal)
             const started = Date.now()
             let fetched = 0
             let totalBytes = 0
@@ -5126,7 +5155,11 @@ async function runReviewPasses(job) {
     }
     // overleaf-lab: the raster figures, measured. Async (the bytes live in the file
     // store), bounded by its own budgets, and never fatal: a null block adds no lines.
-    const imageMetrics = await measureProjectFigures(projectId, strippedDocs)
+    const imageMetrics = await measureProjectFigures(
+        projectId,
+        strippedDocs,
+        job.controller ? job.controller.signal : undefined
+    )
     // overleaf-lab: the scan hints are PROMPT MATERIAL and nothing else - they are the
     // facts a pass is shown so it does not have to count things itself, and no line of
     // them reaches the report. With no pass to show them to they are pure cost (a
@@ -5324,16 +5357,19 @@ async function runReviewPasses(job) {
             if (typeof llmApiKey === 'string' && llmApiKey.length > 0) {
                 modelsHeaders.Authorization = `Bearer ${llmApiKey}`
             }
-            const modelsResponse = await fetchWithLimit(
+            const modelsOutcome = await fetchWithLimit(
                 `${llmApiUrl}/models`,
                 { method: 'GET', headers: modelsHeaders },
                 AUX_FETCH_TIMEOUT_MS,
-                job.controller ? job.controller.signal : undefined
+                job.controller ? job.controller.signal : undefined,
+                async response =>
+                    response.ok
+                        ? { ok: true, data: await response.json() }
+                        : { ok: false, status: response.status }
             )
-            if (modelsResponse.ok) {
-                const modelsData = await modelsResponse.json()
-                const ids = Array.isArray(modelsData?.data)
-                    ? modelsData.data.map(entry => String(entry.id))
+            if (modelsOutcome.ok) {
+                const ids = Array.isArray(modelsOutcome.data?.data)
+                    ? modelsOutcome.data.data.map(entry => String(entry.id))
                     : []
                 if (!ids.includes(reviewModel)) {
                     return {
@@ -5344,7 +5380,7 @@ async function runReviewPasses(job) {
                 }
             } else {
                 logger.warn(
-                    { projectId, status: modelsResponse.status },
+                    { projectId, status: modelsOutcome.status },
                     '[LLM] compliance: /models check returned non-ok, continuing'
                 )
             }
@@ -5446,10 +5482,14 @@ async function runReviewPasses(job) {
                 }),
             },
             JSON_PROBE_TIMEOUT_MS,
-            job.controller ? job.controller.signal : undefined
+            job.controller ? job.controller.signal : undefined,
+            async response =>
+                response.ok
+                    ? { ok: true, data: await response.json() }
+                    : { ok: false, status: response.status }
         )
         if (probeResponse && probeResponse.ok) {
-            const probeData = await probeResponse.json()
+            const probeData = probeResponse.data
             const probeContent = stripThinkTags(probeData?.choices?.[0]?.message?.content || '')
             let probed = null
             try {
@@ -5578,7 +5618,7 @@ async function runReviewPasses(job) {
     } else if (!fast && !job.confirmed && expectedDocument) {
         let verdict = null
         try {
-            const response = await fetchWithLimit(
+            const data = await fetchWithLimit(
                 `${llmApiUrl}/chat/completions`,
                 {
                     method: 'POST',
@@ -5637,10 +5677,10 @@ async function runReviewPasses(job) {
                     }),
                 },
                 AUX_FETCH_TIMEOUT_MS,
-                job.controller ? job.controller.signal : undefined
+                job.controller ? job.controller.signal : undefined,
+                response => (response.ok ? response.json() : null)
             )
-            if (response.ok) {
-                const data = await response.json()
+            if (data) {
                 verdict = extractJson(stripThinkTags(data?.choices?.[0]?.message?.content || ''))
             }
         } catch (err) {
@@ -6689,8 +6729,13 @@ async function runReviewPasses(job) {
 
                 // Any other refusal: record THIS requirement as unverifiable and move
                 // on, so one bad pass no longer kills the other N-1.
+                // `requirement`, the full text, NOT job.currentRequirement: that one
+                // is display-truncated to 160 chars, and an item keyed by it never
+                // matches the same requirement's full-text key in the store, so the
+                // delta silently dropped the requirement from the comparison and
+                // reported "no verdict changed" over a run that measured one less.
                 allItems.push({
-                    requirement: job.currentRequirement,
+                    requirement,
                     status: 'na',
                     evidence: L(
                         `The check could not run (HTTP ${response.status}${
@@ -6769,7 +6814,9 @@ async function runReviewPasses(job) {
                     '[LLM] compliance: pass answer unusable twice, marking na'
                 )
                 allItems.push({
-                    requirement: job.currentRequirement,
+                    // Full text, not the truncated display string: see the refusal
+                    // item above for what the truncation did to the delta.
+                    requirement,
                     status: 'na',
                     evidence: L(
                         'The check produced an unusable answer twice (likely the analysis exceeded the per-pass token budget)',
@@ -6855,7 +6902,9 @@ async function runReviewPasses(job) {
             }
             logger.warn({ projectId, pass: i, err }, '[LLM] compliance: pass failed')
             allItems.push({
-                requirement: job.currentRequirement,
+                // Full text, not the truncated display string: see the refusal item
+                // above for what the truncation did to the delta.
+                requirement,
                 status: 'na',
                 evidence: L(
                     `The check failed (${err.message})`,
@@ -7086,7 +7135,7 @@ async function runReviewPasses(job) {
                                 // exactly the scoped findings that carry it, the
                                 // report's group-by-file view lost precisely the
                                 // findings the review had worked hardest on: they
-                                // came out under "Everywhere and nowhere".
+                                // came out under "Whole document".
                                 sourceFiles: finding.sourceFiles,
                                 status: resolved.status,
                                 evidence: clip(
@@ -7256,7 +7305,7 @@ async function runReviewPasses(job) {
         }
         // `null` in fast mode, which is the same shape the failure paths already
         // produce: the summary stays empty and the report draws no summary block.
-        const response = fast
+        const data = fast
             ? null
             : await fetchWithLimit(
                   `${llmApiUrl}/chat/completions`,
@@ -7266,10 +7315,10 @@ async function runReviewPasses(job) {
                       body: JSON.stringify(summaryBody),
                   },
                   passTimeoutMs(),
-                  job.controller ? job.controller.signal : undefined
+                  job.controller ? job.controller.signal : undefined,
+                  response => (response.ok ? response.json() : null)
               )
-        if (response && response.ok) {
-            const data = await response.json()
+        if (data) {
             const content = stripThinkTags(data?.choices?.[0]?.message?.content || '')
             summary = repairJsonEscapeArtifacts(extractJson(content).summary || '')
         }
@@ -7502,6 +7551,19 @@ function poolIsConfigured() {
 // meet, so the legacy fallback cannot drift: an install with no reviewEndpoints gets
 // one entry whose url and model are null, and null is what tells the review to
 // resolve them the old way.
+// A tiny stable digest of an endpoint URL (djb2, hex). Not cryptographic and not
+// meant to be: it only has to be deterministic across restarts and distinct for
+// distinct URLs of one pool, which at most holds MAX_REVIEW_ENDPOINTS entries;
+// the `seen` loop below still catches a collision.
+function hashEndpointUrl(url) {
+    let hash = 5381
+    const text = String(url || '')
+    for (let i = 0; i < text.length; i += 1) {
+        hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0
+    }
+    return hash.toString(16)
+}
+
 function resolveReviewEndpoints(admin) {
     const declared = Array.isArray(admin && admin.reviewEndpoints) ? admin.reviewEndpoints : []
     const usable = declared
@@ -7517,7 +7579,12 @@ function resolveReviewEndpoints(admin) {
     usable.forEach((entry, index) => {
         // The id keys the busy map, the outage map and the archived result, so it has
         // to exist and be unique even when the settings file was written by hand.
-        let id = String(entry.id || '').trim() || `endpoint-${index + 1}`
+        // Derived from the URL, not from the index: a hand-written settings file
+        // carries no ids, and positional ones change meaning when the entries are
+        // reordered while a review runs, at which point the busy map can block the
+        // wrong machine and the dispatcher can double-book the busy one. The URL is
+        // what the id actually stands for, so reordering leaves every id alone.
+        let id = String(entry.id || '').trim() || `endpoint-${hashEndpointUrl(entry.url)}`
         while (seen.has(id)) {
             id = `${id}-${index + 1}`
         }
@@ -8088,6 +8155,30 @@ async function startReview(req, res) {
             }
             liveForUser += 1
             if (existing.projectId === projectId) {
+                // Joining is only honest when the live job IS what was asked for.
+                // Reusing across mode or rubric answered a "full review" click
+                // with the jobId of a running fast one: ok:true, the full review
+                // never ran, and nothing said so. A mismatch is told out loud
+                // instead, with what to do about it.
+                // Normalized as everywhere else: a resumed pre-mode job has no
+                // mode field and has always meant 'full'.
+                const liveMode = existing.mode === 'fast' ? 'fast' : 'full'
+                const askedMode = mode === 'fast' ? 'fast' : 'full'
+                if (liveMode !== askedMode || existing.rubricId !== rubricId) {
+                    logger.info(
+                        { projectId, jobId: existing.id, liveMode: existing.mode, asked: mode },
+                        '[LLM] compliance: live review differs in mode or rubric, refusing to join'
+                    )
+                    return {
+                        ok: false,
+                        error: 'different_review_running',
+                        message: inLanguage(
+                            rubricLang,
+                            'A review of this project with a different mode or rubric is already queued or running. Wait for it to finish, or cancel it, then start this one.',
+                            'Una review di questo progetto con modalità o rubrica diversa è già in coda o in corso. Aspettare che finisca, o annullarla, e poi avviare questa.'
+                        ),
+                    }
+                }
                 logger.debug(
                     { projectId, jobId: existing.id },
                     '[LLM] compliance: review already in progress, reusing it'
@@ -8123,6 +8214,16 @@ async function startReview(req, res) {
         return null
     }
 
+    // One start at a time per (user, project): later arrivals wait for the one in
+    // flight to register its job, then join it through the admission check like
+    // any reload would. See startsInFlight for the amplification this closes.
+    const startKey = `${userId}:${projectId}`
+    while (startsInFlight.has(startKey)) {
+        await startsInFlight.get(startKey).catch(() => {})
+    }
+    let releaseStart
+    startsInFlight.set(startKey, new Promise(resolve => { releaseStart = resolve }))
+    try {
     const metered = admissionCheck()
     if (metered) {
         return res.json(metered)
@@ -8254,6 +8355,10 @@ async function startReview(req, res) {
         status: job.status,
         position: jobsAhead(job.id),
     })
+    } finally {
+        startsInFlight.delete(startKey)
+        releaseStart()
+    }
 }
 
 // overleaf-lab: the status payload for one job, shared by the by-id and the

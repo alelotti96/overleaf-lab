@@ -778,9 +778,13 @@ function LLMCompliancePane() {
             na: 2,
             ok: 3,
         }
+        // Three buckets, mirroring the downloaded report: an n.a. is not a thing
+        // to fix, and a fast review's unchecked requirements listed among the
+        // problems read as eighteen findings the student cannot act on.
         const problems = result.items
-            .filter(item => item.status !== 'ok')
+            .filter(item => item.status === 'missing' || item.status === 'partial')
             .sort((a, b) => SEVERITY[a.status] - SEVERITY[b.status])
+        const notChecked = result.items.filter(item => item.status === 'na')
         const passed = result.items.filter(item => item.status === 'ok')
 
         // overleaf-lab: the measured-fact blocks, ONE LINE EACH. The full tables belong
@@ -878,6 +882,14 @@ function LLMCompliancePane() {
                     flexDirection: 'column',
                     minHeight: 0,
                     flex: 1,
+                    // ONE scroll context for the whole report. When only the findings
+                    // list scrolled, everything above it (tally, delta, the measured
+                    // facts and their folds) was FIXED: on a laptop the findings
+                    // started below the middle of the column, and unfolding the AI
+                    // passages grew the fixed part until the findings had no height
+                    // left and the fold itself had nowhere to scroll.
+                    overflowY: 'auto',
+                    overflowX: 'hidden',
                 }}
             >
                 {/* overleaf-lab: download the report as Markdown */}
@@ -1157,16 +1169,9 @@ function LLMCompliancePane() {
 
                 {/* overleaf-lab: problems first, successes folded away. In rubric
                     order the few real findings are buried among twenty "ok" lines,
-                    and the report is read to find what to fix. */}
-                <div
-                    style={{
-                        marginTop: 8,
-                        overflowY: 'auto',
-                        overflowX: 'hidden',
-                        minHeight: 0,
-                        flex: 1,
-                    }}
-                >
+                    and the report is read to find what to fix. The scrolling lives
+                    on the container above: this block is just content. */}
+                <div style={{ marginTop: 8 }}>
                     {problems.map((item, idx) => (
                         <ComplianceReportItem
                             key={`p${idx}`}
@@ -1176,11 +1181,41 @@ function LLMCompliancePane() {
                     ))}
                     {problems.length === 0 && (
                         <div style={{ color: MUTED, padding: '8px 0' }}>
-                            {t(
-                                'review_no_problems',
-                                'No problems found: every requirement was met.'
-                            )}
+                            {notChecked.length > 0
+                                ? t(
+                                      'review_no_problems_partial',
+                                      'No problems found among the checked requirements.'
+                                  )
+                                : t(
+                                      'review_no_problems',
+                                      'No problems found: every requirement was met.'
+                                  )}
                         </div>
+                    )}
+                    {notChecked.length > 0 && (
+                        <details style={{ marginTop: 8 }}>
+                            <summary
+                                style={{
+                                    cursor: 'pointer',
+                                    color: MUTED,
+                                    fontSize: '0.9em',
+                                    padding: '6px 0',
+                                }}
+                            >
+                                {notChecked.length}{' '}
+                                {t(
+                                    'review_not_checked',
+                                    'requirements without a verdict'
+                                )}
+                            </summary>
+                            {notChecked.map((item, idx) => (
+                                <ComplianceReportItem
+                                    key={`n${idx}`}
+                                    item={item}
+                                    gotoSource={gotoSource}
+                                />
+                            ))}
+                        </details>
                     )}
                     {passed.length > 0 && (
                         <details style={{ marginTop: 8 }}>

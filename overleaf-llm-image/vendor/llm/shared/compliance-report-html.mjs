@@ -116,6 +116,10 @@ const CHROME_EN = {
     "Tick a finding once you have fixed it. The ticks are remembered by this browser, for this report only, and are never sent anywhere.",
   status: { ok: "OK", partial: "Partial", missing: "Missing", na: "N/A" },
   chip: { ok: "ok", partial: "partial", missing: "missing", na: "n/a" },
+  notCheckedSection: n =>
+    `${n} ${n === 1 ? "requirement" : "requirements"} without a verdict`,
+  notCheckedNote:
+    "Nothing here is a finding: these requirements simply have no verdict, and each row says why.",
   readingsAgree: (agreeing, total) => `${agreeing} of ${total} readings agree`,
   thingsToFix: (n, places) =>
     `${n} ${n === 1 ? "thing" : "things"} to fix, in ${places} ${places === 1 ? "place" : "places"}`,
@@ -125,7 +129,7 @@ const CHROME_EN = {
   requirementsMet: n =>
     `${n} ${n === 1 ? "requirement" : "requirements"} met, nothing to do`,
   filesRead: n => `${n} ${n === 1 ? "file read" : "files read"}`,
-  everywhere: "Everywhere and nowhere",
+  everywhere: "Whole document",
   everywhereNote:
     "These come from checks that look at the whole document, so there is no single line to go to.",
   notReviewed: "Not reviewed:",
@@ -244,6 +248,10 @@ const CHROME_IT = {
     "Spunta un rilievo quando lo hai corretto. Le spunte le ricorda questo browser, solo per questo report, e non vengono inviate da nessuna parte.",
   status: { ok: "OK", partial: "Parziale", missing: "Mancante", na: "N/D" },
   chip: { ok: "ok", partial: "parziale", missing: "mancante", na: "n/d" },
+  notCheckedSection: n =>
+    `${n} ${n === 1 ? "requisito senza verdetto" : "requisiti senza verdetto"}`,
+  notCheckedNote:
+    "Qui non c'è nulla da correggere: questi requisiti semplicemente non hanno un verdetto, e ogni riga dice perché.",
   readingsAgree: (agreeing, total) => `${agreeing} letture su ${total} concordi`,
   thingsToFix: (n, places) =>
     `${n} ${n === 1 ? "cosa" : "cose"} da correggere, in ${places} ${places === 1 ? "punto" : "punti"}`,
@@ -253,7 +261,7 @@ const CHROME_IT = {
   requirementsMet: n =>
     `${n} ${n === 1 ? "requisito soddisfatto" : "requisiti soddisfatti"}, niente da fare`,
   filesRead: n => `${n} ${n === 1 ? "file letto" : "file letti"}`,
-  everywhere: "Ovunque e da nessuna parte",
+  everywhere: "Documento intero",
   everywhereNote:
     "Vengono da controlli che leggono l'intero documento, quindi non c'è una riga sola a cui andare.",
   notReviewed: "Non esaminati:",
@@ -838,8 +846,17 @@ function buildReportHtml(result) {
       item.requirement
     )}">${escapeHtml(shortRequirement(item.requirement))}</span>${warningHtml}${fixbox}</div>${evidence}${sources}${locations}${suggestion}</div></div>`;
   };
-  const problems = result.items.filter((item) => item.status !== "ok").sort((a, b) => severity[a.status] - severity[b.status]);
+  // overleaf-lab: THREE buckets, not two. An n.a. is not a thing to fix: putting
+  // the unchecked requirements of a fast review among the findings gave the
+  // "Whole document" block eighteen "things to fix" a student could not fix, and
+  // drew the mark-as-fixed tick next to rows that say "not checked". They get
+  // their own section, with no tick and no place in the to-fix counts.
+  const problems = result.items.filter((item) => item.status === "missing" || item.status === "partial").sort((a, b) => severity[a.status] - severity[b.status]);
+  const notChecked = result.items.filter((item) => item.status === "na");
   const passed = result.items.filter((item) => item.status === "ok");
+  const notCheckedHtml = notChecked.length ? `<details class="notchecked"><summary>${escapeHtml(T.notCheckedSection(notChecked.length))}</summary><p class="meta">${escapeHtml(T.notCheckedNote)}</p>
+${notChecked.map((item) => renderItem(item)).join("\n")}
+</details>` : "";
   const itemsHtml = passed.length ? `<details><summary>${escapeHtml(T.requirementsMet(passed.length))}</summary>
 ${passed.map((item) => renderItem(item)).join("\n")}
 </details>` : "";
@@ -887,7 +904,7 @@ ${passed.map((item) => renderItem(item)).join("\n")}
     T.everywhereNote,
     loose.map((item) => ({ line: 0, item })),
     "file-loose"
-  ) : ""}` : `<p class="meta">${escapeHtml(T.nothingToFixNote)}</p>`;
+  ) : ""}` : notChecked.length ? "" : `<p class="meta">${escapeHtml(T.nothingToFixNote)}</p>`;
   // overleaf-lab: a model line only when a model was involved. A fast review records
   // no model (see the controller), and "Model: null" over a page produced by parsers
   // would be both ugly and false; the banner below says what produced this report.
@@ -1317,6 +1334,7 @@ ${passed.map((item) => renderItem(item)).join("\n")}
   ${indexHtml}
   ${guideHtml}` : `<h2>${escapeHtml(T.nothingToFix)}</h2>`}
   ${byFileHtml}
+  ${notCheckedHtml}
   ${itemsHtml}
   ${filesHtml}
   ${bibVerifyHtml}

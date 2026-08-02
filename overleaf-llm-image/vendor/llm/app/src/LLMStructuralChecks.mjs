@@ -1707,6 +1707,11 @@ export const CHECKS = {
         describe: 'the first appearance of an acronym in the text spells it out',
         run(docs) {
             const declared = collectDeclaredAcronyms(docs)
+            // The per-acronym scan below is capped (see MAX_ACRONYMS_SCANNED); the
+            // undeclared scan further down is one pass whatever the list size and
+            // keeps the FULL map, or a capped-out declaration would be re-accused
+            // of being undeclared.
+            const { entries: scanned, capped, total: declaredTotal } = cappedAcronyms(declared)
             const bad = []
             let checked = 0
             // A declaration is not a use, so the declarations are blanked out. Blanked,
@@ -1748,7 +1753,7 @@ export const CHECKS = {
                 if (!titleSpans.has(doc)) titleSpans.set(doc, headingTitleSpans(doc.text))
                 return titleSpans.get(doc)
             }
-            for (const [short, entry] of declared) {
+            for (const [short, entry] of scanned) {
                 const long = entry.long
                 let first = null
                 // \ac and \acf expand on first use by themselves, so they are correct
@@ -1834,7 +1839,7 @@ export const CHECKS = {
                     L(
                         `All ${checked} acronyms used in the text are spelled out at first use.`,
                         `Tutti i ${checked} acronimi usati nel testo sono scritti per esteso alla prima occorrenza.`
-                    )
+                    ) + acronymCapNote(capped, declaredTotal)
                 )
             return result(
                 'missing',
@@ -1843,7 +1848,7 @@ export const CHECKS = {
                     `${bad.length} acronimi su ${checked} non sono scritti per esteso alla prima occorrenza: ${listing(
                         bad
                     )}`
-                ),
+                ) + acronymCapNote(capped, declaredTotal),
                 bad
             )
         },
@@ -3250,6 +3255,38 @@ CHECKS['no-wikipedia'] = {
     },
 }
 
+// overleaf-lab: how many declared acronyms one review will scan for. The two
+// scans that need this (first-use and declared-unused) cost one pass over the
+// WHOLE project per acronym, so their total is the product of two quantities the
+// author controls: a pasted mega-list of declarations times a large document is
+// an event-loop freeze measured in hours, reachable from the fast review, which
+// runs on the web process with no queue in front of it. Five hundred is ten
+// times the largest hand-written list this repo has seen; past the cap the
+// evidence SAYS the scan was partial instead of quietly pretending it was not.
+const MAX_ACRONYMS_SCANNED = 500
+
+function cappedAcronyms(declared) {
+    const entries = [...declared]
+    if (entries.length <= MAX_ACRONYMS_SCANNED) {
+        return { entries, capped: false, total: entries.length }
+    }
+    return {
+        entries: entries.slice(0, MAX_ACRONYMS_SCANNED),
+        capped: true,
+        total: entries.length,
+    }
+}
+
+// The sentence that admits a partial scan, appended to whichever verdict the
+// capped scan produced. One string builder, two checks, no drift.
+function acronymCapNote(capped, total) {
+    if (!capped) return ''
+    return L(
+        ` Only the first ${MAX_ACRONYMS_SCANNED} of ${total} declared acronyms were scanned.`,
+        ` Sono stati esaminati solo i primi ${MAX_ACRONYMS_SCANNED} acronimi dichiarati su ${total}.`
+    )
+}
+
 CHECKS['acronyms-declared-unused'] = {
     describe: 'the acronym list carries no entry the text never uses',
     run(docs) {
@@ -3269,10 +3306,13 @@ CHECKS['acronyms-declared-unused'] = {
             )
             .join('\n')
         const unused = []
+        // The same per-acronym product as acronym-first-use, the same cap, and the
+        // same admission in the evidence when it bites.
+        const { entries: scanned, capped, total: declaredTotal } = cappedAcronyms(declared)
         // A glossaries project writes \gls{adcs}, the KEY, and never the letters ADCS.
         // Looking only for \ac{ADCS} or the letters reported every one of its acronyms
         // as declared and never used, on a document that uses them on every page.
-        for (const [short, entry] of declared) {
+        for (const [short, entry] of scanned) {
             const used = new RegExp(acronymUseSource(short, entry), 'u')
             if (!used.test(body)) unused.push({ path: '', line: 0, what: short })
         }
@@ -3280,18 +3320,18 @@ CHECKS['acronyms-declared-unused'] = {
             return result(
                 'ok',
                 L(
-                    `All ${declared.size} declared acronyms are used in the text.`,
-                    `Tutti i ${declared.size} acronimi dichiarati sono usati nel testo.`
-                )
+                    `All ${scanned.length} declared acronyms are used in the text.`,
+                    `Tutti i ${scanned.length} acronimi dichiarati sono usati nel testo.`
+                ) + acronymCapNote(capped, declaredTotal)
             )
         return result(
             'missing',
             L(
-                `${unused.length} of ${declared.size} declared acronyms never appear in the text: ` +
+                `${unused.length} of ${scanned.length} declared acronyms never appear in the text: ` +
                     unused.map(u => u.what).join(', '),
-                `${unused.length} acronimi dichiarati su ${declared.size} non compaiono mai nel testo: ` +
+                `${unused.length} acronimi dichiarati su ${scanned.length} non compaiono mai nel testo: ` +
                     unused.map(u => u.what).join(', ')
-            ),
+            ) + acronymCapNote(capped, declaredTotal),
             []
         )
     },

@@ -1979,5 +1979,109 @@ check(
     )
 }
 
+// ---------------------------------------------------------------------------
+// 27. The acronym environment of the acronym package
+// ---------------------------------------------------------------------------
+// The third container shape: rows are \acro{SHORT}{Long form} commands. The
+// fixture is the exact layout of a real thesis frontmatter (column alignment by
+// runs of spaces, one row aligned with a TAB, the [WYSIWYM] width sample).
+
+{
+    const acroFile = [
+        '\\addcontentsline{toc}{chapter}{Elenco degli acronimi}',
+        '\\pagestyle{plain}',
+        '\\chapter*{Elenco degli acronimi}',
+        '\\begin{acronym}[WYSIWYM]',
+        '    \\acro{IOS}          {In-Orbit Servicing}',
+        '    \\acro{MLA} \t        {Micro Lens Array}',
+        '    \\acro{FOV}          {Field Of View}',
+        '\\end{acronym}',
+        '',
+    ].join('\n')
+    const docs = [
+        {
+            path: '/main.tex',
+            id: 'm',
+            text: '\\documentclass{book}\n\\begin{document}\n\\input{Frontmatter/acronimi}\n\\input{ch1}\n\\end{document}\n',
+        },
+        { path: '/Frontmatter/acronimi.tex', id: 'a', text: acroFile },
+        {
+            path: '/ch1.tex',
+            id: 'c',
+            text: '\\chapter{Uno}\nIl GNSS guida il rendezvous. Il GNSS di nuovo. La IOS resta, FOV e MLA sono noti.\n',
+        },
+    ]
+    const merged = runMerge(docs, 'acronyms')
+    check('acroenv/the environment is a container', Boolean(merged.found && merged.found.container))
+    check('acroenv/and it knows which kind it is', merged.found.container.isAcroEnv === true)
+    check('acroenv/all three rows are read, the tab-aligned one too', merged.found.rows.length === 3,
+        `rows=${merged.found.rows.length}`)
+    check('acroenv/the keys are the short forms', merged.found.rows[1].keys.includes('MLA'))
+    check('acroenv/a used undeclared acronym is added as an \\acro row',
+        /\\acro\{GNSS\}/.test(merged.applied.text), merged.applied.text)
+    check('acroenv/the new row copies the column spacing of the template',
+        /\\acro\{GNSS\}\s{2,}\{/.test(merged.applied.text))
+    check('acroenv/existing rows survive byte for byte',
+        merged.applied.text.includes('    \\acro{MLA} \t        {Micro Lens Array}'))
+    check('acroenv/nothing already listed is added again',
+        (merged.applied.text.match(/\\acro\{IOS\}/g) || []).length === 1)
+    check('acroenv/the width sample stays on the begin line',
+        merged.applied.text.includes('\\begin{acronym}[WYSIWYM]'))
+    // Idempotence: a second press on the merged text adds nothing.
+    const again = runMerge(withText(docs, '/Frontmatter/acronimi.tex', merged.applied.text), 'acronyms')
+    check('acroenv/a second press is a no-op', again.applied.inserted === 0,
+        `inserted=${again.applied.inserted}`)
+
+    // An EMPTY environment: the invented row is plain \acro{KEY}{VALUE}, spliced
+    // after the width sample and before \end, with the default indent.
+    const empty = withText(
+        docs,
+        '/Frontmatter/acronimi.tex',
+        '\\chapter*{Elenco degli acronimi}\n\\begin{acronym}[WYSIWYM]\n\\end{acronym}\n'
+    )
+    const filled = runMerge(empty, 'acronyms')
+    check('acroenv/an empty environment gets a plain invented row',
+        /\n    \\acro\{GNSS\}\{[^{}]+\}\n/.test(filled.applied.text), filled.applied.text)
+    check('acroenv/and the invented row is inside the environment',
+        filled.applied.text.indexOf('\\acro{GNSS}') < filled.applied.text.indexOf('\\end{acronym}'))
+
+    // A template row with a [custom short] argument: the new row must not
+    // inherit somebody else's custom form.
+    const custom = withText(
+        docs,
+        '/Frontmatter/acronimi.tex',
+        '\\chapter*{Elenco degli acronimi}\n\\begin{acronym}\n    \\acro{FOV}[f.o.v.]{Field Of View}\n\\end{acronym}\n'
+    )
+    const customMerged = runMerge(custom, 'acronyms')
+    check('acroenv/a custom short argument is read as a row', customMerged.found.rows.length === 1)
+    check('acroenv/but never copied onto a new row',
+        /\\acro\{GNSS\}\{/.test(customMerged.applied.text) &&
+            !/\\acro\{GNSS\}\[/.test(customMerged.applied.text),
+        customMerged.applied.text)
+
+    // \acrodef declares exactly like \acro: a list written with it is read, not
+    // re-populated under the other spelling.
+    const acrodef = withText(
+        docs,
+        '/Frontmatter/acronimi.tex',
+        '\\chapter*{Elenco degli acronimi}\n\\begin{acronym}\n    \\acrodef{GNSS}{Global Navigation Satellite System}\n\\end{acronym}\n'
+    )
+    const defMerged = runMerge(acrodef, 'acronyms')
+    check('acroenv/an \\acrodef row is a row',
+        (defMerged.applied.text.match(/GNSS/g) || []).length ===
+            (acrodef.find(d => d.path === '/Frontmatter/acronimi.tex').text.match(/GNSS/g) || []).length)
+
+    // A row this parser cannot read (a nested brace in the long form) is an entry
+    // that exists: the merge refuses rather than risk writing next to it.
+    const nested = withText(
+        docs,
+        '/Frontmatter/acronimi.tex',
+        '\\chapter*{Elenco degli acronimi}\n\\begin{acronym}\n    \\acro{ERR}{Effective {Resolution} Ratio}\n    \\acro{FOV}{Field Of View}\n\\end{acronym}\n'
+    )
+    const refused = runMerge(nested, 'acronyms')
+    check('acroenv/an unreadable row makes the merge refuse', refused.applied.unsupported === true,
+        JSON.stringify({ inserted: refused.applied.inserted }))
+}
+
 console.log(ok ? '\nALL PASS' : '\nSOME FAILED')
 process.exit(ok ? 0 : 1)
