@@ -1033,6 +1033,14 @@ check('no decimal number is na', status('decimal-separator', 'testo senza numeri
     check('a time of day after an hour word is not a decimal', time.status === 'ok', time.evidence)
     const mass = run('decimal-separator', 'una massa di 19,34 kg contro un valore di 1.5 e 2.75')
     check('the same digits as a measurement still count', mass.status === 'missing', mass.evidence)
+    // REGRESSION (measured on a real published thesis): "Tray 3,4 and 6" is an
+    // enumeration of tray numbers, and its "3,4" was reported as the document's
+    // one comma-decimal. The guard is shape-gated on the BARE trailing integer:
+    // "tra 2,5 e 3 mm" carries a unit after the pair and keeps counting.
+    const trays = run('decimal-separator', 'it is applied for Tray 3,4 and 6 while the gap is 1.5 and then 2.75')
+    check('an enumeration before a bare integer is not a decimal', trays.status === 'ok', trays.evidence)
+    const range = run('decimal-separator', 'uno spessore tra 2,5 e 3 mm contro un valore di 1.5 e 2.75')
+    check('a range whose trailing number carries a unit still counts', range.status === 'missing', range.evidence)
 }
 {
     // REGRESSION: the comma of a mathematical interval is not a decimal comma. Four of
@@ -1178,6 +1186,18 @@ check('a spaced thin space is ok', status('unit-spacing', R`pari a $23 \cdot 0.0
     check('a comma before a multi-letter unit fires without a decimal', status('unit-spacing', 'ogni ruota possiede una massa di 12, kg in tutto') === 'missing')
     check('a comma before a single capital still needs more than a capital', status('unit-spacing', 'una spinta di 8.5, N nel vuoto') === 'na')
     check('a year before a comma-unit shape is prose', status('unit-spacing', 'nel 2020, km di fibra sono stati posati') === 'na')
+    // REGRESSION (measured on a real published thesis): "Figura 2.4, l'uso del
+    // VIMS" is a figure reference followed by an elided article, and its "l" was
+    // reported as a comma-separated litre. No unit is ever followed by an
+    // apostrophe; a real litre with the same digits keeps firing.
+    check(
+        'an elided article after a figure reference is not a litre',
+        status('unit-spacing', "Come mostrato in Figura 2.4, l'uso del VIMS consente analisi accurate") === 'na'
+    )
+    check(
+        'the same digits before a real litre still fire',
+        status('unit-spacing', 'un serbatoio contiene fino a 2.4, l di propellente') === 'missing'
+    )
     check('a table reference before a comma is prose too', status('unit-spacing', 'vedi la Tabella 5, in cui i dati sono raccolti') === 'na')
     // lexicon additions, each measured on the fragment corpus: deg (the lens-name
     // collision that kept it out is not in any corpus), the written-out Watt and

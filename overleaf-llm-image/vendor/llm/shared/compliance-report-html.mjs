@@ -393,7 +393,56 @@ function buildNotRunHtml(id, heading, consequence, reason, T) {
 // injected by the caller so that the same location chip, and the same link back into the
 // editor, serve this section and the findings; the default keeps the plain rendering for
 // anyone importing this function on its own.
-function buildAiSignalsHtml(block, chip = null) {
+function buildAiSignalsHtml(block, chip = null, lang = "en") {
+  // The section used to be hardcoded English inside otherwise-Italian reports,
+  // with bare numbers and invisible characters: the system's own designer read
+  // it twice and still asked what it meant, which is all the evidence needed
+  // that a student would not read it at all. Localized, each metric glossed
+  // next to its number, and the offending characters highlighted, because a
+  // curly apostrophe LOOKS exactly like an apostrophe.
+  const it = lang === "it";
+  const S = it ? {
+    title: "Segnali di scrittura AI",
+    caveat: `Questi sono segnali stilistici e residui tecnici che meritano uno sguardo umano. <strong>Non sono la prova</strong> che una parte del documento sia stata generata da una macchina, e i falsi positivi sono comuni, specialmente per chi scrive in una lingua diversa dalla propria. Niente qui è un verdetto e niente conta come rilievo: leggi i passi qui sotto e giudicali tu.`,
+    toolHeading: "Marcatori lasciati da un'interfaccia di chat",
+    toolNote: "Queste stringhe non hanno alcun motivo di esistere in un sorgente LaTeX: sono ciò che una copia da una finestra di chat si porta dietro. A differenza di tutto il resto di questa sezione, vengono riportate anche quando sono poche.",
+    pasteHeading: "Caratteri arrivati da un editor con formattazione",
+    pasteNote: "Virgolette tipografiche e trattini lunghi letterali non sono caratteri che un sorgente LaTeX contiene di solito: arrivano con testo incollato da programmi che formattano mentre si scrive. La causa innocente di gran lunga più comune è avere scritto le bozze in Word o Google Docs, che incurva da solo ogni apostrofo; la finestra di una chat è solo una delle possibilità. I caratteri in questione sono <mark>evidenziati</mark> negli estratti qui sotto. Compilano senza problemi: questo è contesto, non una correzione da fare.",
+    chaptersHeading: "Capitoli che non somigliano al resto del documento",
+    chaptersNote: (n) => `Ogni numero qui sotto è confrontato con la mediana dei ${n} capitoli di questo stesso documento, mai con uno standard esterno, e un capitolo è elencato solo quando se ne discosta abbastanza da spiccare. Il settore, il relatore e la lingua madre spostano questi numeri: per questo il confronto è col documento stesso.`,
+    clustersHeading: "Paragrafi con più frasi fatte insieme",
+    clustersNote: "Elencati quando tre o più frasi DIVERSE della lista compaiono nello stesso paragrafo. Una frase da sola non viene mai elencata: ognuno ha le sue parole preferite, e una tesi è lunga.",
+    legendSummary: "Cosa sono questi segnali",
+    versionNote: (v) => `Calcolato da codice, senza alcun modello linguistico, dalla lista di pattern versione ${v}. La lista è datata di proposito: le abitudini di frase che cerca sono quelle del suo tempo, e un report vecchio va letto come i segnali che si sarebbero guardati allora.`,
+    showingFirst: (shown, total, what) => `Mostrate le prime ${shown} di ${total} ${what}.`,
+    whatRows: "righe", whatChapters: "capitoli", whatParagraphs: "paragrafi",
+    occurrences: (shown, total) => `Mostrate ${shown} occorrenze su ${total} in questo capitolo.`,
+    times: (n) => `${n} volte`,
+    reading: (value, median, below) => `questo capitolo ${value}, ${below ? "sotto" : "sopra"} la mediana del documento (${median})`,
+  } : {
+    title: "AI writing signals",
+    caveat: `These are stylistic signals and left-over artifacts that are worth a human look. They are <strong>not proof</strong> that any part of this document was machine-generated, and false positives are common, especially for authors writing in a language that is not their first. Nothing here is a verdict and nothing here counts as a finding: read the passages below and judge them yourself.`,
+    toolHeading: "Markers left behind by a chat interface",
+    toolNote: "These strings have no reason to exist in a LaTeX source: they are what a copy out of a chat window carries with it. Unlike everything else in this section, they are reported however few they are.",
+    pasteHeading: "Characters that came from a rich-text editor",
+    pasteNote: "Typographic quotes and literal em-dash characters are not what a LaTeX source usually contains: they arrive with text pasted from software that formats as you type. By far the most common innocent cause is drafting the chapters in Word or Google Docs, which curls every apostrophe by itself; a chat window is only one of the possibilities. The characters in question are <mark>highlighted</mark> in the excerpts below. They compile fine, so this is context, not a correction to make.",
+    chaptersHeading: "Chapters that do not read like the rest of this document",
+    chaptersNote: (n) => `Every number below is compared against the median of the ${n} chapters of this same document, never against an outside standard, and a chapter is listed only when it sits far enough from that median to stand out. A field, a supervisor and a first language all move these numbers, which is why the comparison is with the document itself.`,
+    clustersHeading: "Paragraphs carrying several stock phrases at once",
+    clustersNote: "Listed when three or more DIFFERENT phrases from the pattern list appear in the same paragraph. A single phrase is never listed: everyone has favourite words, and a thesis is long.",
+    legendSummary: "What these signals are",
+    versionNote: (v) => `Computed by code, with no language model involved, from pattern list version ${v}. The list is dated on purpose: the phrasing habits it looks for are those of its time, and an older report should be read as the signals somebody would have looked at then.`,
+    showingFirst: (shown, total, what) => `Showing the first ${shown} of ${total} ${what}.`,
+    whatRows: "rows", whatChapters: "chapters", whatParagraphs: "paragraphs",
+    occurrences: (shown, total) => `Showing ${shown} of ${total} occurrences in this chapter.`,
+    times: (n) => `${n} times`,
+    reading: (value, median, below) => `this chapter ${value}, ${below ? "lower" : "higher"} than the document median of ${median}`,
+  };
+  // The characters worth pointing at, built from escapes: this repo bans the
+  // literal em-dash in its own files. Marked AFTER escapeHtml, which leaves
+  // non-ASCII alone.
+  const ARTIFACT_CHARS = new RegExp(`[${String.fromCharCode(0x2018, 0x2019, 0x201c, 0x201d, 0x2014)}]`, "g");
+  const markPaste = (escaped) => escaped.replace(ARTIFACT_CHARS, (c) => `<mark>${c}</mark>`);
   const where = chip || ((row) => {
     const file = escapeHtml(String(row?.file || ""));
     const line = typeof row?.line === "number" && row.line > 0 ? `:${row.line}` : "";
@@ -420,49 +469,53 @@ function buildAiSignalsHtml(block, chip = null) {
     if (shown === null || total === null || total <= shown) {
       return "";
     }
-    return `<p class="meta">Showing the first ${shown} of ${total} ${what}.</p>`;
+    return `<p class="meta">${S.showingFirst(shown, total, what)}</p>`;
   };
   const artifactGroup = (kind, heading, note) => {
     const rows = artifacts.filter((a) => (a.kind || "tool") === kind);
     if (!rows.length) {
       return "";
     }
+    // Paste artifacts get their characters highlighted: nobody can spot a
+    // typographic apostrophe in a quotation by eye, and an excerpt that looks
+    // perfectly normal reads as an accusation with no evidence.
+    const excerptHtml = (row) =>
+      kind === "paste" ? markPaste(escapeHtml(row.excerpt)) : escapeHtml(row.excerpt);
     return `<h3>${heading}</h3><p class="meta">${note}</p>${rows.map((row) => {
-      const times = typeof row.occurrences === "number" && row.occurrences > 1 ? ` <span class="count">${row.occurrences} times</span>` : "";
-      return `<div class="art"><strong>${escapeHtml(row.label || row.pattern || "")}</strong>${times} ${where(row)}${row.excerpt ? `<div class="q">${escapeHtml(row.excerpt)}</div>` : ""}</div>`;
+      const times = typeof row.occurrences === "number" && row.occurrences > 1 ? ` <span class="count">${S.times(row.occurrences)}</span>` : "";
+      return `<div class="art"><strong>${escapeHtml(row.label || row.pattern || "")}</strong>${times} ${where(row)}${row.excerpt ? `<div class="q">${excerptHtml(row)}</div>` : ""}</div>`;
     }).join("")}`;
   };
   const legend = Array.isArray(block?.legend) ? block.legend : [];
-  const chaptersHtml = !flagged.length ? "" : `<h3>Chapters that do not read like the rest of this document</h3><p class="meta">Every number below is compared against the median of the ${typeof block?.totals?.comparedChapters === "number" ? block.totals.comparedChapters : ""} chapters of this same document, never against an outside standard, and a chapter is listed only when it sits far enough from that median to stand out. A field, a supervisor and a first language all move these numbers, which is why the comparison is with the document itself.</p>${flagged.map((chapter) => `<div class="chap"><h4>${escapeHtml(chapter.name || "")}</h4>${(chapter.signals || []).map((signal) => {
+  // Each signal's explanation from the legend is repeated INLINE under its
+  // number: a reader confronted with "1.35 against a median of 0.18" should
+  // not have to scroll to a folded glossary to learn what was counted.
+  const legendNoteOf = (signal) => {
+    const entry = legend.find((e) => e && (e.id === signal.id || e.label === signal.label));
+    return entry && entry.note ? `<p class="meta">${escapeHtml(entry.note)}</p>` : "";
+  };
+  const chaptersHtml = !flagged.length ? "" : `<h3>${S.chaptersHeading}</h3><p class="meta">${S.chaptersNote(typeof block?.totals?.comparedChapters === "number" ? block.totals.comparedChapters : "")}</p>${flagged.map((chapter) => `<div class="chap"><h4>${escapeHtml(chapter.name || "")}</h4>${(chapter.signals || []).map((signal) => {
     const value = num(signal.value);
     const median = num(signal.thesisMedian);
-    const side = signal.direction === "below" ? "lower than" : "higher than";
-    const reading = value !== "" && median !== "" ? `<span class="val">this chapter ${value}, ${side} the document median of ${median}</span>` : "";
+    const reading = value !== "" && median !== "" ? `<span class="val">${S.reading(value, median, signal.direction === "below")}</span>` : "";
     const excerpts = (signal.excerpts || []).filter(Boolean).map(passage);
-    const more = typeof signal.excerptsTotal === "number" && signal.excerptsTotal > excerpts.length ? `<p class="meta">Showing ${excerpts.length} of ${signal.excerptsTotal} occurrences in this chapter.</p>` : "";
-    return `<div class="sig"><strong>${escapeHtml(signal.label || signal.id || "")}</strong> ${reading}${excerpts.length ? `<ul>${excerpts.map((e) => `<li class="q">${escapeHtml(e.text || "")}${e.file ? ` <span class="at">${where(e)}</span>` : ""}</li>`).join("")}</ul>` : ""}${more}</div>`;
-  }).join("")}</div>`).join("")}${showing("chapters", block?.totals?.flaggedChapters)}${legend.length ? `<details><summary>What these signals are</summary><ul>${legend.map((entry) => `<li><strong>${escapeHtml(entry.label || entry.id || "")}</strong>: ${escapeHtml(entry.note || "")}</li>`).join("")}</ul></details>` : ""}`;
-  const clustersHtml = !clusters.length ? "" : `<h3>Paragraphs carrying several stock phrases at once</h3><p class="meta">Listed when three or more DIFFERENT phrases from the pattern list appear in the same paragraph. A single phrase is never listed: everyone has favourite words, and a thesis is long.</p>${clusters.map((cluster) => {
+    const more = typeof signal.excerptsTotal === "number" && signal.excerptsTotal > excerpts.length ? `<p class="meta">${S.occurrences(excerpts.length, signal.excerptsTotal)}</p>` : "";
+    return `<div class="sig"><strong>${escapeHtml(signal.label || signal.id || "")}</strong> ${reading}${legendNoteOf(signal)}${excerpts.length ? `<ul>${excerpts.map((e) => `<li class="q">${escapeHtml(e.text || "")}${e.file ? ` <span class="at">${where(e)}</span>` : ""}</li>`).join("")}</ul>` : ""}${more}</div>`;
+  }).join("")}</div>`).join("")}${showing(S.whatChapters, block?.totals?.flaggedChapters)}${legend.length ? `<details><summary>${S.legendSummary}</summary><ul>${legend.map((entry) => `<li><strong>${escapeHtml(entry.label || entry.id || "")}</strong>: ${escapeHtml(entry.note || "")}</li>`).join("")}</ul></details>` : ""}`;
+  const clustersHtml = !clusters.length ? "" : `<h3>${S.clustersHeading}</h3><p class="meta">${S.clustersNote}</p>${clusters.map((cluster) => {
     const markers = (cluster.markers || []).map((m) => escapeHtml(m)).join(", ");
-    const hidden = typeof cluster.markersTotal === "number" && cluster.markersTotal > (cluster.markers || []).length ? ` and ${cluster.markersTotal - cluster.markers.length} more` : "";
+    const hidden = typeof cluster.markersTotal === "number" && cluster.markersTotal > (cluster.markers || []).length ? (it ? ` e altre ${cluster.markersTotal - cluster.markers.length}` : ` and ${cluster.markersTotal - cluster.markers.length} more`) : "";
     return `<div class="art"><strong>${escapeHtml(cluster.chapter || "")}</strong> ${where(cluster)} <span class="val">${markers}${hidden}</span>${cluster.paragraphExcerpt ? `<div class="q">${escapeHtml(cluster.paragraphExcerpt)}</div>` : ""}</div>`;
-  }).join("")}${showing("paragraphs", block?.totals?.clusters)}`;
+  }).join("")}${showing(S.whatParagraphs, block?.totals?.clusters)}`;
   return `<section class="aisig" id="ai-signals">
-    <h2>AI writing signals</h2>
-    <p class="caveat">These are stylistic signals and left-over artifacts that are worth a
-    human look. They are <strong>not proof</strong> that any part of this document was
-    machine-generated, and false positives are common, especially for authors writing in a
-    language that is not their first. Nothing here is a verdict and nothing here counts as
-    a finding: read the passages below and judge them yourself.</p>
-    ${artifactGroup("tool", "Markers left behind by a chat interface", "These strings have no reason to exist in a LaTeX source: they are what a copy out of a chat window carries with it. Unlike everything else in this section, they are reported however few they are.")}
-    ${artifactGroup("paste", "Characters that came from a rich-text source", "Typographic quotes and literal em-dash characters are not what a LaTeX source normally contains. They say the text was pasted from somewhere that formats as you type, which may be a chat window, a word processor or a web page.")}
-    ${artifacts.length ? showing("rows", block?.totals?.artifacts) : ""}
+    <h2>${S.title}</h2>
+    <p class="caveat">${S.caveat}</p>
+    ${artifactGroup("tool", S.toolHeading, S.toolNote)}
+    ${artifactGroup("paste", S.pasteHeading, S.pasteNote)}
+    ${artifacts.length ? showing(S.whatRows, block?.totals?.artifacts) : ""}
     ${chaptersHtml}
     ${clustersHtml}
-    <p class="meta">Computed by code, with no language model involved, from pattern list
-    version ${escapeHtml(block?.version || "")}. The list is dated on purpose: the phrasing
-    habits it looks for are those of its time, and an older report should be read as the
-    signals somebody would have looked at then.</p>
+    <p class="meta">${S.versionNote(escapeHtml(block?.version || ""))}</p>
   </section>`;
 }
 // overleaf-lab: shared by the two fact sections below. A number that is not a number
@@ -1071,7 +1124,7 @@ ${passed.map((item) => renderItem(item)).join("\n")}
   const excerptNoteHtml = excerptClipped
     ? `<p>${escapeHtml(T.excerptsClipped(excerptClipped))}</p>`
     : "";
-  const aiSignalsHtml = buildAiSignalsHtml(result.aiSignals, factChip);
+  const aiSignalsHtml = buildAiSignalsHtml(result.aiSignals, factChip, T.htmlLang === "it" ? "it" : "en");
   // overleaf-lab: the two fact sections. They sit after the findings and before the AI
   // signals: they are not compliance verdicts, so they must not be read as any, but
   // they are measurements of THIS document and belong above the section that is only

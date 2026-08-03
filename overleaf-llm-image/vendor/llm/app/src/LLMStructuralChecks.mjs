@@ -877,6 +877,10 @@ function isAcronymCandidate(token) {
     // One character repeated (AA, III, XXX): a placeholder or a numeral, never a
     // short form of anything.
     if (/^(.)\1*$/.test(token)) return false
+    // Digits then ONE letter: 3D, 2D, 5G, 4K, 6U. Dimension, generation and
+    // form-factor notation, not short forms anybody expands. Letter-first
+    // shapes (L2, H2, TF2) stay candidates.
+    if (/^\d+\p{Lu}$/u.test(token)) return false
     return true
 }
 
@@ -1754,6 +1758,9 @@ export const CHECKS = {
                 return titleSpans.get(doc)
             }
             for (const [short, entry] of scanned) {
+                // A declared product name stays a product name: nobody owes the
+                // reader "MATrix LABoratory" at first use.
+                if (PRODUCT_NAMES.has(short)) continue
                 const long = entry.long
                 let first = null
                 // \ac and \acf expand on first use by themselves, so they are correct
@@ -1856,6 +1863,12 @@ export const CHECKS = {
 
     'acronyms-in-headings': {
         describe: 'chapter and section titles contain no acronym',
+        // Product names set in capitals are not acronyms to keep out of titles:
+        // "Appendice A -- Codice MATLAB" says what the appendix IS, and no
+        // reader needs MATLAB expanded. Exempt on EVERY route into this check,
+        // the declared list included, because a student who declares MATLAB in
+        // their acronym list has not changed what the word is. Kept aligned
+        // with NOT_ACRONYMS in the lists module.
         run(docs) {
             const declared = collectDeclaredAcronyms(docs)
             // Undeclared short forms count too: a \chapter{KKT problem creation} is
@@ -1896,6 +1909,7 @@ export const CHECKS = {
                     const shown = title.replace(/\s+/g, ' ').trim().slice(0, 60)
                     let hit = null
                     for (const [short, entry] of declared) {
+                        if (PRODUCT_NAMES.has(short)) continue
                         const inTitle = new RegExp(acronymUseSource(short, entry), 'u')
                         if (inTitle.test(title)) {
                             hit = short
@@ -1904,6 +1918,7 @@ export const CHECKS = {
                     }
                     if (!hit) {
                         for (const token of undeclared) {
+                            if (PRODUCT_NAMES.has(token)) continue
                             const inTitle = new RegExp(
                                 `(?<![\\p{L}\\p{N}_\\\\])${escapeRegExp(token)}(?![\\p{L}\\p{N}_])`,
                                 'u'
@@ -1923,7 +1938,7 @@ export const CHECKS = {
                     // is skipped, exactly as the prose scan skips caps lines.
                     if (!hit && /\p{Ll}/u.test(title.replace(/\\[a-zA-Z]+/g, ' '))) {
                         for (const t of title.matchAll(UNDECLARED_ACRONYM)) {
-                            if (declared.has(t[1]) || !isAcronymCandidate(t[1])) continue
+                            if (declared.has(t[1]) || PRODUCT_NAMES.has(t[1]) || !isAcronymCandidate(t[1])) continue
                             hit = t[1]
                             break
                         }
@@ -2415,6 +2430,21 @@ CHECKS['decimal-separator'] = {
                 // Only the comma can be mistaken for an interval: an interval needs
                 // two endpoints, so "[0.1]" is a decimal point and nothing else.
                 if (m[2] === ',' && insideInterval(text, m.index, m.index + m[0].length)) continue
+                // AN ENUMERATION IS NOT A DECIMAL. "Tray 3,4 and 6" (measured on a
+                // real published thesis) is a list of tray numbers, and the "3,4"
+                // in it was reported as the document's one comma-decimal. The
+                // shape: the pair is followed by a conjunction and a BARE integer
+                // that does NOT carry a unit. "tra 2,5 e 3 mm" keeps counting,
+                // because there the trailing number has one (asked to the same
+                // lexicon the unit check reads); a genuinely bare "tra 2,5 e 3"
+                // is the recall this guard deliberately pays for precision.
+                if (m[2] === ',') {
+                    const tail = text.slice(m.index + m[0].length, m.index + m[0].length + 24)
+                    const enumTail = /^[ \t]?(?:and|e|ed|o|or)[ \t]+\d+(?![.,]\d)/.exec(tail)
+                    if (enumTail && !UNIT_AFTER_NUMBER.test(tail.slice(enumTail[0].length))) {
+                        continue
+                    }
+                }
                 seen[m[2]].push({
                     path: doc.path,
                     line: at(m.index),
@@ -2642,8 +2672,12 @@ const UNIT_TAIL = `(?:\\^\\{?-?\\d+\\}?)?(?:/\\\\?${UNIT_BODY}(?:\\^\\{?-?\\d+\\
 // The guards before the number, shared by both patterns and with decimal-separator:
 // see NUMBER_LEAD_GUARD at the top of the file for what each one keeps out and why.
 const UNIT_GUARD = NUMBER_LEAD_GUARD
+// The lookahead refuses an apostrophe after the unit letter (both spellings, the
+// typographic one via escape as this repo mandates): "Figura 2.4, l'uso del
+// VIMS" put a comma-separated LITRE into a real report, when the l was the
+// Italian article of l'uso. No real unit is ever elided.
 const UNIT_COMMA_OR_GLUED = new RegExp(
-    `${UNIT_GUARD}(\\d+(?:[.,]\\d+)?)([ \\t]*,[ \\t]*|)(\\\\?${UNIT_BODY}${UNIT_TAIL})(?![\\w{])`,
+    `${UNIT_GUARD}(\\d+(?:[.,]\\d+)?)([ \\t]*,[ \\t]*|)(\\\\?${UNIT_BODY}${UNIT_TAIL})(?![\\w{'\\u2019])`,
     'g'
 )
 // The GOOD pattern drops "=", "{" and "[" from its guard on purpose: an accusation
@@ -2653,13 +2687,13 @@ const UNIT_COMMA_OR_GLUED = new RegExp(
 // document with eight correct values that it quoted no units at all.
 const UNIT_GOOD_GUARD = '(?<![\\w.,\\\\-])'
 const UNIT_PROPERLY_SPACED = new RegExp(
-    `${UNIT_GOOD_GUARD}\\d+(?:[.,]\\d+)?(?:[ \\t]*(?:\\\\,|~)[ \\t]*|[ \\t]+)\\\\?${UNIT_BODY}${UNIT_TAIL}(?![\\w{])`,
+    `${UNIT_GOOD_GUARD}\\d+(?:[.,]\\d+)?(?:[ \\t]*(?:\\\\,|~)[ \\t]*|[ \\t]+)\\\\?${UNIT_BODY}${UNIT_TAIL}(?![\\w{'\\u2019])`,
     'g'
 )
 // A unit straight after a number, for decimal-separator's sectioning-word skip:
 // "step 0.5 mm" is a measurement whatever the word before it says.
 const UNIT_AFTER_NUMBER = new RegExp(
-    `^(?:[ \\t]*(?:\\\\,|~)[ \\t]*|[ \\t]+|)\\\\?${UNIT_BODY}(?![\\w{])`
+    `^(?:[ \\t]*(?:\\\\,|~)[ \\t]*|[ \\t]+|)\\\\?${UNIT_BODY}(?![\\w{'\\u2019])`
 )
 
 // overleaf-lab: values the siunitx package typesets. \SI{0.5}{\milli\metre} and
@@ -3264,6 +3298,13 @@ CHECKS['no-wikipedia'] = {
 // times the largest hand-written list this repo has seen; past the cap the
 // evidence SAYS the scan was partial instead of quietly pretending it was not.
 const MAX_ACRONYMS_SCANNED = 500
+
+// Product names written in capitals. They have etymologies (MATrix LABoratory)
+// but they are trademarks, not short forms a document owes the reader: asking a
+// title to avoid them, or a first use to expand them, is a finding nobody can
+// act on. Shared by the checks that would otherwise accuse them; kept aligned
+// with NOT_ACRONYMS in the lists module.
+const PRODUCT_NAMES = new Set(['MATLAB', 'SIMULINK', 'ANSYS', 'ABAQUS', 'COMSOL', 'STAAD', 'LABVIEW'])
 
 function cappedAcronyms(declared) {
     const entries = [...declared]

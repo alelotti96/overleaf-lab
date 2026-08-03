@@ -373,6 +373,30 @@ const COMMAND_ARGUMENTS = new Map([
     ['newacronym', 3],
     ['DeclareAcronym', 2],
     ['newglossaryentry', 2],
+    // Scaffolding measured leaking on a real template (2026-08-03): the "toc"
+    // and "chapter" of \addcontentsline came back as "Hoc" and "charter", and a
+    // \lstdefinestyle body offered "brevilinea" for breaklines. The third
+    // argument of \addcontentsline is the printed title and stays prose.
+    ['addcontentsline', 2],
+    ['addtocontents', 2],
+    ['lstdefinestyle', 2],
+    ['titleformat', 5],
+    ['titlespacing', 4],
+    ['fancyhead', 1],
+    ['fancyfoot', 1],
+    ['fancyhf', 1],
+    ['captionsetup', 1],
+    ['sisetup', 1],
+    ['pgfplotsset', 1],
+    ['DeclareMathOperator', 2],
+    ['newcolumntype', 2],
+    ['rowcolor', 1],
+    ['cellcolor', 1],
+    ['columncolor', 1],
+    ['arrayrulecolor', 1],
+    ['counterwithout', 2],
+    ['counterwithin', 2],
+    ['afterpage', 1],
 ])
 
 // Every cross-reference and citation spelling, whatever the package. \href is excluded
@@ -845,6 +869,20 @@ export async function checkDocuments(docs, options = {}) {
         for (const doc of inspected) {
             const source = doc.text
             const prose = toProse(source)
+            // A file that is configuration end to end (a setup.tex pulled in from
+            // the preamble has no \begin{document}, so the preamble blank cannot
+            // touch it) leaves almost no prose behind. What little survives is
+            // option keys the command table does not know yet, and every one of
+            // them comes back as a typo in a file the student must not edit.
+            // BOTH conditions, deliberately: few words alone would also skip a
+            // real two-line abstract.tex, whose few words are however most of
+            // its file. Configuration is the only thing that is short on prose
+            // AND buried in markup.
+            const proseWords = (prose.match(/\p{L}{3,}/gu) || []).length
+            const proseLetters = (prose.match(/\p{L}/gu) || []).length
+            if (proseWords < 40 && proseLetters < source.length * 0.15) {
+                continue
+            }
             const at = lineLookup(source)
             // The false-positive spans are computed on the ORIGINAL source, because a
             // match is judged by what the student actually wrote at that offset.

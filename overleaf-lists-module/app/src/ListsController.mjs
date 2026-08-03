@@ -1139,6 +1139,9 @@ function isAcronymCandidate(token) {
     const stripped = token.replace(/[^A-Za-z]/g, '')
     if (stripped.length > 1 && new Set(stripped.toUpperCase()).size === 1) return false
     if (capitals.length === letters.length && letters.length >= 8) return false
+    // Digits then one letter (3D, 5G, 6U): dimension and form-factor notation,
+    // not a short form. Kept aligned with the LLM module's candidate filter.
+    if (/^\d+[A-Z]$/.test(token)) return false
     if (capitals.length >= 2 && capitals.length / letters.length >= 0.5) return true
     if (capitals.length >= 1 && /[0-9]/.test(token) && token.length <= 4) return true
     return false

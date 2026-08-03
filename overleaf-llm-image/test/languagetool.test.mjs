@@ -231,6 +231,51 @@ const DOCUMENT = [
 }
 
 // ---------------------------------------------------------------------------
+// Scaffolding measured leaking on a real template (2026-08-03)
+// ---------------------------------------------------------------------------
+// LanguageTool got "toc" and "chapter" from \addcontentsline (suggested "Hoc"
+// and "charter") and a \lstdefinestyle body (suggested "brevilinea" for
+// breaklines): 772 findings on a project whose prose was fine. The arguments
+// are identifiers and must never reach the proof-reader; the printed title of
+// \addcontentsline is prose and must.
+{
+    const scaffold = LT.toProse(
+        '\\tableofcontents\n\\addcontentsline{toc}{chapter}{Indice}\n\\listoffigures\n' +
+            '\\lstdefinestyle{Matlabstyle}{ language=Matlab, keywordstyle=\\color{keyBlue}, breaklines=true }\n' +
+            '\\titleformat{\\chapter}[hang]{\\normalfont\\huge\\bfseries}{\\chaptername}{1em}{}\n'
+    )
+    check('the toc arguments of addcontentsline are gone', !scaffold.includes('toc') && !/\bchapter\b/.test(scaffold), scaffold)
+    check('but its printed title survives', scaffold.includes('Indice'))
+    check('a lstdefinestyle body is gone', !scaffold.includes('breaklines') && !scaffold.includes('keyBlue'))
+    check('a titleformat body is gone', !scaffold.includes('hang') && !scaffold.includes('1em'))
+
+    // A configuration file with no \begin{document} (a setup.tex input from the
+    // preamble) is skipped whole: what little the blanking leaves is option
+    // keys, and every one of them came back as a typo in a file the student
+    // must not edit. A SHORT PROSE file stays in: its few words are most of it.
+    const config = Array.from({ length: 40 }, (_, i) => `\\definecolor{color${i}}{RGB}{10,20,30}\n\\setcounter{c${i}}{4}`).join('\n')
+    const stub = stubFetch(request => [matchOn(request.text, 'colorx', { ruleId: 'TYPO', category: 'TYPOS' })].filter(Boolean))
+    const skipped = await LT.checkDocuments(
+        [{ path: '/setup_do_not_edit/setup.tex', text: config }],
+        { url: 'http://languagetool:8010', fetchImpl: stub, language: 'it' }
+    )
+    check('a pure configuration file is skipped whole', skipped.totals.chunks === 0, JSON.stringify(skipped.totals))
+    const shortAbstract = await LT.checkDocuments(
+        [
+            {
+                path: '/Frontmatter/abstract.tex',
+                text:
+                    '\\chapter*{Sommario}\nQuesto lavoro presenta un banco prova per il controllo di assetto di un piccolo satellite. ' +
+                    'Il documento descrive la progettazione del sistema, le prove sperimentali condotte in laboratorio e i risultati ottenuti, ' +
+                    'con particolare attenzione alla ripetibilita delle misure e ai limiti del banco.\n',
+            },
+        ],
+        { url: 'http://languagetool:8010', fetchImpl: stub, language: 'it' }
+    )
+    check('a short prose file is still read', shortAbstract.totals.chunks > 0, JSON.stringify(shortAbstract.totals))
+}
+
+// ---------------------------------------------------------------------------
 // A mistake after a blanked equation lands on the right line
 // ---------------------------------------------------------------------------
 {
