@@ -401,6 +401,10 @@ check(
 
 check('recall/filter/a real word in capitals is not a short form', !core.isAcronymCandidate('NOTA') && !core.isAcronymCandidate('CHAPTER'))
 check('recall/filter/a long all-capitals word is not a short form', !core.isAcronymCandidate('SPACECRAFT'))
+check(
+    'recall/filter/a product name in capitals is not a short form',
+    !core.isAcronymCandidate('MATLAB') && !core.isAcronymCandidate('ANSYS') && !core.isAcronymCandidate('COMSOL')
+)
 check('recall/filter/a repeated letter is not a short form', !core.isAcronymCandidate('AAA'))
 check('recall/filter/a unit is not a short form', !core.isAcronymCandidate('MHz'))
 check('recall/filter/a hyphenated word is not a short form', !core.isAcronymCandidate('Off-The-Shelf'))

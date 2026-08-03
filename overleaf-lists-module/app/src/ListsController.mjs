@@ -1093,6 +1093,11 @@ const NOT_ACRONYMS = new Set([
     'MASTER', 'DEGREE', 'SUPERVISOR', 'CANDIDATE', 'ACADEMIC', 'YEAR', 'PART',
     'THE', 'AND', 'FOR', 'WITH', 'FROM', 'THIS', 'THAT', 'NOT', 'ALL', 'ONE', 'TWO',
     'DI', 'IN', 'DEL', 'DELLA', 'PER', 'CON', 'NON', 'UNA',
+    // Product names set in capitals. They have etymologies (MATrix LABoratory)
+    // but nobody declares them in a list of acronyms, and proposing them tells
+    // the author to define a trademark. Only the ones short enough to pass the
+    // eight-capital rule need listing: SOLIDWORKS already stays out by length.
+    'MATLAB', 'ANSYS', 'ABAQUS', 'COMSOL', 'STAAD', 'LABVIEW',
 ])
 
 // Units are written in capitals and are not short forms. Only the ones that
