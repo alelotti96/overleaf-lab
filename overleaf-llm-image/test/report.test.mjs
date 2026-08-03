@@ -1423,5 +1423,87 @@ const signalsBlock = (over = {}) => ({
     check('and nothing in one can close its own attribute', hrefs.every(h => !h.includes('"') && !h.includes('<')))
 }
 
+// ---- eleventh wave: what the reader of the live report asked for ----
+// The finding is filed under the file its own evidence names (not the alphabetically
+// first anchor), "What to do" sits above the evidence, a long evidence list folds
+// behind its first sentence, three or more source excerpts fold behind their chips,
+// and every location prints its `what` next to the address.
+{
+    const html = bodyOf(
+        buildReportHtml({
+            ...base,
+            items: [
+                item({
+                    evidence:
+                        'File: /Frontmatter/frontespizio.tex, riga 6: no credit near the logo.',
+                    suggestion: 'Add the credit in the caption.',
+                    locations: [
+                        { path: '/Frontmatter/acronimi.tex', line: 2, what: 'stray anchor' },
+                        { path: '/Frontmatter/frontespizio.tex', line: 6 },
+                    ],
+                }),
+            ],
+        })
+    )
+    check(
+        'the finding is filed under the file its evidence names',
+        /class="fileblock" id="file-[^"]*frontespizio[^"]*"/.test(html)
+    )
+    check(
+        'and not under the alphabetically first anchor',
+        !/class="fileblock" id="file-[^"]*acronimi[^"]*"/.test(html)
+    )
+    const sg = html.indexOf('class="sg"')
+    const ev = html.indexOf('class="ev"')
+    check('what-to-do renders above the evidence', sg !== -1 && ev !== -1 && sg < ev)
+    check('an also-at location prints its what', html.includes('stray anchor'))
+}
+{
+    const parts = [
+        '45 of 604 sentences run past 40 words (longest first):',
+        'a.tex:1 one', 'a.tex:2 two', 'a.tex:3 three', 'a.tex:4 four', 'a.tex:5 five',
+    ]
+    const html = bodyOf(buildReportHtml({ ...base, items: [item({ evidence: parts.join(' | ') })] }))
+    const fold = html.indexOf('<details class="more">')
+    check('a long evidence list keeps its first sentence in view', fold !== -1 && html.indexOf('45 of 604') < fold)
+    check('and folds the rest under a counted summary', html.includes('<summary>5 more</summary>'))
+    check('nothing folded is lost', html.includes('a.tex:5 five'))
+    const short = bodyOf(buildReportHtml({ ...base, items: [item({ evidence: parts.slice(0, 4).join(' | ') })] }))
+    check('a short list stays unfolded', !short.includes('<details class="more">'))
+}
+{
+    const loc = line => ({
+        path: 'main.tex',
+        line,
+        what: `equation eq${line} is unnumbered`,
+        excerpt: { start: line, mark: 0, lines: [`\\[ x_${line} \\]`] },
+    })
+    const three = bodyOf(
+        buildReportHtml({ ...base, items: [item({ locations: [loc(1), loc(2), loc(3)] })] })
+    )
+    check('three excerpts fold behind one control', three.includes('Show the 3 source excerpts'))
+    const chips = three.indexOf('main.tex:1')
+    const fold = three.indexOf('<details class="more">')
+    check('the chips row stays in view above the fold', chips !== -1 && fold !== -1 && chips < fold)
+    check('each chip carries its what', three.includes('equation eq2 is unnumbered'))
+    const two = bodyOf(buildReportHtml({ ...base, items: [item({ locations: [loc(1), loc(2)] })] }))
+    check('two excerpts stay unfolded', !two.includes('source excerpts'))
+    check('a source block header names what is at the line', /class="srchd"[\s\S]{0,200}?equation eq1 is unnumbered/.test(two))
+}
+{
+    const html = bodyOf(
+        buildReportHtml({
+            ...base,
+            items: [item()],
+            imageMetrics: figBlock({
+                measured: [
+                    { path: 'Immagini/a.png', file: '/main.tex', line: 3, width: 360, height: 151, renderedWidthMm: 96, dpi: 95, exact: false },
+                ],
+            }),
+        })
+    )
+    check('the figures table explains how to read itself', html.includes('How to read the table'))
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES')
 process.exit(ok ? 0 : 1)

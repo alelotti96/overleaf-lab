@@ -1115,6 +1115,10 @@ async function runLanguageToolItem(requirement, strippedDocs, reportLanguage, si
     return {
         ...base,
         status: 'missing',
+        suggestion: L(
+            'Correct the listed mistakes: each line quotes the flagged word between « » and, where the checker has one, the suggested replacement.',
+            'Correggere gli errori elencati: ogni riga cita tra « » la parola segnalata e, dove il correttore ce l\'ha, la sostituzione proposta.'
+        ),
         evidence: clip(
             L(
                 `LanguageTool (${report.language}) reports ${kept} spelling or grammar mistakes across ` +
@@ -5847,7 +5851,9 @@ async function runReviewPasses(job) {
                 requirement,
                 status: outcome.status,
                 evidence: clip(outcome.evidence, EVIDENCE_MAX_CHARS),
-                suggestion: '',
+                // The check's own "what to do" (see runCheck): present exactly when
+                // the verdict is one the reader has to act on.
+                suggestion: outcome.fix || '',
                 locations: outcome.locations,
                 sourceFiles: [...new Set(outcome.locations.map(l => l.path))],
                 decidedByCode: true,
@@ -5939,12 +5945,19 @@ async function runReviewPasses(job) {
                     MAX_CANDIDATE_PASSAGES
                 )
                 if (candidates.length === 0) {
+                    // overleaf-lab: zero candidates is a PASS, not an abstention. The
+                    // pattern is the requirement's own definition of what could violate
+                    // it ("first person", "colloquialisms", "placeholder text"): a
+                    // document with no matching passage satisfies the requirement, and
+                    // an n.a. here read as "this was not checked" when it was checked
+                    // and came back clean. The evidence still names the pattern, so a
+                    // pattern that is too narrow can be seen for what it is.
                     allItems.push({
                         requirement,
-                        status: 'na',
+                        status: 'ok',
                         evidence: L(
-                            `No passage matches the "${pattern.label}" pattern, so nothing falls under this requirement.`,
-                            `Nessun passaggio corrisponde al pattern "${pattern.label}", quindi niente ricade sotto questo requisito.`
+                            `No passage matches the "${pattern.label}" pattern: the scan found nothing that could violate this requirement.`,
+                            `Nessun passaggio corrisponde al pattern "${pattern.label}": la scansione non ha trovato niente che possa violare questo requisito.`
                         ),
                         suggestion: '',
                     })

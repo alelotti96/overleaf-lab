@@ -102,6 +102,8 @@ const CHROME_EN = {
   // The source excerpt and the deep link back into the editor.
   inTheSource: "In the source",
   openInEditor: "Open this line in the editor",
+  moreEvidence: n => `${n} more`,
+  showSources: n => `Show the ${n} source excerpts`,
   excerptShortened: "Long lines are shown shortened.",
   excerptsClipped: n =>
     `${n} ${n === 1 ? "location has" : "locations have"} no source excerpt here: this report keeps its excerpts within a fixed size so it stays small enough to store and to send. Open the file at the line shown to see the rest.`,
@@ -177,6 +179,8 @@ const CHROME_EN = {
   figuresNotRun: "No figure in this project was measured, so nothing here says whether its images are sharp enough.",
   figuresCaveat:
     "Measured by code from the image files and the width each figure is printed at. These are numbers, not verdicts: what resolution is acceptable is for the guidelines to say.",
+  figuresHow:
+    "How to read the table: professional printing usually sits around 300 DPI, and below roughly 150 DPI a figure starts to look pixelated on paper. The rows are sorted lowest first, so the figures worth re-exporting at a higher resolution, or replacing with a vector format (PDF/SVG, which has no resolution and stays sharp at any size), are the ones at the top.",
   figuresCounts: (raster, vector) => `${raster} raster, ${vector} vector`,
   figuresRange: (min, max) => `Lowest ${min} DPI, highest ${max} DPI.`,
   figuresHeadFigure: "Figure",
@@ -235,6 +239,8 @@ const CHROME_IT = {
   alsoAt: "Anche in",
   inTheSource: "Nel sorgente",
   openInEditor: "Apri questa riga nell'editor",
+  moreEvidence: n => `altre ${n}`,
+  showSources: n => `Mostra ${n === 1 ? "l'estratto" : `i ${n} estratti`} del sorgente`,
   excerptShortened: "Le righe lunghe sono mostrate accorciate.",
   excerptsClipped: n =>
     `${n} ${n === 1 ? "posizione non ha" : "posizioni non hanno"} l'estratto del sorgente: questo report tiene gli estratti entro una dimensione fissa per restare abbastanza piccolo da archiviare e da spedire. Apri il file alla riga indicata per vedere il resto.`,
@@ -304,6 +310,8 @@ const CHROME_IT = {
     "Nessuna figura di questo progetto è stata misurata, quindi qui non c'è niente che dica se le immagini sono abbastanza nitide.",
   figuresCaveat:
     "Misurata dal codice a partire dai file immagine e dalla larghezza con cui ogni figura viene stampata. Sono numeri, non verdetti: quale risoluzione sia accettabile lo dicono le linee guida.",
+  figuresHow:
+    "Come leggere la tabella: la stampa professionale usa di solito circa 300 DPI, e sotto i 150 DPI circa una figura comincia a vedersi sgranata sulla carta. Le righe sono ordinate dalla risoluzione più bassa, quindi le figure che conviene riesportare a risoluzione maggiore, o sostituire con un formato vettoriale (PDF/SVG, che non ha una risoluzione e resta nitido a qualunque dimensione), sono le prime dell'elenco.",
   figuresCounts: (raster, vector) => `${raster} raster, ${vector} vettoriali`,
   figuresRange: (min, max) => `Minimo ${min} DPI, massimo ${max} DPI.`,
   figuresHeadFigure: "Figura",
@@ -610,6 +618,7 @@ function buildImageMetricsHtml(block, T) {
   return `<section class="facts" id="figure-resolution">
     <h2>${escapeHtml(T.figuresTitle)}</h2>
     <p class="caveat">${escapeHtml(T.figuresCaveat)}</p>
+    <p class="meta">${escapeHtml(T.figuresHow)}</p>
     <p class="meta">${countsLine}${range}</p>
     ${measuredHtml}
     ${uncheckedHtml}
@@ -785,6 +794,19 @@ function buildReportHtml(result) {
   // `{ path, line }`, so the adapter lives here rather than in either of them.
   const factChip = (row) =>
     row && row.file ? locChip({ path: row.file, line: row.line }) : "";
+  // overleaf-lab: WHAT is at the location, next to its address. The structural checks
+  // have always said it (`locations[].what`: the acronym, the equation, the value) and
+  // both renderers printed the bare path:line, so the reader had to open every file to
+  // learn which symbol the finding was even about. Clipped, escaped, and the « » span
+  // marking kept, same as the evidence.
+  const whatLabel = (l) => {
+    const what = l && l.what ? String(l.what) : "";
+    if (!what) {
+      return "";
+    }
+    const cut = what.length > 120 ? `${what.slice(0, 117)}...` : what;
+    return ` <span class="what">${escapeHtml(cut).replace(/«([^«»]{1,80})»/g, "<mark>«$1»</mark>")}</span>`;
+  };
   // overleaf-lab: the excerpt the controller attached, as a mini code block with the
   // offending line marked. Everything in it is the student's own LaTeX, so every line
   // goes through escapeHtml: this is the one block of this document that quotes source
@@ -807,7 +829,7 @@ function buildReportHtml(result) {
     const shortened = excerpt.clipped
       ? `<p class="meta cut">${escapeHtml(T.excerptShortened)}</p>`
       : "";
-    return `<div class="srcblk"><div class="srchd"><span class="lbl inline">${escapeHtml(T.inTheSource)}</span>${locChip(l)}</div><pre class="src">${rows}</pre>${shortened}</div>`;
+    return `<div class="srcblk"><div class="srchd"><span class="lbl inline">${escapeHtml(T.inTheSource)}</span>${locChip(l)}${whatLabel(l)}</div><pre class="src">${rows}</pre>${shortened}</div>`;
   };
   const seenAnchors = /* @__PURE__ */ new Set();
   const anchorFor = (item) => {
@@ -851,7 +873,12 @@ function buildReportHtml(result) {
       return `${escapeHtml(clean).replace(/«([^«»]{1,80})»/g, "<mark>«$1»</mark>")}${badge}`;
     };
     const renderList = (ps) => `<ul>${ps.map((p) => `<li>${renderPart(p)}</li>`).join("")}</ul>`;
-    const evidenceBody = parts.length > 8 ? `${renderList(parts.slice(0, 6))}<details class="more"><summary>${parts.length - 6} more</summary>${renderList(parts.slice(6))}</details>` : parts.length > 1 ? renderList(parts) : renderPart(evidenceText);
+    // overleaf-lab: a long evidence list is a wall. The first entry is usually the
+    // sentence that counts ("45 of 604 sentences run past 40 words"), so it stays in
+    // view and the rest folds away; the locations each entry names are also below,
+    // as chips and excerpts, so nothing folded here is the only copy of an address.
+    // Printed open, like every fold in this page.
+    const evidenceBody = parts.length > 4 ? `${renderPart(parts[0])}<details class="more"><summary>${escapeHtml(T.moreEvidence(parts.length - 1))}</summary>${renderList(parts.slice(1))}</details>` : parts.length > 1 ? renderList(parts) : renderPart(evidenceText);
     const evidence = evidenceText ? `<div class="ev"><span class="lbl">${escapeHtml(T.evidence)}</span>${evidenceBody}</div>` : "";
     // overleaf-lab: the locations that carry an excerpt are rendered BELOW, each one
     // headed by its own chip, so listing them again under "Also at" would print every
@@ -860,7 +887,13 @@ function buildReportHtml(result) {
     const excerpted = (item.locations || []).filter(
       (l) => l && l.excerpt && Array.isArray(l.excerpt.lines) && l.excerpt.lines.length
     );
-    const sources = excerpted.map(excerptBlock).join("");
+    // overleaf-lab: over two excerpts, the code blocks fold. Five quoted
+    // \begin{figure} environments under one finding were most of a page that said
+    // nothing the chips do not: the links stay in view, one per location with its
+    // `what`, and the source lines are one click (or one print) away.
+    const sources = excerpted.length > 2
+      ? `<div class="loc"><span class="lbl inline">${escapeHtml(T.inTheSource)}</span>${excerpted.map((l) => `${locChip(l)}${whatLabel(l)}`).join(" ")}</div><details class="more"><summary>${escapeHtml(T.showSources(excerpted.length))}</summary>${excerpted.map(excerptBlock).join("")}</details>`
+      : excerpted.map(excerptBlock).join("");
     const alsoSeen = /* @__PURE__ */ new Set();
     const others = (item.locations || []).filter((l) => {
       if (l && l.excerpt && Array.isArray(l.excerpt.lines) && l.excerpt.lines.length) return false;
@@ -871,7 +904,7 @@ function buildReportHtml(result) {
       alsoSeen.add(key);
       return true;
     });
-    const locations = others.length ? `<div class="loc"><span class="lbl inline">${escapeHtml(T.alsoAt)}</span>${others.map((l) => locChip(l)).join(" ")}</div>` : "";
+    const locations = others.length ? `<div class="loc"><span class="lbl inline">${escapeHtml(T.alsoAt)}</span>${others.map((l) => `${locChip(l)}${whatLabel(l)}`).join(" ")}</div>` : "";
     const suggestion = item.suggestion ? `<div class="sg"><span class="lbl">${escapeHtml(T.whatToDo)}</span>${escapeHtml(item.suggestion)}</div>` : "";
     // overleaf-lab: the gutter is the finding's HOME line, and it is the one location a
     // reader looks at first, so it is the one that most needs to be a jump. It carries
@@ -898,9 +931,12 @@ function buildReportHtml(result) {
     const fixbox = fixable
       ? `<label class="fixbox"><input type="checkbox" class="fx" data-fx="${anchor}"><span>${escapeHtml(T.guideMarkFixed)}</span></label>`
       : "";
+    // overleaf-lab: "What to do" comes FIRST, right under the requirement. It is the
+    // sentence the reader acts on, and under a long evidence list it sat below the
+    // fold of every finding that needed it most.
     return `<div class="item ${cls}${fixable ? " fixable" : ""}" id="${anchor}" tabindex="-1">${gutter}<div class="body"><div class="req"><span class="badge">${label}</span><span class="rtext" title="${escapeHtml(
       item.requirement
-    )}">${escapeHtml(shortRequirement(item.requirement))}</span>${warningHtml}${fixbox}</div>${evidence}${sources}${locations}${suggestion}</div></div>`;
+    )}">${escapeHtml(shortRequirement(item.requirement))}</span>${warningHtml}${fixbox}</div>${suggestion}${evidence}${sources}${locations}</div></div>`;
   };
   // overleaf-lab: THREE buckets, not two. An n.a. is not a thing to fix: putting
   // the unchecked requirements of a fast review among the findings gave the
@@ -925,6 +961,17 @@ ${passed.map((item) => renderItem(item)).join("\n")}
     const sorted = [...item.locations || []].sort(
       (a, b) => a.path === b.path ? a.line - b.line : a.path.localeCompare(b.path)
     );
+    // overleaf-lab: the file the EVIDENCE names beats the alphabet. A finding whose
+    // evidence says "frontespizio.tex, line 6" but whose quote-anchoring also matched
+    // a span in acronimi.tex was filed under acronimi.tex (it sorts first), and the
+    // reader met a heading the finding's own text contradicts. The evidence is the
+    // model's stated claim; the anchors are derived. When they disagree about the
+    // file, the claim wins.
+    const evidence = String(item.evidence || "");
+    const named = sorted.find((l) => l.path && evidence.includes(l.path));
+    if (named) {
+      return named;
+    }
     if (sorted.length > 0) {
       return sorted[0];
     }
@@ -1244,6 +1291,10 @@ ${passed.map((item) => renderItem(item)).join("\n")}
   .ev li{margin:.18rem 0}
   .loc{color:var(--muted)}
   .loc code{display:inline-block;margin:.12rem .2rem .12rem 0;color:var(--fg)}
+  /* What is AT the address: the acronym, the equation, the flagged value. Quieter than
+     the chip it follows, because the chip is the thing to click. */
+  .what{font-size:.8rem;color:var(--muted);overflow-wrap:anywhere}
+  .srchd .what{margin-left:.35rem}
   .sg{background:var(--accent-bg);border:1px solid var(--accent-br);border-left:3px solid var(--accent);border-radius:8px;padding:.55rem .7rem}
   .sg .lbl{color:var(--accent)}
   /* Folded sections: quiet rows, never a shouting control */

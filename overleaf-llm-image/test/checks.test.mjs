@@ -3621,5 +3621,34 @@ check(
     check('under the cap the note stays away', !/first \d+ of|primi \d+/.test(small.evidence), small.evidence)
 }
 
+// ---------------------------------------------------------------------------
+// every check carries its own "what to do"
+// ---------------------------------------------------------------------------
+// A verdict decided by code reached the report with no suggestion at all: the two
+// requirements a reader asked about ("cite every figure", "number the equations")
+// had a Riscontro and nothing telling them what to change. The fix is declared per
+// check, evaluated inside runCheck so it speaks the review language, and attached
+// only to verdicts the reader has to act on.
+{
+    const failed = run('work-markers', 'testo TODO rivedere')
+    check(
+        'a failed check carries a fix',
+        failed.status === 'missing' && typeof failed.fix === 'string' && failed.fix.length > 10,
+        failed.fix
+    )
+    const clean = run('work-markers', 'testo pulito senza marcatori')
+    check('a met check carries no fix', clean.status === 'ok' && clean.fix === undefined)
+    setChecksLanguage('it')
+    const italian = run('work-markers', 'testo TODO rivedere')
+    check('the fix speaks the review language', /lavorazione/.test(italian.fix || ''), italian.fix)
+    setChecksLanguage('en')
+    // The guard for the NEXT check somebody adds: a catalogue entry without a fix is
+    // a finding with no advice, which is exactly what this wave removed.
+    const missingFix = Object.entries(CHECKS)
+        .filter(([, c]) => typeof c.fix !== 'function')
+        .map(([name]) => name)
+    check('every check in the catalogue declares a fix', missingFix.length === 0, missingFix.join(', '))
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES')
 process.exit(ok ? 0 : 1)

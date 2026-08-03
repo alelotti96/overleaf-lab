@@ -1329,6 +1329,11 @@ function listing(items) {
 export const CHECKS = {
     'float-caption': {
         describe: 'every figure and table environment contains a \\caption',
+        fix: () =>
+            L(
+                'Add a \\caption{...} inside each listed float environment.',
+                'Aggiungere una \\caption{...} dentro ogni ambiente flottante elencato.'
+            ),
         run(docs) {
             const bad = []
             let total = 0
@@ -1438,6 +1443,11 @@ export const CHECKS = {
 
     'caption-position': {
         describe: 'a figure caption sits below the graphic, a table caption above the content',
+        fix: () =>
+            L(
+                'Move the \\caption after the \\includegraphics in the listed figures, and before the table content in the listed tables.',
+                "Spostare la \\caption dopo l'\\includegraphics nelle figure elencate, e prima del contenuto nelle tabelle elencate."
+            ),
         run(docs) {
             const bad = []
             // Two counters on purpose. `captioned` is how many captions exist,
@@ -1534,6 +1544,11 @@ export const CHECKS = {
 
     'float-referenced': {
         describe: 'every labelled figure or table is referred to at least once in the text',
+        fix: () =>
+            L(
+                'Mention each listed figure or table in the text with a \\ref (for instance "Figure~\\ref{fig:x} shows..."), or remove the ones nothing discusses.',
+                'Richiamare nel testo ogni figura o tabella elencata con un \\ref (ad esempio "la Figura~\\ref{fig:x} mostra..."), oppure rimuovere quelle di cui non si parla.'
+            ),
         run(docs) {
             const labels = []
             const used = new Set()
@@ -1657,6 +1672,11 @@ export const CHECKS = {
 
     'numbered-equations': {
         describe: 'display equations are numbered, so they can be referred to',
+        fix: () =>
+            L(
+                'Replace the starred or bare display environments with numbered ones: equation instead of equation*, \\[...\\] or $$...$$, align instead of align*.',
+                'Sostituire gli ambienti asteriscati o nudi con quelli numerati: equation al posto di equation*, \\[...\\] o $$...$$, align al posto di align*.'
+            ),
         run(docs) {
             const bad = []
             let total = 0
@@ -1739,6 +1759,11 @@ export const CHECKS = {
 
     'acronym-first-use': {
         describe: 'the first appearance of an acronym in the text spells it out',
+        fix: () =>
+            L(
+                'Spell each listed acronym out at its first use, "Full Name (ACRONYM)", and use the short form from there on.',
+                'Scrivere ogni acronimo elencato per esteso al primo uso, "Nome Esteso (ACRONIMO)", e da lì in poi usare la forma breve.'
+            ),
         run(docs) {
             const declared = collectDeclaredAcronyms(docs)
             // The per-acronym scan below is capped (see MAX_ACRONYMS_SCANNED); the
@@ -1888,11 +1913,19 @@ export const CHECKS = {
                         `Tutti i ${checked} acronimi usati nel testo sono scritti per esteso alla prima occorrenza.`
                     ) + acronymCapNote(capped, declaredTotal)
                 )
+            // The summary sentence NAMES the acronyms. The report folds a long
+            // evidence list behind its first entry, so a reader who unfolds nothing
+            // must still learn which short forms this is about, not just how many.
+            const names = [
+                ...new Set(bad.map(b => (/^"([^"]{1,40})"/.exec(b.what) || [])[1]).filter(Boolean)),
+            ]
+            const shownNames = names.slice(0, 10).join(', ')
+            const named = names.length > 10 ? `${shownNames}, ...` : shownNames
             return result(
                 'missing',
                 L(
-                    `${bad.length} of ${checked} acronyms are not spelled out at first use: ${listing(bad)}`,
-                    `${bad.length} acronimi su ${checked} non sono scritti per esteso alla prima occorrenza: ${listing(
+                    `${bad.length} of ${checked} acronyms (${named}) are not spelled out at first use: ${listing(bad)}`,
+                    `${bad.length} acronimi su ${checked} (${named}) non sono scritti per esteso alla prima occorrenza: ${listing(
                         bad
                     )}`
                 ) + acronymCapNote(capped, declaredTotal),
@@ -1903,6 +1936,11 @@ export const CHECKS = {
 
     'acronyms-in-headings': {
         describe: 'chapter and section titles contain no acronym',
+        fix: () =>
+            L(
+                'Rewrite the listed headings with the spelled-out form, and keep the acronym for the body text.',
+                "Riscrivere i titoli elencati con la forma estesa, lasciando l'acronimo al corpo del testo."
+            ),
         // Product names set in capitals are not acronyms to keep out of titles:
         // "Appendice A -- Codice MATLAB" says what the appendix IS, and no
         // reader needs MATLAB expanded. Exempt on EVERY route into this check,
@@ -2047,6 +2085,11 @@ const PLACEABLE_FLOATS = FLOAT_ENVIRONMENTS.filter(name => name !== 'longtable')
 
 CHECKS['float-centered'] = {
     describe: 'floats are centred and none of them lets the text wrap around it',
+    fix: () =>
+        L(
+            'Add \\centering right after \\begin{figure} or \\begin{table} in the listed floats, and replace wrapfigure/wraptable with regular floats.',
+            'Aggiungere \\centering subito dopo \\begin{figure} o \\begin{table} nei flottanti elencati, e sostituire wrapfigure/wraptable con flottanti normali.'
+        ),
     run(docs) {
         const bad = []
         let total = 0
@@ -2180,6 +2223,11 @@ const NUMBERED_OBJECT_WORDS = [
 
 CHECKS['manual-numbering'] = {
     describe: 'no cross-reference is written by hand as a literal number',
+    fix: () =>
+        L(
+            "Replace each hand-written number with a \\ref (or \\eqref) tied to the object's \\label, so renumbering cannot break the text.",
+            "Sostituire ogni numero scritto a mano con un \\ref (o \\eqref) legato alla \\label dell'oggetto, così una rinumerazione non può rompere il testo."
+        ),
     run(docs) {
         const words = [...new Set([...learnReferenceWords(docs), ...NUMBERED_OBJECT_WORDS])]
         // Digits may carry a subsection tail ("figura 3.2"), and the evidence quotes
@@ -2359,6 +2407,11 @@ const INTERVAL_TAIL_AFTER = /^\s*[\])]/
 
 CHECKS['decimal-separator'] = {
     describe: 'one decimal separator is used throughout, either the point or the comma',
+    fix: () =>
+        L(
+            'Pick one decimal separator and rewrite the listed values so the whole document uses it.',
+            'Scegliere un solo separatore decimale e riscrivere i valori elencati perché tutto il documento usi quello.'
+        ),
     run(docs) {
         const seen = { '.': [], ',': [] }
         // The "=", "{" and "[" guards are shared with unit-spacing: a number after
@@ -2756,6 +2809,11 @@ const SIUNITX_UNIT_AFTER_NUMBER =
 CHECKS['unit-spacing'] = {
     describe:
         'every value is separated from its unit by a space or a thin space (\\,), never by a comma or by nothing',
+    fix: () =>
+        L(
+            'Put a space or a thin space (\\,) between each listed value and its unit, or typeset them with siunitx.',
+            "Separare ogni valore elencato dalla sua unità con uno spazio o uno spazio fine (\\,), oppure comporli con siunitx."
+        ),
     run(docs) {
         const bad = []
         let good = 0
@@ -2857,6 +2915,11 @@ CHECKS['unit-spacing'] = {
 
 CHECKS['urls-in-text'] = {
     describe: 'references live in the bibliography, not as bare links typed into the prose',
+    fix: () =>
+        L(
+            'Turn each bare link into a bibliography entry cited from the text, or into a footnote where the guidelines allow it.',
+            'Trasformare ogni link nudo in una voce di bibliografia citata dal testo, o in una nota a piè di pagina dove le linee guida lo consentono.'
+        ),
     run(docs) {
         const bad = []
         for (const doc of sources(docs)) {
@@ -2914,6 +2977,11 @@ const SCAFFOLD_PHRASES =
 
 CHECKS['work-markers'] = {
     describe: 'no editing marker is left in the text (TODO, FIXME, \\todo{})',
+    fix: () =>
+        L(
+            'Resolve and delete the listed work markers before submission.',
+            'Risolvere ed eliminare i segni di lavorazione elencati prima della consegna.'
+        ),
     run(docs) {
         // Only the markers that are universal in LaTeX and in code. Language-specific
         // phrases ("da rivedere", "to be completed") are policy and belong to the
@@ -2985,6 +3053,11 @@ CHECKS['work-markers'] = {
 
 CHECKS['crossrefs-resolve'] = {
     describe: 'every \\ref points at a label that exists',
+    fix: () =>
+        L(
+            'Fix or remove each \\ref that points at no \\label: in the PDF it prints as ??.',
+            'Correggere o rimuovere ogni \\ref che non punta a nessuna \\label: nel PDF appare come ??.'
+        ),
     run(docs) {
         const defined = new Set()
         // \hypertarget/\hyperlink are the same contract as \label/\ref, written by
@@ -3100,6 +3173,11 @@ const CITE_COMMAND =
 
 CHECKS['citations-resolve'] = {
     describe: 'every \\cite key exists in the bibliography',
+    fix: () =>
+        L(
+            'Add the missing entries to the bibliography, or correct the \\cite keys.',
+            'Aggiungere le voci mancanti alla bibliografia, oppure correggere le chiavi dei \\cite.'
+        ),
     run(docs) {
         const bibs = bibliographies(docs)
         // The keys a \cite may point at come from BOTH kinds of bibliography: the
@@ -3233,6 +3311,11 @@ const BIB_VENUE_FIELD = {
 
 CHECKS['bib-entries-complete'] = {
     describe: 'every bibliography entry carries an author, a title, a year and its publication venue',
+    fix: () =>
+        L(
+            'Complete the listed entries with the missing author, title, year or publication venue.',
+            'Completare le voci elencate con autore, titolo, anno o sede di pubblicazione mancanti.'
+        ),
     run(docs) {
         const bibs = bibliographies(docs)
         if (bibs.length === 0) {
@@ -3302,6 +3385,11 @@ CHECKS['bib-entries-complete'] = {
 
 CHECKS['no-wikipedia'] = {
     describe: 'no source is Wikipedia',
+    fix: () =>
+        L(
+            "Replace each Wikipedia citation with a primary source: the references at the bottom of the article are the place to start.",
+            'Sostituire ogni citazione di Wikipedia con una fonte primaria: i riferimenti in fondo alla voce sono il punto di partenza.'
+        ),
     run(docs) {
         const bad = []
         for (const doc of docs) {
@@ -3370,6 +3458,11 @@ function acronymCapNote(capped, total) {
 
 CHECKS['acronyms-declared-unused'] = {
     describe: 'the acronym list carries no entry the text never uses',
+    fix: () =>
+        L(
+            'Remove the listed unused entries from the acronym list, or use them in the text.',
+            'Rimuovere dalla lista degli acronimi le voci inutilizzate elencate, oppure usarle nel testo.'
+        ),
     run(docs) {
         const declared = collectDeclaredAcronyms(docs)
         if (declared.size === 0)
@@ -3478,6 +3571,11 @@ function abstractBody(marker, after) {
 
 CHECKS['has-abstract'] = {
     describe: 'the document carries an abstract',
+    fix: () =>
+        L(
+            'Write the abstract where the template expects it.',
+            "Scrivere l'abstract dove il modello lo prevede."
+        ),
     run(docs) {
         // Up to two formatting commands may stand before the name: templates write
         // `\chapter*{\centering Abstract}`, and refusing the \centering answered
@@ -3565,6 +3663,11 @@ CHECKS['has-abstract'] = {
 
 CHECKS['has-bibliography'] = {
     describe: 'the document carries a bibliography',
+    fix: () =>
+        L(
+            'Add the bibliography (\\printbibliography or \\bibliography{...}) and cite the sources from the text.',
+            'Aggiungere la bibliografia (\\printbibliography o \\bibliography{...}) e citare le fonti dal testo.'
+        ),
     run(docs) {
         for (const doc of sources(docs)) {
             const at = lineLookup(doc.text)
@@ -3663,6 +3766,11 @@ const MAX_TITLE_BUCKET = 8
 
 CHECKS['bib-duplicates'] = {
     describe: 'no two bibliography entries are the same work under two different keys',
+    fix: () =>
+        L(
+            'Keep one entry per work, delete the duplicates, and point every \\cite at the surviving key.',
+            'Tenere una sola voce per opera, eliminare i duplicati e far puntare ogni \\cite alla chiave superstite.'
+        ),
     run(docs) {
         const entries = []
         for (const doc of bibliographies(docs)) {
@@ -3907,6 +4015,11 @@ function collectDeclaredSymbols(docs) {
 
 CHECKS['symbol-list'] = {
     describe: 'the list of symbols matches the symbols the maths actually uses',
+    fix: () =>
+        L(
+            'Align the symbol list with the maths: add the missing symbols and remove the entries nothing uses.',
+            'Allineare la lista dei simboli alla matematica: aggiungere i simboli mancanti e togliere le voci che non vengono usate.'
+        ),
     run(docs) {
         const declared = collectDeclaredSymbols(docs)
         const used = new Set()
@@ -4081,6 +4194,11 @@ function plainDifferential(text, index) {
 
 CHECKS['math-notation'] = {
     describe: 'the maths is written one way throughout: operator names, vectors and differentials',
+    fix: () =>
+        L(
+            'Choose one convention for each listed pair and rewrite the minority spelling.',
+            'Scegliere una convenzione per ogni coppia elencata e riscrivere la grafia minoritaria.'
+        ),
     run(docs) {
         const bare = []
         const withBackslash = new Set()
@@ -4261,6 +4379,11 @@ const CAPTION_ARGUMENT = /\\caption(?:of\s*\{[^}]{0,400}\})?\*?\s*(?:\[[^\]]{0,2
 
 CHECKS['tables-as-images'] = {
     describe: 'a table is typeset as a table, not pasted in as a picture',
+    fix: () =>
+        L(
+            'Re-typeset each listed picture as a real table (tabular): text inside an image cannot be searched and does not match the document font.',
+            'Ricomporre ogni immagine elencata come vera tabella (tabular): il testo dentro un\'immagine non si può cercare e non segue il carattere del documento.'
+        ),
     run(docs) {
         const bad = []
         let total = 0
@@ -4408,6 +4531,11 @@ function collectHeadings(text) {
 
 CHECKS['heading-sequence'] = {
     describe: 'no heading is immediately followed by another, and no division carries a single subdivision',
+    fix: () =>
+        L(
+            'Write at least a linking paragraph between two stacked headings, and give each division two subdivisions or none.',
+            'Scrivere almeno un paragrafo di raccordo tra due titoli consecutivi, e dare a ogni divisione due sottodivisioni o nessuna.'
+        ),
     run(docs) {
         const empty = []
         const lonely = []
@@ -4526,6 +4654,11 @@ function appendixRegions(text) {
 
 CHECKS['appendix-referenced'] = {
     describe: 'every appendix is referred to at least once from the text',
+    fix: () =>
+        L(
+            'Refer to each listed appendix from the main text, or move its content back into the document.',
+            'Richiamare ogni appendice elencata dal testo principale, oppure riportarne il contenuto nel documento.'
+        ),
     run(docs) {
         const mainUses = new Set()
         const appendixUses = new Set()
@@ -4693,6 +4826,11 @@ function sameStyleName(a, b) {
 
 CHECKS['reference-style-mixing'] = {
     describe: 'a numbered object is called the same way before every reference to it',
+    fix: () =>
+        L(
+            'Pick one way to name each object (for instance always "Figure", never "Fig." and "Figure" mixed) and apply it to the listed references.',
+            'Scegliere un solo modo di chiamare ogni oggetto (ad esempio sempre "Figura", mai "Fig." e "Figura" alternati) e applicarlo ai richiami elencati.'
+        ),
     run(docs) {
         const words = [...new Set([...learnReferenceWords(docs), ...NUMBERED_OBJECT_WORDS])]
         // The same hand-written numbers manual-numbering finds, read here for their
@@ -4846,6 +4984,11 @@ function proseWords(text, into, where) {
 
 CHECKS['italic-coherence'] = {
     describe: 'a word is either emphasised throughout the document or nowhere',
+    fix: () =>
+        L(
+            'Decide for each listed word whether it is emphasised, and make every occurrence match.',
+            'Decidere per ogni parola elencata se va in corsivo, e uniformare tutte le occorrenze.'
+        ),
     run(docs) {
         const italic = new Map()
         const plain = new Map()
@@ -4921,6 +5064,11 @@ const TIE_CANDIDATE = /\\(?!href|hyperref|nocite)([a-zA-Z]{0,32}(?:ref|cite[a-zA
 
 CHECKS['tie-before-ref'] = {
     describe: 'a reference or citation is tied to the word before it with ~, not left on a breakable space',
+    fix: () =>
+        L(
+            'Replace the breakable space with ~ in the listed places (Figure~\\ref{...}, word~\\cite{...}).',
+            'Sostituire lo spazio normale con ~ nei punti elencati (Figura~\\ref{...}, parola~\\cite{...}).'
+        ),
     run(docs) {
         const breakable = []
         const glued = []
@@ -5080,6 +5228,11 @@ function isGermanShorthand(text, index) {
 
 CHECKS['typographic-input'] = {
     describe: 'quotation marks and ellipses are written the way LaTeX typesets them',
+    fix: () =>
+        L(
+            "Rewrite the listed characters the LaTeX way: `` and '' for quotation marks, \\dots for ellipses.",
+            "Riscrivere i caratteri elencati alla maniera LaTeX: `` e '' per le virgolette, \\dots per i puntini di sospensione."
+        ),
     run(docs) {
         const bad = []
         let quotes = 0
@@ -5184,6 +5337,11 @@ const LATEX_ACCENT = /\\[`'^"~=.]\s*\{?[a-zA-Z]/
 
 CHECKS['language-support'] = {
     describe: 'the preamble declares the language the document is written in (babel or polyglossia)',
+    fix: () =>
+        L(
+            'Declare the document language in the preamble, for instance \\usepackage[italian]{babel}.',
+            'Dichiarare la lingua del documento nel preambolo, ad esempio \\usepackage[italian]{babel}.'
+        ),
     run(docs) {
         if (!LANG_DECLARED)
             return result(
@@ -5451,6 +5609,11 @@ function citationSetupVerdict(docs, wanted) {
 
 CHECKS['citation-setup-authoryear'] = {
     describe: 'the preamble sets an author-year citation style (natbib options, biblatex style, .bst name)',
+    fix: () =>
+        L(
+            'Set an author-year citation style in the preamble: natbib with authoryear/round options, a biblatex authoryear style, or an author-year .bst such as apalike.',
+            'Impostare nel preambolo uno stile di citazione autore-anno: natbib con le opzioni authoryear/round, uno stile biblatex authoryear, o un .bst autore-anno come apalike.'
+        ),
     run(docs) {
         return citationSetupVerdict(docs, 'authoryear')
     },
@@ -5458,6 +5621,11 @@ CHECKS['citation-setup-authoryear'] = {
 
 CHECKS['citation-setup-numeric'] = {
     describe: 'the preamble sets a numeric citation style (natbib options, biblatex style, .bst name)',
+    fix: () =>
+        L(
+            'Set a numeric citation style in the preamble: natbib with the numbers option, a biblatex numeric style, or a numeric .bst such as plain.',
+            "Impostare nel preambolo uno stile di citazione numerico: natbib con l'opzione numbers, uno stile biblatex numeric, o un .bst numerico come plain."
+        ),
     run(docs) {
         return citationSetupVerdict(docs, 'numeric')
     },
@@ -5465,6 +5633,11 @@ CHECKS['citation-setup-numeric'] = {
 
 CHECKS['citation-setup-consistent'] = {
     describe: 'the preamble declares one citation setup, not a contradiction of styles',
+    fix: () =>
+        L(
+            'Keep one citation setup and remove the package options or styles that contradict it.',
+            'Tenere una sola configurazione di citazione e rimuovere le opzioni o gli stili che la contraddicono.'
+        ),
     run(docs) {
         return citationSetupVerdict(docs, 'consistent')
     },
@@ -5512,6 +5685,11 @@ const SENTENCE_TABLE_DEBRIS = /[&]|\\\\|\\(?:hline|multirow|multicolumn|toprule|
 
 CHECKS['long-sentences'] = {
     describe: `no prose sentence runs past ${SENTENCE_WORD_LIMIT} words (lists, tables and formulas excluded)`,
+    fix: () =>
+        L(
+            'Split the listed sentences: two short sentences carry the same content more clearly than one long one.',
+            'Spezzare i periodi elencati: due frasi brevi portano lo stesso contenuto più chiaramente di una lunga.'
+        ),
     run(docs) {
         const over = []
         let sentencesRead = 0
@@ -5632,6 +5810,11 @@ const LIST_MEMBERSHIP_STOPWORDS = new Set(['ID'])
 
 CHECKS['acronyms-missing-from-list'] = {
     describe: 'no short form used repeatedly in the text is missing from the acronym list',
+    fix: () =>
+        L(
+            'Add the listed short forms to the acronym list, or spell them out if they appear only a few times.',
+            'Aggiungere le forme brevi elencate alla lista degli acronimi, oppure scriverle per esteso se compaiono poche volte.'
+        ),
     run(docs) {
         const declared = collectDeclaredAcronyms(docs)
         if (declared.size === 0)
@@ -5762,6 +5945,11 @@ const LABEL_DEFINITION = /\\label\s*\{\s*([^{}]{1,200}?)\s*\}/g
 
 CHECKS['unique-labels'] = {
     describe: 'no \\label name is defined twice (a duplicate silently rebinds every \\ref)',
+    fix: () =>
+        L(
+            'Rename the duplicated \\label so every name is unique, and update the \\ref that point at it.',
+            'Rinominare le \\label duplicate perché ogni nome sia unico, e aggiornare i \\ref che le usano.'
+        ),
     run(docs) {
         const { docs: reachable, rooted } = reachableSources(docs)
         const definitions = new Map()
@@ -5921,7 +6109,19 @@ export function runCheck(name, docs) {
                 )
             )
         }
-        return check.run(sanitised)
+        const outcome = check.run(sanitised)
+        // The check's own "what to do", evaluated HERE so it speaks the language
+        // withChecksLanguage set for this call, and attached only when there is
+        // something to do: a suggestion under a met requirement asks the reader
+        // to fix what is fine.
+        if (
+            (outcome.status === 'missing' || outcome.status === 'partial') &&
+            typeof check.fix === 'function' &&
+            !outcome.fix
+        ) {
+            outcome.fix = check.fix()
+        }
+        return outcome
     } catch (err) {
         return result(
             'na',
