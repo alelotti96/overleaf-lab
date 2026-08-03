@@ -524,6 +524,42 @@ check('no declared acronyms is na', status('acronym-first-use', 'text') === 'na'
     ]
     check('and so is the expansion written after it', runCheck('acronym-first-use', other).status === 'na')
 
+    // ADJUDICATED LESSON (122 hand-judged findings): an acronym the author DOES spell
+    // out, only later than its first use, is a different and milder defect than one
+    // never expanded anywhere, and "never spelled out" is false for the former. The
+    // scan reads every use, so the evidence must say which of the two cases it found.
+    check('the never-expanded case says so', /never spelled out and never declared/.test(r.evidence), r.evidence)
+    const late = [
+        { path: '/c1.tex', text: 'The FGS acquires the target.\nThe FGS locks on the star.' },
+        { path: '/c2.tex', text: 'The Fine Guidance Sensor (FGS) is described here.\nThe FGS output feeds the loop.' },
+    ]
+    const lateRun = runCheck('acronym-first-use', late)
+    check('a late expansion is still a finding', lateRun.status === 'missing', lateRun.evidence)
+    check(
+        'worded as spelled out only later, with where',
+        /spelled out only later \(\/c2\.tex, line 1\)/.test(lateRun.evidence),
+        lateRun.evidence
+    )
+    check('and never as "never spelled out"', !/never spelled out/.test(lateRun.evidence), lateRun.evidence)
+    check(
+        'still located at the first use',
+        lateRun.locations[0]?.path === '/c1.tex' && lateRun.locations[0]?.line === 1,
+        JSON.stringify(lateRun.locations)
+    )
+    // The list-membership check is about the LIST: a late expansion in the prose does
+    // not put the token in the list, so it must stay reported there, and its wording
+    // ("not in the list") makes no "never expanded" claim to soften.
+    const lateListed = [
+        { path: '/acronyms.tex', text: R`\acro{ADCS}{Attitude Determination and Control System}` },
+        ...late,
+    ]
+    const listRun = runCheck('acronyms-missing-from-list', lateListed)
+    check(
+        'a late-expanded token is still missing from the list',
+        listRun.status === 'missing' && /FGS/.test(listRun.evidence),
+        listRun.evidence
+    )
+
     // a DECLARED and expanded acronym is not reported twice over
     const declaredToo = [
         { path: '/acronyms.tex', text: R`\acro{NASA}{National Aeronautics and Space Administration}` },

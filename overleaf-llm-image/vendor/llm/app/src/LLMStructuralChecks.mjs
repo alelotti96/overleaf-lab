@@ -1128,10 +1128,28 @@ function headingTitleSpans(text) {
     return mergeSpans(collectHeadings(text).map(h => [h.index, h.bodyStart]))
 }
 
+// Whether THIS use of a token sits in the parenthetical shape of an expansion:
+// either the token is inside the parenthesis ("Japan Aerospace Exploration Agency
+// (JAXA)") or the parenthesis opens right after it ("JAXA (Japan Aerospace
+// Exploration Agency)"). One predicate, so the first-use exemption below and the
+// late-expansion detection can never disagree about what an expansion looks like.
+function parentheticalExpansionAt(prose, index, end) {
+    return (
+        /\(\s*$/.test(prose.slice(Math.max(0, index - EXPANSION_PAREN_SPAN), index)) ||
+        /^\s*\(/.test(prose.slice(end, end + EXPANSION_PAREN_SPAN))
+    )
+}
+
 // `keepExpanded` keeps the tokens whose first prose use carries a parenthetical
 // expansion. acronyms-in-headings needs them: an author who expands KKT at its first
 // use did right by first-use, but "KKT problem creation" is still a title with an
 // acronym in it, and the two requirements are different questions.
+//
+// Each found token also says whether a LATER use carries the parenthetical
+// (`expandedLater`, with where). Adjudicated on real theses: an author who spells
+// the short form out late has a different, milder defect than one who never
+// expands it, and the caller must be able to word the two apart, because "never
+// spelled out" is simply false for the former.
 function findUndeclaredAcronyms(scannable, declared, options = {}) {
     const uses = new Map()
     for (const doc of scannable) {
@@ -1151,10 +1169,21 @@ function findUndeclaredAcronyms(scannable, declared, options = {}) {
             if (insideSpans(titles, m.index)) continue
             const line = doc.at(m.index)
             if (capsLine[line - 1]) continue
-            if (!uses.has(token)) uses.set(token, { count: 0, first: null })
+            if (!uses.has(token)) uses.set(token, { count: 0, first: null, expandedLater: null })
             const entry = uses.get(token)
             entry.count += 1
-            if (!entry.first) entry.first = { path: doc.path, line, prose, index: m.index }
+            if (!entry.first) {
+                entry.first = {
+                    path: doc.path,
+                    line,
+                    expanded: parentheticalExpansionAt(prose, m.index, m.index + token.length),
+                }
+            } else if (
+                !entry.expandedLater &&
+                parentheticalExpansionAt(prose, m.index, m.index + token.length)
+            ) {
+                entry.expandedLater = { path: doc.path, line }
+            }
         }
     }
     const found = []
@@ -1162,16 +1191,17 @@ function findUndeclaredAcronyms(scannable, declared, options = {}) {
         // Used once or twice is a passing mention - a mission name in a caption, a
         // file format in a footnote - and demanding an expansion there is noise.
         if (entry.count < MIN_UNDECLARED_USES) continue
-        // An expansion written into the prose is the author doing the right thing
-        // without an acronym list: "Japan Aerospace Exploration Agency (JAXA)", or
-        // "JAXA (Japan Aerospace Exploration Agency)".
-        if (!options.keepExpanded) {
-            const { prose, index } = entry.first
-            const end = index + token.length
-            if (/\(\s*$/.test(prose.slice(Math.max(0, index - EXPANSION_PAREN_SPAN), index))) continue
-            if (/^\s*\(/.test(prose.slice(end, end + EXPANSION_PAREN_SPAN))) continue
-        }
-        found.push({ token, count: entry.count, path: entry.first.path, line: entry.first.line })
+        // An expansion written into the prose at the first use is the author doing
+        // the right thing without an acronym list: "Japan Aerospace Exploration
+        // Agency (JAXA)", or "JAXA (Japan Aerospace Exploration Agency)".
+        if (!options.keepExpanded && entry.first.expanded) continue
+        found.push({
+            token,
+            count: entry.count,
+            path: entry.first.path,
+            line: entry.first.line,
+            expandedLater: entry.expandedLater,
+        })
     }
     return found
 }
@@ -1815,13 +1845,23 @@ export const CHECKS = {
             // the declaration missing as well.
             for (const found of findUndeclaredAcronyms(scannable, declared)) {
                 checked += 1
+                // The two wordings are different verdicts on purpose (adjudicated on
+                // real theses): an author who expands the short form later than its
+                // first use is told to move the expansion, not accused of never
+                // having written it. "Never spelled out" is reserved for the token
+                // the scan saw expanded nowhere, and the scan did read every use.
                 bad.push({
                     path: found.path,
                     line: found.line,
-                    what: `"${found.token}" ${L(
-                        `is used ${found.count} times, never spelled out and never declared`,
-                        `usato ${found.count} volte, mai scritto per esteso e mai dichiarato`
-                    )}`,
+                    what: found.expandedLater
+                        ? `"${found.token}" ${L(
+                              `is used ${found.count} times and spelled out only later (${found.expandedLater.path}, line ${found.expandedLater.line}), not at its first use`,
+                              `usato ${found.count} volte e scritto per esteso solo più avanti (${found.expandedLater.path}, riga ${found.expandedLater.line}), non al primo uso`
+                          )}`
+                        : `"${found.token}" ${L(
+                              `is used ${found.count} times, never spelled out and never declared`,
+                              `usato ${found.count} volte, mai scritto per esteso e mai dichiarato`
+                          )}`,
                 })
             }
             if (declared.size === 0 && checked === 0)

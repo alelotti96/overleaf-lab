@@ -54,6 +54,23 @@ check('prompt hands the acronym verdict to the guidelines', /for the guidelines 
 check('prompt explains starred equation numbering', review.includes('equation*'))
 check('prompt still forbids line/equation numbers', /NEVER mention line numbers/.test(review))
 
+// ---- the transversal adjudication lessons live in the prompts, not in one rubric ----
+// 122 hand-judged findings: the recurring false positives that no single requirement
+// anchor can carry, because any rule can be quoted by the document and any evidence
+// field can invent a total or a "never".
+check(
+    'rule-describing text is not a violation',
+    /describing the rule, not violating it/.test(review)
+)
+check(
+    'invented totals are forbidden',
+    /Never assert an exact count/.test(review) && /"at least N"/.test(review)
+)
+check(
+    'never-claims are scoped to the text shown',
+    /not defined in that chapter, not that it is never defined/.test(review)
+)
+
 // ---- the admin display must not prefill defaults ----
 const admin = fs.readFileSync(path.join(SRC, 'LLMAdminController.mjs'), 'utf8')
 check(
@@ -101,6 +118,13 @@ check(
     check(
         'and no longer invites the rejection story into the evidence',
         !/why the finding was rejected/.test(controllerSrc)
+    )
+    // The per-candidate pass is where a quoted rule most often surfaces (the pattern
+    // that generated the candidate has no idea it is reading the rule's own text), so
+    // the candidates prompt must carry the same lesson as the review prompt above.
+    check(
+        'the candidates prompt refuses rule-quoting passages too',
+        /does not violate the rule it describes/.test(controllerSrc)
     )
 }
 
