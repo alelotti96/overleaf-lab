@@ -766,6 +766,7 @@ export const DEFAULT_LOANWORDS = [
     'default', 'standard', 'performance', 'docking', 'thruster', 'launcher',
     'lander', 'rover', 'flyby', 'downlink', 'uplink', 'housekeeping', 'jitter',
     'detumbling', 'deployment', 'deployer', 'tracking', 'pointing', 'imaging',
+    'servicing', 'servicer', 'deorbit', 'deorbiting', 'stationkeeping', 'rendezvous',
     'rendering', 'mesh', 'texture', 'shader', 'slot', 'chip', 'chipset', 'board',
 ]
 
@@ -833,6 +834,7 @@ function emptyTotals() {
         shown: 0,
         droppedByWhitelist: 0,
         droppedAsVocabulary: 0,
+        droppedAsForeign: 0,
         filtered: 0,
         chunks: 0,
         chunksSkipped: 0,
@@ -909,6 +911,9 @@ export async function checkDocuments(docs, options = {}) {
     const endpoint = checkEndpoint(url)
     const totals = emptyTotals()
     const stored = []
+    // Spelling findings park here instead of going straight into `stored`: they
+    // are resolved in ONE batched cross-language call after the scan (see below).
+    const pendingSpellings = []
 
     const inspected = (docs || []).filter(
         doc =>
@@ -918,17 +923,25 @@ export async function checkDocuments(docs, options = {}) {
             !TITLE_PAGE_FILES.test(String(doc.path || ''))
     )
 
-    // The document's own vocabulary, project-wide. A word the dictionary does
-    // not know but the author uses FOUR or more times is terminology, not a
-    // typo: "plenottica", "dataset" and "rendering" each came back dozens of
-    // times on a real thesis, burying the two genuine misspellings. Four and
-    // not three, measured: "superfice" appeared three times in a published
-    // thesis as a REAL recurring typo, and it must keep firing.
+    // The document's own vocabulary, project-wide, counted BY STEM. A word the
+    // dictionary does not know but the author uses FOUR or more times is
+    // terminology, not a typo: "plenottica", "dataset" and "rendering" each came
+    // back dozens of times on a real thesis, burying the two genuine
+    // misspellings. Four and not three, measured: "superfice" appeared three
+    // times in a published thesis as a REAL recurring typo, and it must keep
+    // firing. The stem (final -s and final vowel folded) is what lets the
+    // INFLECTED forms count together: "plenottici" was reported as a fresh typo
+    // on a document that used "plenottica" thirty times.
+    const stemOf = word =>
+        word
+            .toLowerCase()
+            .replace(/s$/, '')
+            .replace(/[aeio]$/, '')
     const vocabulary = new Map()
     for (const doc of inspected) {
-        for (const m of toProse(doc.text).matchAll(/\p{L}{4,}/gu)) {
-            const word = m[0].toLowerCase()
-            vocabulary.set(word, (vocabulary.get(word) || 0) + 1)
+        for (const m of toProse(doc.text).matchAll(/[\p{L}-]{4,}/gu)) {
+            const stem = stemOf(m[0])
+            vocabulary.set(stem, (vocabulary.get(stem) || 0) + 1)
         }
     }
 
@@ -1018,26 +1031,47 @@ export async function checkDocuments(docs, options = {}) {
                         totals.filtered += 1
                         continue
                     }
+                    // The STYLE rules of the Italian pack (ST_*: the d eufonica
+                    // note, "output" with Italian alternatives offered). Advice,
+                    // not error, and the requirement this check answers says
+                    // spelling and grammar. Ids measured on the live engine.
+                    if (/^ST_\d/.test(ruleId)) {
+                        totals.filtered += 1
+                        continue
+                    }
                     // ---- the domain dictionary, counted apart ----
                     if (isWhitelisted(dictionary, flagged)) {
                         totals.droppedByWhitelist += 1
+                        continue
+                    }
+                    const spellingRule = category === 'TYPOS' || ruleId.startsWith('MORFOLOGIK')
+                    // A Capitalised unknown word in MID-sentence is a proper noun
+                    // (Space Economy, Sputnik, Cycles): student typos are rarely
+                    // capitalised, and names of products and programmes are
+                    // endless. At a sentence start nothing can be told, so it
+                    // stays a finding there (and the cross-check below still
+                    // gets a say).
+                    if (
+                        spellingRule &&
+                        /^\p{Lu}[\p{Ll}\p{Lu}-]+$/u.test(flagged) &&
+                        !/(?:^|[.:;!?]\s{0,10}|\n[ \t]*\n[ \t]*)$/.test(source.slice(Math.max(0, start - 40), start))
+                    ) {
+                        totals.filtered += 1
                         continue
                     }
                     // ---- the document's own vocabulary (see the map above) ----
                     // Spelling rules only: a grammar finding on a frequent word
                     // ("la dataset" for "il dataset") is still a finding.
                     if (
-                        (category === 'TYPOS' || ruleId.startsWith('MORFOLOGIK')) &&
-                        /^\p{L}+$/u.test(flagged) &&
-                        (vocabulary.get(flagged.toLowerCase()) || 0) >= 4
+                        spellingRule &&
+                        /^[\p{L}-]+$/u.test(flagged) &&
+                        (vocabulary.get(stemOf(flagged)) || 0) >= 4
                     ) {
                         totals.droppedAsVocabulary += 1
                         continue
                     }
-                    totals.kept += 1
-                    if (stored.length >= MAX_STORED_MATCHES) continue
                     const replacements = Array.isArray(match.replacements) ? match.replacements : []
-                    stored.push({
+                    const record = {
                         file: doc.path,
                         line: at(start),
                         ruleId,
@@ -1062,7 +1096,15 @@ export async function checkDocuments(docs, options = {}) {
                             ),
                             SUGGESTION_MAX_CHARS
                         ),
-                    })
+                    }
+                    // A spelling finding waits for the cross-language verdict
+                    // below; everything else is final here.
+                    if (spellingRule && /^[\p{L}-]{3,}$/u.test(flagged)) {
+                        pendingSpellings.push({ record, word: flagged })
+                    } else {
+                        totals.kept += 1
+                        if (stored.length < MAX_STORED_MATCHES) stored.push(record)
+                    }
                 }
             }
         }
@@ -1078,6 +1120,49 @@ export async function checkDocuments(docs, options = {}) {
             matches: [],
             totals: emptyTotals(),
             error: clip(err && err.message ? err.message : String(err), 200),
+        }
+    }
+
+    // ---- the foreign-word cross-check, one batched call ----
+    // A whitelist of anglicisms loses by construction: every thesis brings new
+    // ones. The OTHER dictionary of the same engine is the authority that
+    // scales: a word the Italian speller rejects but the English speller
+    // accepts is a foreign term in the prose, not a typo (and symmetrically
+    // for an English thesis quoting Italian). One request for the whole
+    // project. On ANY failure the findings are KEPT: a proof-reader hiccup
+    // must not absolve real typos.
+    // `crossCheck: false` exists for the suite, whose offset-pinned stubs cannot
+    // answer a second request meaningfully. Production always leaves it on.
+    const crossEnabled = options.crossCheck !== false
+    if (pendingSpellings.length) {
+        const foreign = new Set()
+        try {
+            if (!crossEnabled) throw new Error('cross-check disabled')
+            const crossLanguage = String(language).toLowerCase().startsWith('it') ? 'en-US' : 'it'
+            const unique = [...new Set(pendingSpellings.map(p => p.word.toLowerCase()))]
+            const crossText = unique.join('\n')
+            const crossBody = new URLSearchParams({ text: crossText, language: crossLanguage, enabledOnly: 'false' })
+            const crossMatches = await postCheck(endpoint, crossBody, { fetchImpl, timeoutMs, signal: options.signal })
+            const flaggedThere = new Set()
+            for (const m of crossMatches) {
+                const s = Number(m.offset) || 0
+                const e = s + (Number(m.length) || 0)
+                const w = crossText.slice(s, e).toLowerCase()
+                if (w) flaggedThere.add(w)
+            }
+            for (const w of unique) {
+                if (!flaggedThere.has(w)) foreign.add(w)
+            }
+        } catch (err) {
+            foreign.clear()
+        }
+        for (const p of pendingSpellings) {
+            if (foreign.has(p.word.toLowerCase())) {
+                totals.droppedAsForeign += 1
+                continue
+            }
+            totals.kept += 1
+            if (stored.length < MAX_STORED_MATCHES) stored.push(p.record)
         }
     }
 

@@ -425,7 +425,9 @@ const DOCUMENT = [
 
     const run = async spans => {
         const stub = stubFetch(() => spans.map(s => matchAt(s.offset, s.length, s.opts)))
-        return LT.checkDocuments(doc, { language: 'en', url: URL_UNDER_TEST, fetchImpl: stub })
+        // crossCheck off: these stubs pin offsets into THIS fixture, and the
+        // batched foreign-word request would read them as nonsense slices.
+        return LT.checkDocuments(doc, { language: 'en', url: URL_UNDER_TEST, fetchImpl: stub, crossCheck: false })
     }
 
     // 1. Entirely inside a command token. The transform already blanks it, so this is
@@ -451,12 +453,21 @@ const DOCUMENT = [
     report = await run([flag('result')])
     check('while a real word in the same sentence is kept', report.matches.length === 1 && report.totals.filtered === 0, JSON.stringify(report.totals))
 
-    // A capitalised word that is NOT in front of a citation stays: the filter is about
-    // the position, and it must not become "capitalised words are never wrong".
+    // DELIBERATE CHANGE (2026-08-03): a capitalised unknown word in MID-sentence
+    // is a proper noun (Space Economy, Sputnik, Cycles on a real thesis), not a
+    // typo. At a sentence START nothing can be told, so there it still reports.
     const plain = [{ path: '/b.tex', text: 'The Rossi model is used in this chapter.' }]
     const stub = stubFetch(request => [matchOn(request.text, 'Rossi')])
-    report = await LT.checkDocuments(plain, { language: 'en', url: URL_UNDER_TEST, fetchImpl: stub })
-    check('a capitalised word away from a citation is still reported', report.matches.length === 1, JSON.stringify(report.totals))
+    report = await LT.checkDocuments(plain, { language: 'en', url: URL_UNDER_TEST, fetchImpl: stub, crossCheck: false })
+    check(
+        'a capitalised word in mid-sentence is a proper noun, not a typo',
+        report.matches.length === 0 && report.totals.filtered === 1,
+        JSON.stringify(report.totals)
+    )
+    const opening = [{ path: '/c.tex', text: 'Rossi model is used in this chapter.' }]
+    const openingStub = stubFetch(request => [matchOn(request.text, 'Rossi')])
+    report = await LT.checkDocuments(opening, { language: 'en', url: URL_UNDER_TEST, fetchImpl: openingStub, crossCheck: false })
+    check('a capitalised word at a sentence start is still reported', report.matches.length === 1, JSON.stringify(report.totals))
 
     // An offset the file cannot carry points at a line that does not exist.
     const outOfRange = stubFetch(() => [matchAt(999999, 5)])
@@ -468,10 +479,12 @@ const DOCUMENT = [
 // The domain dictionary
 // ---------------------------------------------------------------------------
 {
-    const source = 'The Overleaf instance runs biblatex, and the quaternion is normalised.'
+    // Lowercase on purpose: a capitalised "Overleaf" in mid-sentence is now
+    // filtered as a proper noun before the dictionary ever sees it.
+    const source = 'The overleaf instance runs biblatex, and the quaternion is normalised.'
     const doc = [{ path: '/a.tex', text: source }]
     const all = request =>
-        ['Overleaf', 'biblatex', 'quaternion'].map(w => matchOn(request.text, w)).filter(Boolean)
+        ['overleaf', 'biblatex', 'quaternion'].map(w => matchOn(request.text, w)).filter(Boolean)
 
     let report = await LT.checkDocuments(doc, { url: URL_UNDER_TEST, fetchImpl: stubFetch(all) })
     check('with no dictionary every term is a finding', report.matches.length === 3, JSON.stringify(report.totals))
