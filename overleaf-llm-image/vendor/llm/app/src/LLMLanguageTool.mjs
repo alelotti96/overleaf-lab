@@ -399,6 +399,9 @@ const COMMAND_ARGUMENTS = new Map([
     ['afterpage', 1],
     // "bottom" of a \newgeometry came back as "botto" on a real title page.
     ['newgeometry', 1],
+    // \texttt carries identifiers and file names ("lstlisting" came back as
+    // "splitting" on a real document): code, not prose to proof-read.
+    ['texttt', 1],
 ])
 
 // Every cross-reference and citation spelling, whatever the package. \href is excluded
@@ -827,6 +830,33 @@ export function isLanguageToolEnabled(options = {}) {
     return resolveUrl(options).length > 0
 }
 
+// Productive prefixes of Italian (and scientific Latin/Greek) word formation,
+// longest first so the alternation never stops at a shorter variant. The
+// dictionary will never enumerate "sottocampionamento" or "defocalizzata",
+// but the BASE after the prefix is a dictionary word, and that is checkable
+// against the engine itself. A closed list of prefixes is linguistics, not a
+// whitelist of words: it does not grow with the corpus.
+const DERIVATION_PREFIX =
+    /^(?:elettro|pseudo|contro|sotto|sovra|sopra|micro|macro|multi|quasi|retro|termo|astro|radio|inter|intra|extra|ultra|mono|nano|mega|meta|poli|para|anti|semi|iper|auto|aero|foto|post|ipo|pre|sub|neo|tri|bi|ri|de|co|par)-?([\p{L}]{4,})$/u
+
+// One word per line against a given dictionary; only the speller's own
+// verdicts count (a grammar rule tripping on a bare word list means nothing).
+async function spellerRejects(endpoint, language, words, { fetchImpl, timeoutMs, signal }) {
+    const text = words.join('\n')
+    const body = new URLSearchParams({ text, language, enabledOnly: 'false' })
+    const matches = await postCheck(endpoint, body, { fetchImpl, timeoutMs, signal })
+    const rejected = new Set()
+    for (const m of matches) {
+        const rid = String((m && m.rule && m.rule.id) || '')
+        const cat = String((m && m.rule && m.rule.category && m.rule.category.id) || '')
+        if (cat !== 'TYPOS' && !rid.startsWith('MORFOLOGIK') && !rid.startsWith('HUNSPELL')) continue
+        const s = Number(m.offset) || 0
+        const w = text.slice(s, s + (Number(m.length) || 0)).toLowerCase()
+        if (w) rejected.add(w)
+    }
+    return rejected
+}
+
 function emptyTotals() {
     return {
         matches: 0,
@@ -835,6 +865,7 @@ function emptyTotals() {
         droppedByWhitelist: 0,
         droppedAsVocabulary: 0,
         droppedAsForeign: 0,
+        droppedAsCompound: 0,
         filtered: 0,
         chunks: 0,
         chunksSkipped: 0,
@@ -1039,6 +1070,30 @@ export async function checkDocuments(docs, options = {}) {
                         totals.filtered += 1
                         continue
                     }
+                    // ``??'' quoted as an example: a punctuation-only finding
+                    // wrapped in quote characters is text TALKING ABOUT
+                    // punctuation, not using it. Measured on the course guide.
+                    if (
+                        !/\p{L}/u.test(flagged) &&
+                        /["'`«»‘’“”]/.test(
+                            source.slice(Math.max(0, start - 2), start) + source.slice(end, end + 2)
+                        )
+                    ) {
+                        totals.filtered += 1
+                        continue
+                    }
+                    // "punto a punto", "passo a passo": the X a X fixed
+                    // expression is the one measured false positive of the
+                    // Italian a/ha rule, and it is decidable in code. Real
+                    // a/ha mistakes never mirror the same word on both sides.
+                    if (ruleId.startsWith('ER_')) {
+                        const leftWord = /([\p{L}]{2,30})\s{1,5}$/u.exec(source.slice(Math.max(0, start - 36), start))
+                        const rightWord = /^[aA]\s{1,5}([\p{L}]{2,30})/u.exec(source.slice(start, end + 36))
+                        if (leftWord && rightWord && leftWord[1].toLowerCase() === rightWord[1].toLowerCase()) {
+                            totals.filtered += 1
+                            continue
+                        }
+                    }
                     // ---- the domain dictionary, counted apart ----
                     if (isWhitelisted(dictionary, flagged)) {
                         totals.droppedByWhitelist += 1
@@ -1050,12 +1105,35 @@ export async function checkDocuments(docs, options = {}) {
                     // capitalised, and names of products and programmes are
                     // endless. At a sentence start nothing can be told, so it
                     // stays a finding there (and the cross-check below still
-                    // gets a say).
+                    // gets a say). The full stop of a title ("prof. Modenini",
+                    // "dott. Rossi") or of a dotted initial ("via B. Carnaccini")
+                    // ends no sentence, and it is precisely where surnames live:
+                    // those count as mid-sentence.
+                    const beforeFlagged = source.slice(Math.max(0, start - 40), start)
                     if (
                         spellingRule &&
                         /^\p{Lu}[\p{Ll}\p{Lu}-]+$/u.test(flagged) &&
-                        !/(?:^|[.:;!?]\s{0,10}|\n[ \t]*\n[ \t]*)$/.test(source.slice(Math.max(0, start - 40), start))
+                        (!/(?:^|[.:;!?]\s{0,10}|\n[ \t]*\n[ \t]*)$/.test(beforeFlagged) ||
+                            /\b(?:[Pp]roff?|[Dd]ott|[Dd]r|[Ii]ng|[Aa]vv|[Ss]igg?|[Mm]rs?|[Mm]s|[Ss]t|[Ff]igg?|[Tt]ab|[Ee]qq?|[Ss]ez|[Cc]ap|[Vv]ol|[Pp]agg?|[Ee]cc|etc)\.\s{1,10}$/u.test(beforeFlagged) ||
+                            /\b\p{Lu}\.\s{1,10}$/u.test(beforeFlagged))
                     ) {
+                        totals.filtered += 1
+                        continue
+                    }
+                    // "ssa" of "dott.ssa": a short lowercase token glued right
+                    // after a dotted abbreviation is the abbreviation's tail,
+                    // not a word.
+                    if (
+                        spellingRule &&
+                        /^\p{Ll}{1,5}$/u.test(flagged) &&
+                        /\p{L}\.$/u.test(source.slice(Math.max(0, start - 2), start))
+                    ) {
+                        totals.filtered += 1
+                        continue
+                    }
+                    // gg/mm/aaaa: a token that is one letter repeated is a
+                    // placeholder or a pattern letter, never a typo.
+                    if (spellingRule && /^(\p{L})\1{1,29}$/u.test(flagged)) {
                         totals.filtered += 1
                         continue
                     }
@@ -1077,12 +1155,19 @@ export async function checkDocuments(docs, options = {}) {
                         ruleId,
                         category,
                         message: clip(neutraliseWarningMarker(match.message || ''), MESSAGE_MAX_CHARS),
+                        // The flagged span travels wrapped in « » so the reader
+                        // sees WHICH word tripped the rule without hunting
+                        // through the excerpt; the HTML report turns the pair
+                        // into a highlight.
                         excerpt: clip(
                             neutraliseWarningMarker(
-                                source
-                                    .slice(Math.max(0, start - EXCERPT_CONTEXT_CHARS), end + EXCERPT_CONTEXT_CHARS)
-                                    .replace(/\s+/g, ' ')
-                                    .trim()
+                                (
+                                    source.slice(Math.max(0, start - EXCERPT_CONTEXT_CHARS), start).replace(/\s+/g, ' ') +
+                                    '«' +
+                                    source.slice(start, end).replace(/\s+/g, ' ') +
+                                    '»' +
+                                    source.slice(end, end + EXCERPT_CONTEXT_CHARS).replace(/\s+/g, ' ')
+                                ).trim()
                             ),
                             EXCERPT_MAX_CHARS
                         ),
@@ -1098,8 +1183,10 @@ export async function checkDocuments(docs, options = {}) {
                         ),
                     }
                     // A spelling finding waits for the cross-language verdict
-                    // below; everything else is final here.
-                    if (spellingRule && /^[\p{L}-]{3,}$/u.test(flagged)) {
+                    // below; everything else is final here. Two letters is
+                    // enough: "of" in a quoted English title is exactly the
+                    // kind of word the cross-check absolves.
+                    if (spellingRule && /^[\p{L}-]{2,}$/u.test(flagged)) {
                         pendingSpellings.push({ record, word: flagged })
                     } else {
                         totals.kept += 1
@@ -1156,9 +1243,77 @@ export async function checkDocuments(docs, options = {}) {
         } catch (err) {
             foreign.clear()
         }
-        for (const p of pendingSpellings) {
-            if (foreign.has(p.word.toLowerCase())) {
-                totals.droppedAsForeign += 1
+        const survivors = pendingSpellings.filter(p => !foreign.has(p.word.toLowerCase()))
+        totals.droppedAsForeign += pendingSpellings.length - survivors.length
+
+        // ---- the derived-word check, the same principle one level down ----
+        // What survives both dictionaries is often a word BUILT from
+        // dictionary words: a productive prefix on an Italian base
+        // (ricampionamento, defocalizzata, nanosatelliti), a hyphenated
+        // compound (micro-camere, sotto-array, keep-out), or a fused pair of
+        // foreign words (keyframe). Decompose and ask the engines about the
+        // PARTS, in two batched calls for the whole project. Fused pairs are
+        // only absolved by the OTHER language on purpose: "dellamassa" is a
+        // real missing-space typo and its parts are Italian, while a fused
+        // Italian pair pretending to be one word has no business existing
+        // outside the prefix list. Failure keeps the findings, as above.
+        const derived = new Set()
+        try {
+            if (!crossEnabled) throw new Error('cross-check disabled')
+            const crossLanguage = String(language).toLowerCase().startsWith('it') ? 'en-US' : 'it'
+            const plans = new Map()
+            const parts = new Set()
+            for (const p of survivors) {
+                const w = p.word.toLowerCase()
+                if (plans.has(w) || w.length < 5 || w.length > 24 || !/^[\p{L}-]{5,24}$/u.test(w)) continue
+                const decompositions = []
+                if (w.includes('-')) {
+                    const segments = w.split('-').filter(Boolean)
+                    if (segments.length >= 2 && segments.length <= 4 && segments.every(s => s.length >= 2)) {
+                        decompositions.push({ eitherLanguage: segments })
+                    }
+                } else {
+                    const prefixed = DERIVATION_PREFIX.exec(w)
+                    if (prefixed) decompositions.push({ eitherLanguage: [prefixed[1]] })
+                    for (let i = 3; i <= w.length - 3; i++) {
+                        decompositions.push({ crossOnly: [w.slice(0, i), w.slice(i)] })
+                    }
+                }
+                if (!decompositions.length) continue
+                plans.set(w, decompositions)
+                for (const d of decompositions) {
+                    for (const s of d.eitherLanguage || d.crossOnly) parts.add(s)
+                }
+            }
+            if (plans.size && parts.size <= 600) {
+                // A speller that rejects NOTHING is broken in disguise, and
+                // with it every two-part split would validate and absolve
+                // real typos. The canary is a string no dictionary knows: it
+                // must come back rejected from BOTH calls, or the whole stage
+                // distrusts the answers and keeps the findings.
+                const canary = 'qzjxvkwq'
+                const list = [...parts, canary]
+                const callOptions = { fetchImpl, timeoutMs, signal: options.signal }
+                const rejectedSame = await spellerRejects(endpoint, language, list, callOptions)
+                const rejectedCross = await spellerRejects(endpoint, crossLanguage, list, callOptions)
+                if (!rejectedSame.has(canary) || !rejectedCross.has(canary)) {
+                    throw new Error('speller canary not rejected')
+                }
+                for (const [w, decompositions] of plans) {
+                    const absolved = decompositions.some(d =>
+                        d.eitherLanguage
+                            ? d.eitherLanguage.every(s => !rejectedSame.has(s) || !rejectedCross.has(s))
+                            : d.crossOnly.every(s => !rejectedCross.has(s))
+                    )
+                    if (absolved) derived.add(w)
+                }
+            }
+        } catch (err) {
+            derived.clear()
+        }
+        for (const p of survivors) {
+            if (derived.has(p.word.toLowerCase())) {
+                totals.droppedAsCompound += 1
                 continue
             }
             totals.kept += 1

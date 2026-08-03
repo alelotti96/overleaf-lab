@@ -845,7 +845,10 @@ function buildReportHtml(result) {
       const agreeing = split ? split[1] || split[3] : "";
       const total = split ? split[2] || split[4] : "";
       const badge = split ? ` <span class="warn">${escapeHtml(T.readingsAgree(agreeing, total))}</span>` : "";
-      return `${escapeHtml(clean)}${badge}`;
+      // A « » pair is LanguageTool's excerpt marking the exact flagged span
+      // (see LLMLanguageTool): turn it into a real highlight, keeping the
+      // characters so the plain-text panel and the HTML report read the same.
+      return `${escapeHtml(clean).replace(/«([^«»]{1,80})»/g, "<mark>«$1»</mark>")}${badge}`;
     };
     const renderList = (ps) => `<ul>${ps.map((p) => `<li>${renderPart(p)}</li>`).join("")}</ul>`;
     const evidenceBody = parts.length > 8 ? `${renderList(parts.slice(0, 6))}<details class="more"><summary>${parts.length - 6} more</summary>${renderList(parts.slice(6))}</details>` : parts.length > 1 ? renderList(parts) : renderPart(evidenceText);

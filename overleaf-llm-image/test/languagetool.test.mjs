@@ -570,7 +570,7 @@ const DOCUMENT = [
     check('the cap is the one the module documents', LT.MAX_STORED_MATCHES === 60)
     check('shown says how many are in the list', report.totals.shown === LT.MAX_STORED_MATCHES, JSON.stringify(report.totals))
     check('and the true total is not capped with it', report.totals.matches === 200 && report.totals.kept === 200, JSON.stringify(report.totals))
-    check('the ones kept are the first ones, in file order', report.matches[0].excerpt.startsWith('word0'), report.matches[0].excerpt)
+    check('the ones kept are the first ones, in file order', report.matches[0].excerpt.startsWith('«word0»'), report.matches[0].excerpt)
 }
 
 // ---------------------------------------------------------------------------
@@ -732,6 +732,165 @@ const DOCUMENT = [
         real.matches.length === 1 && /teh/.test(real.matches[0].excerpt || ''),
         JSON.stringify(real.matches)
     )
+}
+
+// ---------------------------------------------------------------------------
+// Tenth wave, measured on the course guide itself: titles and initials before
+// surnames, abbreviation tails, placeholders, quoted punctuation, X a X, and
+// the derived-word check that asks the engines about the PARTS of a word.
+// ---------------------------------------------------------------------------
+{
+    // "prof. Modenini": the full stop of a title ends no sentence, so the
+    // surname is a mid-sentence proper noun and goes.
+    const it = { language: 'it', url: URL_UNDER_TEST, crossCheck: false }
+    let stub = stubFetch(request => [matchOn(request.text, 'Modenini')].filter(Boolean))
+    let report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'Il relatore prof. Modenini approva il lavoro.' }],
+        { ...it, fetchImpl: stub }
+    )
+    check('a surname after "prof." is a proper noun, not a typo', report.matches.length === 0 && report.totals.filtered === 1, JSON.stringify(report.totals))
+
+    // "via B. Carnaccini": a dotted initial is not a sentence end either.
+    stub = stubFetch(request => [matchOn(request.text, 'Carnaccini')].filter(Boolean))
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'La sede resta in via B. Carnaccini 12 a Forlì.' }],
+        { ...it, fetchImpl: stub }
+    )
+    check('a surname after a dotted initial is a proper noun', report.matches.length === 0, JSON.stringify(report.matches))
+
+    // A REAL sentence boundary still keeps the capitalised unknown: there
+    // nothing can be told, and absolution belongs to the cross-check.
+    stub = stubFetch(request => [matchOn(request.text, 'Modenini')].filter(Boolean))
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'La frase precedente finisce qui. Modenini approva il lavoro.' }],
+        { ...it, fetchImpl: stub }
+    )
+    check('a capitalised word at a true sentence start is still a finding', report.matches.length === 1, JSON.stringify(report.totals))
+
+    // "dott.ssa": the tail after the dot is the abbreviation's own.
+    stub = stubFetch(request => [matchOn(request.text, 'ssa')].filter(Boolean))
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'Scrivere alla dott.ssa responsabile della sicurezza.' }],
+        { ...it, fetchImpl: stub }
+    )
+    check('the tail of a dotted abbreviation is not a word', report.matches.length === 0, JSON.stringify(report.matches))
+
+    // gg/mm/aaaa: repeated-letter placeholders.
+    stub = stubFetch(request => [matchOn(request.text, 'gg'), matchOn(request.text, 'aaaa')].filter(Boolean))
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'Indicare la data nel formato gg/mm/aaaa sul modulo.' }],
+        { ...it, fetchImpl: stub }
+    )
+    check('date placeholders made of one repeated letter are not typos', report.matches.length === 0 && report.totals.filtered === 2, JSON.stringify(report.totals))
+
+    // ``??'' quoted as an example is the text talking about punctuation; the
+    // same finding outside quotes is real.
+    const doubles = request => [matchOn(request.text, '??', { ruleId: 'UNPAIRED_QUESTION', category: 'GRAMMAR' })].filter(Boolean)
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: "un riferimento rotto stampa ``??'' nel PDF finale" }],
+        { ...it, fetchImpl: stubFetch(doubles) }
+    )
+    check('punctuation quoted as an example is filtered', report.matches.length === 0, JSON.stringify(report.matches))
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'ma che cosa significa tutto questo ?? davvero' }],
+        { ...it, fetchImpl: stubFetch(doubles) }
+    )
+    check('the same punctuation outside quotes stays a finding', report.matches.length === 1, JSON.stringify(report.matches))
+
+    // "punto a punto" is a fixed expression; "Luca a fatto" is the real
+    // mistake the a/ha rule exists for.
+    const aha = needle => request => [matchOn(request.text, needle, { ruleId: 'ER_01_001', category: 'GRAMMAR' })].filter(Boolean)
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'una rappresentazione punto a punto della scena osservata' }],
+        { ...it, fetchImpl: stubFetch(aha('a punto')) }
+    )
+    check('the X a X fixed expression does not trip the a/ha rule', report.matches.length === 0, JSON.stringify(report.matches))
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'alla fine Luca a fatto tutti i compiti richiesti' }],
+        { ...it, fetchImpl: stubFetch(aha('a fatto')) }
+    )
+    check('a real a/ha mistake still comes through', report.matches.length === 1, JSON.stringify(report.matches))
+
+    // \texttt carries identifiers: blanked, offsets preserved.
+    stub = stubFetch(() => [])
+    await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'si usa l\'ambiente \\texttt{lstlisting} in appendice' }],
+        { ...it, fetchImpl: stub }
+    )
+    check(
+        'the argument of \\texttt never reaches the proof-reader',
+        stub.calls.length === 1 && !stub.calls[0].text.includes('lstlisting') && stub.calls[0].text.length === 'si usa l\'ambiente \\texttt{lstlisting} in appendice'.length,
+        stub.calls[0] && stub.calls[0].text
+    )
+
+    // The excerpt marks the flagged span, so the reader sees WHICH word.
+    stub = stubFetch(request => [matchOn(request.text, 'esperimeto')].filter(Boolean))
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'il primo esperimeto condotto in laboratorio riesce' }],
+        { ...it, fetchImpl: stub }
+    )
+    check('the excerpt wraps the flagged span in « »', report.matches.length === 1 && /«esperimeto»/.test(report.matches[0].excerpt || ''), report.matches[0] && report.matches[0].excerpt)
+}
+
+{
+    // A two-letter word now reaches the cross-check: "of" in a quoted English
+    // title is absolved by the other dictionary, not reported.
+    const stub = stubFetch((request, index) => {
+        if (index === 0) return [matchOn(request.text, 'of')].filter(Boolean)
+        return []
+    })
+    const report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'entrare con ``Login with University of Bologna\'\' e le credenziali' }],
+        { language: 'it', url: URL_UNDER_TEST, fetchImpl: stub }
+    )
+    check(
+        'a two-letter English word is absolved by the cross-check',
+        report.matches.length === 0 && report.totals.droppedAsForeign >= 1,
+        JSON.stringify(report.totals)
+    )
+}
+
+{
+    // The derived-word check, full flow: four words the Italian speller
+    // rejects, of which one prefixed derivation, one hyphenated compound, one
+    // fused English pair, and one REAL missing-space typo that must survive.
+    const flagAll = (text, except) => {
+        const out = []
+        let offset = 0
+        for (const line of text.split('\n')) {
+            if (line && !except.has(line)) out.push(matchAt(offset, line.length))
+            offset += line.length + 1
+        }
+        return out
+    }
+    const stub = stubFetch((request, index) => {
+        if (index === 0) {
+            return ['ricampionamento', 'keyframe', 'dellamassa', 'micro-camere']
+                .map(w => matchOn(request.text, w))
+                .filter(Boolean)
+        }
+        if (index === 1) return flagAll(request.text, new Set())
+        if (index === 2) return flagAll(request.text, new Set(['campionamento', 'micro', 'camere', 'della', 'massa']))
+        return flagAll(request.text, new Set(['key', 'frame']))
+    })
+    const text =
+        'Il ricampionamento dei dati e il keyframe della scena mostrano la dellamassa e le micro-camere insieme.'
+    const report = await LT.checkDocuments([{ path: '/a.tex', text }], {
+        language: 'it',
+        url: URL_UNDER_TEST,
+        fetchImpl: stub,
+    })
+    check(
+        'prefixed, hyphenated and fused-foreign words are absolved by their parts',
+        report.totals.droppedAsCompound === 3,
+        JSON.stringify(report.totals)
+    )
+    check(
+        'a fused ITALIAN pair, the missing-space typo, survives the derived-word check',
+        report.matches.length === 1 && /«dellamassa»/.test(report.matches[0].excerpt || ''),
+        JSON.stringify(report.matches.map(m => m.excerpt))
+    )
+    check('the derived-word check costs exactly two extra calls', stub.calls.length === 4, `calls ${stub.calls.length}`)
 }
 
 console.log('RESULT:', ok ? 'ALL PASS' : 'FAILURES')
