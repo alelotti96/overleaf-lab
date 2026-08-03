@@ -1070,6 +1070,17 @@ export async function checkDocuments(docs, options = {}) {
                         totals.filtered += 1
                         continue
                     }
+                    // "GND GND" in a table, "100nF 100nF" in a parts list: a
+                    // repeated IDENTIFIER is layout, not stuttered prose.
+                    // Measured 478 times on the 75-thesis corpus. Repeated
+                    // lowercase words ("la la") remain findings.
+                    if (
+                        /WORD_REPEAT/.test(ruleId) &&
+                        /^[0-9A-Z][\w.%°-]{0,15}(?:\s{1,5}[0-9A-Z][\w.%°-]{0,15}){1,5}$/u.test(flagged.trim())
+                    ) {
+                        totals.filtered += 1
+                        continue
+                    }
                     // ``??'' quoted as an example: a punctuation-only finding
                     // wrapped in quote characters is text TALKING ABOUT
                     // punctuation, not using it. Measured on the course guide.

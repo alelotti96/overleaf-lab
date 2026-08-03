@@ -775,6 +775,21 @@ const DOCUMENT = [
     )
     check('the tail of a dotted abbreviation is not a word', report.matches.length === 0, JSON.stringify(report.matches))
 
+    // "GND GND" is a table label, "la la" is stuttered prose.
+    const repeatRule = { ruleId: 'ITALIAN_WORD_REPEAT_RULE', category: 'GRAMMAR' }
+    stub = stubFetch(request => [matchOn(request.text, 'GND GND', repeatRule)].filter(Boolean))
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'I collegamenti verso GND GND e alimentazione sono in tabella.' }],
+        { ...it, fetchImpl: stub }
+    )
+    check('a repeated identifier is layout, not a finding', report.matches.length === 0, JSON.stringify(report.matches))
+    stub = stubFetch(request => [matchOn(request.text, 'la la', repeatRule)].filter(Boolean))
+    report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'si osserva che la la misura resta stabile nel tempo' }],
+        { ...it, fetchImpl: stub }
+    )
+    check('a repeated prose word stays a finding', report.matches.length === 1, JSON.stringify(report.matches))
+
     // gg/mm/aaaa: repeated-letter placeholders.
     stub = stubFetch(request => [matchOn(request.text, 'gg'), matchOn(request.text, 'aaaa')].filter(Boolean))
     report = await LT.checkDocuments(
