@@ -397,6 +397,8 @@ const COMMAND_ARGUMENTS = new Map([
     ['counterwithout', 2],
     ['counterwithin', 2],
     ['afterpage', 1],
+    // "bottom" of a \newgeometry came back as "botto" on a real title page.
+    ['newgeometry', 1],
 ])
 
 // Every cross-reference and citation spelling, whatever the package. \href is excluded
@@ -619,6 +621,25 @@ const STRUCTURAL_CHARACTERS = /[{}&~^_]/g
 //
 // The output has EXACTLY the length of the input and exactly its newlines. That is the
 // property everything downstream rests on, and it is what the tests pin first.
+// A SHORT italic group is the typographic convention for a foreign or technical
+// term ("modelli di \textit{Deep Learning}", "\emph{ground truth}"): the italics
+// are the author saying "this is not Italian", and sending the words to an
+// Italian proof-reader turned every one of them into a typo on a real thesis.
+// Three words at most, no sentence punctuation: an italicised full clause is
+// emphasis on prose, and prose stays checked.
+const SHORT_ITALIC = /\\(?:textit|emph|textsl)\s{0,20}\{([^{}]{1,60})\}/g
+
+function blankShortItalics(text) {
+    const ranges = []
+    for (const m of text.matchAll(SHORT_ITALIC)) {
+        const inner = m[1].trim()
+        if (!inner || /[.:;!?]/.test(inner)) continue
+        if (inner.split(/\s+/).length > 3) continue
+        ranges.push([m.index, m.index + m[0].length])
+    }
+    return blankRanges(text, ranges)
+}
+
 export function toProse(text) {
     const source = String(text ?? '')
     let prose = blankInlineVerb(source)
@@ -627,6 +648,9 @@ export function toProse(text) {
     prose = blankOutsideDocument(prose)
     prose = blankDollarMaths(prose)
     prose = blankDelimitedMaths(prose)
+    // Before blankCommands, which would keep the words and blank only the
+    // command token: here the WORDS are the thing to hide.
+    prose = blankShortItalics(prose)
     prose = blankCommands(prose)
     return prose.replace(STRUCTURAL_CHARACTERS, ' ')
 }
@@ -726,6 +750,25 @@ function insideSpans(spans, start, end) {
 // Administrator-provided, comma-separated, from LLM_LANGUAGETOOL_DICT or from the call.
 // How many matches it removed is COUNTED and reported: a whitelist that silently
 // swallows findings is indistinguishable from a checker that found nothing.
+// The English loanwords an engineering thesis written in Italian uses as plain
+// Italian words. They are exactly the class the vocabulary filter (four or more
+// uses) already handles when frequent; this list covers the SAME words when
+// they appear once or twice, which "payload" three times in a real chapter
+// measured against the live engine. Generic engineering and space vocabulary
+// only, on purpose: anything narrower belongs in LLM_LANGUAGETOOL_DICT, which
+// the administrator owns.
+export const DEFAULT_LOANWORDS = [
+    'payload', 'dataset', 'frame', 'pipeline', 'hardware', 'software', 'firmware',
+    'buffer', 'driver', 'debug', 'debugging', 'testing', 'benchmark', 'baseline',
+    'workflow', 'setup', 'layout', 'display', 'sensor', 'array', 'cluster',
+    'download', 'upload', 'link', 'file', 'folder', 'directory', 'thread',
+    'timestamp', 'timeline', 'deadline', 'feedback', 'trend', 'range', 'target',
+    'default', 'standard', 'performance', 'docking', 'thruster', 'launcher',
+    'lander', 'rover', 'flyby', 'downlink', 'uplink', 'housekeeping', 'jitter',
+    'detumbling', 'deployment', 'deployer', 'tracking', 'pointing', 'imaging',
+    'rendering', 'mesh', 'texture', 'shader', 'slot', 'chip', 'chipset', 'board',
+]
+
 export function parseDictionary(...sources) {
     const terms = new Set()
     for (const source of sources) {
@@ -758,6 +801,11 @@ function isWhitelisted(dictionary, flagged) {
 // finding, and none of them a sentence anybody wrote.
 const NON_PROSE_FILES = /\.(?:bib|cls|sty|bst|bbl|aux|log|pdf|png|jpe?g|eps|svg)$/i
 
+// The title page is not the student's prose: it is names, degrees and layout,
+// and a proof-reader loose on it "corrected" a supervisor's surname on a real
+// project. Same philosophy as the review's own skip of the ringraziamenti.
+const TITLE_PAGE_FILES = /(?:^|\/)(?:frontespizio|frontispiece|titlepage|title_?page|copertina)[^/]*\.tex$/i
+
 function resolveUrl(options = {}) {
     const raw = String(options.url || process.env.LLM_LANGUAGETOOL_URL || '').trim()
     return raw
@@ -784,6 +832,7 @@ function emptyTotals() {
         kept: 0,
         shown: 0,
         droppedByWhitelist: 0,
+        droppedAsVocabulary: 0,
         filtered: 0,
         chunks: 0,
         chunksSkipped: 0,
@@ -852,7 +901,7 @@ export async function checkDocuments(docs, options = {}) {
 
     const fetchImpl = options.fetchImpl || globalThis.fetch
     const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_TIMEOUT_MS
-    const dictionary = parseDictionary(process.env.LLM_LANGUAGETOOL_DICT, options.dictionary)
+    const dictionary = parseDictionary(DEFAULT_LOANWORDS, process.env.LLM_LANGUAGETOOL_DICT, options.dictionary)
     const excludedCategories = options.excludedCategories || EXCLUDED_CATEGORIES
     const excludedRules = options.excludedRules || EXCLUDED_RULES
     const excluded = new Set(excludedCategories)
@@ -862,8 +911,26 @@ export async function checkDocuments(docs, options = {}) {
     const stored = []
 
     const inspected = (docs || []).filter(
-        doc => doc && typeof doc.text === 'string' && !NON_PROSE_FILES.test(String(doc.path || ''))
+        doc =>
+            doc &&
+            typeof doc.text === 'string' &&
+            !NON_PROSE_FILES.test(String(doc.path || '')) &&
+            !TITLE_PAGE_FILES.test(String(doc.path || ''))
     )
+
+    // The document's own vocabulary, project-wide. A word the dictionary does
+    // not know but the author uses FOUR or more times is terminology, not a
+    // typo: "plenottica", "dataset" and "rendering" each came back dozens of
+    // times on a real thesis, burying the two genuine misspellings. Four and
+    // not three, measured: "superfice" appeared three times in a published
+    // thesis as a REAL recurring typo, and it must keep firing.
+    const vocabulary = new Map()
+    for (const doc of inspected) {
+        for (const m of toProse(doc.text).matchAll(/\p{L}{4,}/gu)) {
+            const word = m[0].toLowerCase()
+            vocabulary.set(word, (vocabulary.get(word) || 0) + 1)
+        }
+    }
 
     try {
         for (const doc of inspected) {
@@ -940,9 +1007,31 @@ export async function checkDocuments(docs, options = {}) {
                         totals.filtered += 1
                         continue
                     }
+                    // A locale note is not a mistake: the en-US dictionary flags
+                    // "behaviour" as British English (and en-GB flags "behavior"
+                    // back), and a thesis written in European English is full of
+                    // exactly that. Measured against the live engine.
+                    if (
+                        /^MORFOLOGIK_RULE_EN/.test(ruleId) &&
+                        /(?:British|American) English/i.test(String(match.message || ''))
+                    ) {
+                        totals.filtered += 1
+                        continue
+                    }
                     // ---- the domain dictionary, counted apart ----
                     if (isWhitelisted(dictionary, flagged)) {
                         totals.droppedByWhitelist += 1
+                        continue
+                    }
+                    // ---- the document's own vocabulary (see the map above) ----
+                    // Spelling rules only: a grammar finding on a frequent word
+                    // ("la dataset" for "il dataset") is still a finding.
+                    if (
+                        (category === 'TYPOS' || ruleId.startsWith('MORFOLOGIK')) &&
+                        /^\p{L}+$/u.test(flagged) &&
+                        (vocabulary.get(flagged.toLowerCase()) || 0) >= 4
+                    ) {
+                        totals.droppedAsVocabulary += 1
                         continue
                     }
                     totals.kept += 1

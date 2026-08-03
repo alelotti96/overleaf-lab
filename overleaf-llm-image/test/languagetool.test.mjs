@@ -276,6 +276,48 @@ const DOCUMENT = [
 }
 
 // ---------------------------------------------------------------------------
+// The title page, foreign terms and the document's own vocabulary (2026-08-03)
+// ---------------------------------------------------------------------------
+// Measured on a real thesis: the proof-reader corrected the supervisor's
+// surname on the frontespizio, offered "Dee p" for \textit{Deep Learning}, and
+// buried two real typos under dozens of hits on "plenottica" and "dataset".
+{
+    check('a newgeometry argument is not prose', !LT.toProse('\\newgeometry{top=12.5mm,bottom=12.5mm,left=30mm}').includes('bottom'))
+    const italics = LT.toProse(
+        'Modelli di \\textit{Deep Learning} per la stima. ' +
+            '\\emph{ground truth} nominali. ' +
+            '\\textit{Questa frase intera resta prosa perche contiene una frase, non un termine.}'
+    )
+    check('a short italic group is a foreign term, not prose', !italics.includes('Deep') && !italics.includes('ground'))
+    check('a long italic clause stays checked', italics.includes('resta prosa'))
+
+    const stub = stubFetch(request =>
+        ['plenottica', 'refuso'].flatMap(word =>
+            [matchOn(request.text, word, { ruleId: 'MORFOLOGIK_RULE_IT_IT', category: 'TYPOS' })].filter(Boolean)
+        )
+    )
+    const body =
+        'La camera plenottica acquisisce il campo di luce. La tecnologia plenottica supera i sensori. ' +
+        'Una camera plenottica misura le direzioni. Il sistema plenottica finale contiene un refuso vero.\n'
+    const report = await LT.checkDocuments(
+        [{ path: '/chapters/uno.tex', text: `${body}${'Altre parole comuni della prosa del capitolo che servono da riempimento per il gate. '.repeat(4)}` }],
+        { url: 'http://languagetool:8010', fetchImpl: stub, language: 'it' }
+    )
+    check(
+        'a word the author uses four times is vocabulary, not a typo',
+        report.totals.droppedAsVocabulary === 1,
+        JSON.stringify(report.totals)
+    )
+    check('a one-off unknown word is still a finding', report.totals.kept === 1, JSON.stringify(report.totals))
+
+    const title = await LT.checkDocuments(
+        [{ path: '/Frontmatter/frontespizio.tex', text: 'Relatore Prof. Dario Modenini, presentata da Nicolo Pierpaoli, correlatore Dott. Alessandro Lotti. '.repeat(6) }],
+        { url: 'http://languagetool:8010', fetchImpl: stub, language: 'it' }
+    )
+    check('the title page is never proof-read', title.totals.chunks === 0, JSON.stringify(title.totals))
+}
+
+// ---------------------------------------------------------------------------
 // A mistake after a blanked equation lands on the right line
 // ---------------------------------------------------------------------------
 {
