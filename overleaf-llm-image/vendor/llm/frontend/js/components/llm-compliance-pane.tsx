@@ -119,8 +119,15 @@ const GROUNDING_WARNING = /\s*\[warning:\s*([^\]]+)\]\s*$/i
 // The trailing `:line` is part of the match now: the structural checks write
 // "path:line - what", and leaving the number outside the chip both looked wrong and
 // threw away the one thing that makes the chip land on the right line.
-const PATH_PATTERN = /(\/[\w./-]+\.(?:tex|bib|cls|sty)(?::\d+)?)/g
-const IS_PATH = /^(\/[\w./-]+\.(?:tex|bib|cls|sty))(?::(\d+))?$/
+// IMAGE paths chip too, and open the image itself: gotoSource already opens a
+// fileRef (that is how the Zotero .bib chip works), so "Immagini/light_slab.png"
+// quoted by a figure finding is one click away instead of a name to go hunt in the
+// tree. Images are matched WITHOUT the leading slash as well, because the evidence
+// usually quotes them as \includegraphics arguments, which are project-relative.
+// Length-bounded, no spaces: a path with a space in it stays plain text rather than
+// risking half a sentence swallowed into a chip.
+const PATH_PATTERN = /(\/[\w./-]+\.(?:tex|bib|cls|sty)(?::\d+)?|\/?[\w][\w./-]{0,200}\.(?:png|jpe?g|pdf|eps|svg))/g
+const IS_PATH = /^(\/[\w./-]+\.(?:tex|bib|cls|sty)|\/?[\w][\w./-]{0,200}\.(?:png|jpe?g|pdf|eps|svg))(?::(\d+))?$/
 
 // overleaf-lab: THE CHIP THAT IS ALSO A JUMP. Every file:line the review produces is a
 // place in the student's own source, and reading one used to mean finding the file in

@@ -1212,7 +1212,6 @@ const {
         'llmGoto=javascript%3Aalert(1)',
         'llmGoto=https%3A%2F%2Fevil.example.org%2Fx.tex%3A1',
         'llmGoto=file%3A%2F%2F%2Fetc%2Fpasswd%3A1',
-        'llmGoto=main.tex%3A0',
         'llmGoto=main.tex%3A-4',
         'llmGoto=main.tex%3A1.5',
         'llmGoto=main.tex%3A99999999999',
@@ -1234,6 +1233,10 @@ const {
         const got = parseGotoParam(`?${query}`)
         check(`refused: ${decodeURIComponent(query).slice(9, 46)}`, got === null, got ? JSON.stringify(got) : '')
     }
+    // Line 0 left the refusal list on purpose: it is the FILE-ONLY form, "open the
+    // file, no line", which is how an image linked from the report opens. The path
+    // rules above still apply to it unchanged.
+    check('the file-only form is accepted', JSON.stringify(parseGotoParam('?llmGoto=main.tex%3A0')) === '{"path":"main.tex","line":0}')
     check('a value longer than the cap is refused whatever it says', parseGotoParam(`?llmGoto=${'a/'.repeat(300)}x.tex%3A1`) === null)
     check('nothing that survives can carry a traversal segment', ['..', '.', ''].every(seg => parseGotoParam(`?llmGoto=a%2F${encodeURIComponent(seg)}%2Fb.tex%3A1`) === null))
 }
@@ -1503,6 +1506,106 @@ const signalsBlock = (over = {}) => ({
         })
     )
     check('the figures table explains how to read itself', html.includes('How to read the table'))
+}
+
+// ---- audit fixes on the eleventh wave, plus the image links ----
+{
+    // homeOf must prefer the LONGEST path named in the evidence: "/a.tex" is a
+    // substring of "/chapters/a.tex" and used to steal the finding.
+    const html = bodyOf(
+        buildReportHtml({
+            ...base,
+            items: [
+                item({
+                    evidence: 'In /chapters/a.tex the rule is broken.',
+                    locations: [
+                        { path: '/a.tex', line: 1 },
+                        { path: '/chapters/a.tex', line: 9 },
+                    ],
+                }),
+            ],
+        })
+    )
+    check(
+        'the longest evidence-named path wins the fileblock',
+        /class="fileblock" id="file--chapters-a-tex"/.test(html) && !/class="fileblock" id="file--a-tex"/.test(html)
+    )
+}
+{
+    // The split-vote badge survives the fold: repeated next to the visible first
+    // sentence when the marked part is folded away.
+    const parts = [
+        'summary sentence first',
+        'a.tex:1 one', 'a.tex:2 two [verdict agreed by 2 of 3 readings]', 'a.tex:3 three', 'a.tex:4 four', 'a.tex:5 five',
+    ]
+    const html = bodyOf(buildReportHtml({ ...base, items: [item({ evidence: parts.join(' | ') })] }))
+    const fold = html.indexOf('<details class="more">')
+    const badge = html.indexOf('2 of 3 readings agree')
+    check('a folded split-vote badge is repeated in view', badge !== -1 && fold !== -1 && badge < fold)
+}
+{
+    // figuresHow belongs to the table: a block with only unmeasured figures must
+    // not explain how to read a table it does not draw.
+    const html = bodyOf(
+        buildReportHtml({
+            ...base,
+            items: [item()],
+            imageMetrics: figBlock({ unchecked: [{ path: 'a.png', reason: 'unreadable' }] }),
+        })
+    )
+    check('no how-to-read line without the table', !html.includes('How to read the table'))
+}
+{
+    // The file-only goto form: line 0 means "open the file", and is how an image
+    // linked from the report opens in the editor.
+    const zero = parseGotoParam('?llmGoto=Immagini%2Flight_slab.png%3A0')
+    check('the parser accepts the file-only form', !!zero && zero.line === 0 && zero.path === 'Immagini/light_slab.png')
+    check('traversal is still refused with line 0', parseGotoParam('?llmGoto=..%2Fa.png%3A0') === null)
+    const url = 'https://ol.example.org/project/deadbeef'
+    const html = buildReportHtml({
+        ...base,
+        projectUrl: url,
+        items: [item({ evidence: 'Linea 25: \\includegraphics{Immagini/light_slab.png} raster.' })],
+        imageMetrics: figBlock({
+            measured: [{ path: 'Immagini/tcp.png', file: '/main.tex', line: 3, width: 100, height: 80, renderedWidthMm: 96, dpi: 95, exact: false }],
+        }),
+    })
+    check('an image quoted in evidence links to the image', html.includes(encodeURIComponent('Immagini/light_slab.png:0')))
+    check('the figures table links each image path', html.includes(encodeURIComponent('Immagini/tcp.png:0')))
+    const plain = buildReportHtml({ ...base, items: [item({ evidence: 'see Immagini/light_slab.png here' })] })
+    check('with no project url the name stays plain text', !plain.includes('light_slab.png:0'))
+}
+{
+    // The AI-signal labels and glosses speak the report's language: the English
+    // strings from the pattern list were the one part of an Italian report its own
+    // designer could not read.
+    const html = bodyOf(
+        buildReportHtml({
+            ...base,
+            language: 'it',
+            items: [item()],
+            aiSignals: {
+                version: '2026-08',
+                totals: { comparedChapters: 8 },
+                artifacts: [],
+                clusters: [],
+                legend: [{ id: 'paragraphLengthVariation', label: 'Paragraph length variation (spread relative to the mean)', note: 'Paragraphs of near-identical size, one after another. A LOW value is the signal.' }],
+                flaggedChapters: [
+                    {
+                        name: 'Introduzione',
+                        signals: [
+                            { id: 'paragraphLengthVariation', label: 'Paragraph length variation (spread relative to the mean)', value: 0.7, thesisMedian: 1.12, direction: 'below' },
+                        ],
+                    },
+                ],
+            },
+        })
+    )
+    check(
+        'an Italian report localizes the signal label and its gloss',
+        html.includes('Variazione della lunghezza dei paragrafi') && html.includes('Il valore BASSO è il segnale'),
+    )
+    check('the English label from the block is gone from the Italian page', !html.includes('spread relative to the mean'))
 }
 
 console.log(ok ? '\nALL PASS' : '\nFAILURES')

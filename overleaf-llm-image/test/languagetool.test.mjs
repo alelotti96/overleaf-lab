@@ -849,10 +849,12 @@ const DOCUMENT = [
 
 {
     // A two-letter word now reaches the cross-check: "of" in a quoted English
-    // title is absolved by the other dictionary, not reported.
+    // title is absolved by the other dictionary, not reported. The cross answer
+    // flags the canary (a healthy speller always does): flagging NOTHING is now
+    // distrusted, which the next block pins.
     const stub = stubFetch((request, index) => {
         if (index === 0) return [matchOn(request.text, 'of')].filter(Boolean)
-        return []
+        return [matchOn(request.text, 'qzjxvkwq')].filter(Boolean)
     })
     const report = await LT.checkDocuments(
         [{ path: '/a.tex', text: 'entrare con ``Login with University of Bologna\'\' e le credenziali' }],
@@ -862,6 +864,75 @@ const DOCUMENT = [
         'a two-letter English word is absolved by the cross-check',
         report.matches.length === 0 && report.totals.droppedAsForeign >= 1,
         JSON.stringify(report.totals)
+    )
+}
+
+{
+    // Audit H1: a cross-check that flags NOTHING is a broken or truncating
+    // answer, not a dictionary that knows every word. Without the canary this
+    // absolved every pending typo as "foreign" in silence.
+    const stub = stubFetch((request, index) => {
+        if (index === 0) return [matchOn(request.text, 'esperimeto')].filter(Boolean)
+        return []
+    })
+    const report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'il primo esperimeto condotto in laboratorio riesce' }],
+        { language: 'it', url: URL_UNDER_TEST, fetchImpl: stub }
+    )
+    check(
+        'a cross answer that does not flag the canary keeps the findings',
+        report.matches.length === 1 && report.totals.droppedAsForeign === 0,
+        JSON.stringify(report.totals)
+    )
+}
+
+{
+    // Audit M1: a fused pair whose halves are BOTH plain words of the main
+    // language is a missing-space typo, not a foreign compound: "areaper"
+    // (area + per) must stay reported even though English happens to accept
+    // both halves too.
+    const flagAllBut = (text, except) => {
+        const out = []
+        let offset = 0
+        for (const line of text.split('\n')) {
+            if (line && !except.has(line)) out.push(matchAt(offset, line.length))
+            offset += line.length + 1
+        }
+        return out
+    }
+    const stub = stubFetch((request, index) => {
+        if (index === 0) return [matchOn(request.text, 'areaper')].filter(Boolean)
+        // Cross-check: flags the canary and areaper itself (English rejects the
+        // fused form), so it is not absolved as foreign.
+        if (index === 1) return ['qzjxvkwq', 'areaper'].map(w => matchOn(request.text, w)).filter(Boolean)
+        // Speller batches: BOTH languages accept "area" and "per".
+        return flagAllBut(request.text, new Set(['area', 'per']))
+    })
+    const report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: "la misura di areaper unita del pannello" }],
+        { language: 'it', url: URL_UNDER_TEST, fetchImpl: stub }
+    )
+    check(
+        'a fused pair of two main-language words stays reported',
+        report.matches.length === 1 && report.totals.droppedAsCompound === 0,
+        JSON.stringify(report.totals)
+    )
+}
+
+{
+    // Audit L1 and L3: the student's own « » become single ‹ › in the excerpt
+    // (they would read as OUR flagged-word markers), and a literal pipe becomes
+    // a broken bar (the evidence list is joined with " | ").
+    const stub = stubFetch(request => [matchOn(request.text, 'esperimeto')].filter(Boolean))
+    const report = await LT.checkDocuments(
+        [{ path: '/a.tex', text: 'come dice «Rossi» il primo esperimeto | con il banco riesce' }],
+        { language: 'it', url: URL_UNDER_TEST, fetchImpl: stub, crossCheck: false }
+    )
+    const excerpt = (report.matches[0] && report.matches[0].excerpt) || ''
+    check(
+        'student guillemets and pipes are neutralised in the excerpt',
+        /«esperimeto»/.test(excerpt) && /‹Rossi›/.test(excerpt) && !excerpt.includes('|') && excerpt.includes('¦'),
+        excerpt
     )
 }
 

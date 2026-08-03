@@ -103,6 +103,17 @@ const MESSAGE_MAX_CHARS = 300
 const SUGGESTION_MAX_CHARS = 120
 const MAX_SUGGESTIONS = 3
 
+// One excerpt slice made safe to quote: whitespace flattened, the student's own
+// guillemets downgraded to single ‹ › so they can never read as this module's
+// flagged-word markers, and a literal pipe turned into a broken bar so the
+// " | "-joined evidence list cannot be split by quoted text (audit L1 and L3).
+const plainQuote = s =>
+    s
+        .replace(/\s+/g, ' ')
+        .replace(/«/g, '‹')
+        .replace(/»/g, '›')
+        .replace(/\|/g, '¦')
+
 // overleaf-lab: THE CATEGORIES THIS MODULE DOES NOT REPORT, and why each group is out.
 //
 // LanguageTool ships far more than grammar and spelling: it has opinions about style,
@@ -1170,14 +1181,20 @@ export async function checkDocuments(docs, options = {}) {
                         // sees WHICH word tripped the rule without hunting
                         // through the excerpt; the HTML report turns the pair
                         // into a highlight.
+                        // The student's own « » become single ‹ › before our pair goes
+                        // in (audit L1): guillemets are ordinary Italian quotation
+                        // marks, and left alone they read as OUR highlight around a
+                        // word nobody flagged. A literal | becomes ¦ (audit L3): the
+                        // evidence list is joined with " | " and a pipe inside a
+                        // quoted excerpt split one finding into two.
                         excerpt: clip(
                             neutraliseWarningMarker(
                                 (
-                                    source.slice(Math.max(0, start - EXCERPT_CONTEXT_CHARS), start).replace(/\s+/g, ' ') +
+                                    plainQuote(source.slice(Math.max(0, start - EXCERPT_CONTEXT_CHARS), start)) +
                                     '«' +
-                                    source.slice(start, end).replace(/\s+/g, ' ') +
+                                    plainQuote(source.slice(start, end)) +
                                     '»' +
-                                    source.slice(end, end + EXCERPT_CONTEXT_CHARS).replace(/\s+/g, ' ')
+                                    plainQuote(source.slice(end, end + EXCERPT_CONTEXT_CHARS))
                                 ).trim()
                             ),
                             EXCERPT_MAX_CHARS
@@ -1236,9 +1253,28 @@ export async function checkDocuments(docs, options = {}) {
         const foreign = new Set()
         try {
             if (!crossEnabled) throw new Error('cross-check disabled')
-            const crossLanguage = String(language).toLowerCase().startsWith('it') ? 'en-US' : 'it'
-            const unique = [...new Set(pendingSpellings.map(p => p.word.toLowerCase()))]
-            const crossText = unique.join('\n')
+            const crossLanguage = String(language).toLowerCase().startsWith('it') ? 'en-US' : 'it-IT'
+            const uniqueAll = [...new Set(pendingSpellings.map(p => p.word.toLowerCase()))]
+            // BOUNDED, like the derived stage below (audit M3): one request was sent
+            // whatever its size, and past the server's own chunk limits the filter
+            // degraded in silence. Past the cap the words stay UNCHECKED and
+            // therefore KEPT, which is the safe direction for a proof-reader.
+            const CROSS_MAX_WORDS = 600
+            const CROSS_MAX_CHARS = 20000
+            const unique = []
+            let crossChars = 0
+            for (const w of uniqueAll) {
+                if (unique.length >= CROSS_MAX_WORDS || crossChars + w.length + 1 > CROSS_MAX_CHARS) break
+                unique.push(w)
+                crossChars += w.length + 1
+            }
+            // The same canary the derived stage uses (audit H1): a cross answer that
+            // flags NOTHING is indistinguishable from a broken or truncating proxy,
+            // and without this line it absolved every pending typo as "foreign".
+            // The canary is a word no dictionary knows: it must come back flagged,
+            // or the whole cross-check distrusts the answer and keeps the findings.
+            const canary = 'qzjxvkwq'
+            const crossText = [...unique, canary].join('\n')
             const crossBody = new URLSearchParams({ text: crossText, language: crossLanguage, enabledOnly: 'false' })
             const crossMatches = await postCheck(endpoint, crossBody, { fetchImpl, timeoutMs, signal: options.signal })
             const flaggedThere = new Set()
@@ -1247,6 +1283,9 @@ export async function checkDocuments(docs, options = {}) {
                 const e = s + (Number(m.length) || 0)
                 const w = crossText.slice(s, e).toLowerCase()
                 if (w) flaggedThere.add(w)
+            }
+            if (!flaggedThere.has(canary)) {
+                throw new Error('cross-check canary not flagged')
             }
             for (const w of unique) {
                 if (!flaggedThere.has(w)) foreign.add(w)
@@ -1271,7 +1310,7 @@ export async function checkDocuments(docs, options = {}) {
         const derived = new Set()
         try {
             if (!crossEnabled) throw new Error('cross-check disabled')
-            const crossLanguage = String(language).toLowerCase().startsWith('it') ? 'en-US' : 'it'
+            const crossLanguage = String(language).toLowerCase().startsWith('it') ? 'en-US' : 'it-IT'
             const plans = new Map()
             const parts = new Set()
             for (const p of survivors) {
@@ -1311,10 +1350,22 @@ export async function checkDocuments(docs, options = {}) {
                     throw new Error('speller canary not rejected')
                 }
                 for (const [w, decompositions] of plans) {
+                    // A fused pair is absolved only when every half is accepted by the
+                    // OTHER language AND at least one half is rejected by the MAIN one
+                    // (audit M1): "keyframe" splits into a half Italian does not know,
+                    // so it is a genuine foreign compound, while "areaper" splits into
+                    // "area" and "per", both plain Italian, which makes it a
+                    // missing-space typo like "dellamassa" and it stays reported.
+                    // KNOWN LIMIT (audit M2, accepted): a prefixed form whose base is
+                    // a real word absolves a real typo when the typo IS a plausible
+                    // formation ("riazione" = ri + azione, meant "reazione"). Telling
+                    // those apart needs semantics no speller has; the stage exists to
+                    // kill false positives, and that trade is taken knowingly.
                     const absolved = decompositions.some(d =>
                         d.eitherLanguage
                             ? d.eitherLanguage.every(s => !rejectedSame.has(s) || !rejectedCross.has(s))
-                            : d.crossOnly.every(s => !rejectedCross.has(s))
+                            : d.crossOnly.every(s => !rejectedCross.has(s)) &&
+                              d.crossOnly.some(s => rejectedSame.has(s))
                     )
                     if (absolved) derived.add(w)
                 }
@@ -1322,13 +1373,28 @@ export async function checkDocuments(docs, options = {}) {
         } catch (err) {
             derived.clear()
         }
+        const keptSpellings = []
         for (const p of survivors) {
             if (derived.has(p.word.toLowerCase())) {
                 totals.droppedAsCompound += 1
                 continue
             }
             totals.kept += 1
-            if (stored.length < MAX_STORED_MATCHES) stored.push(p.record)
+            keptSpellings.push(p.record)
+        }
+        // Spelling findings are the heart of the requirement, and they are decided
+        // LAST: with the store already full of grammar findings not one of them was
+        // ever shown (audit L2). Half the store is theirs when they need it; the
+        // grammar rows they displace are still counted in `kept`, which is the
+        // number the evidence reports.
+        if (keptSpellings.length) {
+            const quota = Math.min(keptSpellings.length, Math.floor(MAX_STORED_MATCHES / 2))
+            if (stored.length + keptSpellings.length > MAX_STORED_MATCHES) {
+                stored.length = Math.min(stored.length, MAX_STORED_MATCHES - quota)
+            }
+            for (const record of keptSpellings) {
+                if (stored.length < MAX_STORED_MATCHES) stored.push(record)
+            }
         }
     }
 

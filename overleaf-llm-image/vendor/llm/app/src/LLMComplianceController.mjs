@@ -5944,7 +5944,25 @@ async function runReviewPasses(job) {
                     pattern.regex,
                     MAX_CANDIDATE_PASSAGES
                 )
-                if (candidates.length === 0) {
+                // overleaf-lab: NOTHING TO READ IS NOT A PASS (audit, wave 11). The
+                // zero-candidates branch below answers 'ok', which is right when the
+                // scan read real prose and found nothing, and wrong when there was no
+                // prose to read: a queue retry on a project whose files failed to load
+                // would archive every [per-candidate] requirement as met, and the next
+                // delta would count each one as "fixed". Same uniform rule as
+                // runCheck's empty-project guard, tested on the text BEFORE the
+                // acronym-declaration blanking, which can legitimately empty a file.
+                if (!strippedDocs.some(doc => String(doc.text || '').trim().length > 0)) {
+                    allItems.push({
+                        requirement,
+                        status: 'na',
+                        evidence: L(
+                            'The project contains no source text to inspect, so this requirement was not judged.',
+                            'Il progetto non contiene testo sorgente da ispezionare, quindi questo requisito non è stato giudicato.'
+                        ),
+                        suggestion: '',
+                    })
+                } else if (candidates.length === 0) {
                     // overleaf-lab: zero candidates is a PASS, not an abstention. The
                     // pattern is the requirement's own definition of what could violate
                     // it ("first person", "colloquialisms", "placeholder text"): a
@@ -8494,7 +8512,11 @@ async function latestReview(req, res) {
     // the endpoint answered with the older report under `status: 'done'` as though it
     // were the current state of the document. `stale` says out loud that what follows
     // came out of the archive and not out of a review that just ran.
-    const stored = await ComplianceStore.findLatestRecordQuietly(projectId, userId)
+    // Project-scoped on purpose: the archive answers for the PROJECT, so a
+    // collaborator sees the review the owner ran (the route already passed
+    // ensureUserCanReadProject). The in-memory loop above stays per-user because
+    // a job's status endpoint is bound to the user who started it.
+    const stored = await ComplianceStore.findLatestRecordQuietly(projectId)
     if (stored && stored.failed) {
         return res.json({
             ok: true,

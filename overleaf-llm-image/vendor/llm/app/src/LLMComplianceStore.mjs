@@ -712,10 +712,15 @@ export async function findLatest(projectId, userId, rubricFingerprint = null, mo
 // shown a month-old report as the state of the document they had just changed. On a
 // tool used to mark work that is the worst outcome available, and it needed no rare
 // timing at all: any container restart did it, and restarts are nightly.
-export async function findLatestRecord(projectId, userId) {
+// PROJECT-scoped, not (project, user)-scoped. The review is a statement about the
+// DOCUMENT, and every route that reaches this passes ensureUserCanReadProject first:
+// a collaborator the owner shared the thesis with opened the panel and was told
+// there was no review, while the owner was looking at one. Who ran it is still on
+// the record (userId travels in the document); it just no longer decides who sees it.
+export async function findLatestRecord(projectId) {
     const collection = await reports()
     return collection.findOne(
-        { projectId, userId },
+        { projectId },
         { sort: { createdAt: -1 }, projection: { html: 0 } }
     )
 }
@@ -790,9 +795,9 @@ export async function findLatestQuietly(projectId, userId, rubricFingerprint = n
     }
 }
 
-export async function findLatestRecordQuietly(projectId, userId) {
+export async function findLatestRecordQuietly(projectId) {
     try {
-        return await findLatestRecord(projectId, userId)
+        return await findLatestRecord(projectId)
     } catch (err) {
         logger.warn({ projectId, err }, '[LLM] compliance: could not read the stored review')
         return null

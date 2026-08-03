@@ -65,7 +65,10 @@ function parseGotoParam(search) {
   }
   const path = shaped[1];
   const line = Number(shaped[2]);
-  if (!Number.isInteger(line) || line < 1) {
+  // Line 0 is the FILE-ONLY form: "open this file, there is no line to go to". It is
+  // how an image linked from the report opens in the editor's file view (the opener
+  // treats any non-positive line as "no jump", and a fileRef has no cursor anyway).
+  if (!Number.isInteger(line) || line < 0) {
     return null;
   }
   // `..` is spelled with two characters the shape above happily accepts, so traversal
@@ -104,6 +107,7 @@ const CHROME_EN = {
   openInEditor: "Open this line in the editor",
   moreEvidence: n => `${n} more`,
   showSources: n => `Show the ${n} source excerpts`,
+  openImage: "Open this file in the editor",
   excerptShortened: "Long lines are shown shortened.",
   excerptsClipped: n =>
     `${n} ${n === 1 ? "location has" : "locations have"} no source excerpt here: this report keeps its excerpts within a fixed size so it stays small enough to store and to send. Open the file at the line shown to see the rest.`,
@@ -241,6 +245,7 @@ const CHROME_IT = {
   openInEditor: "Apri questa riga nell'editor",
   moreEvidence: n => `altre ${n}`,
   showSources: n => `Mostra ${n === 1 ? "l'estratto" : `i ${n} estratti`} del sorgente`,
+  openImage: "Apri questo file nell'editor",
   excerptShortened: "Le righe lunghe sono mostrate accorciate.",
   excerptsClipped: n =>
     `${n} ${n === 1 ? "posizione non ha" : "posizioni non hanno"} l'estratto del sorgente: questo report tiene gli estratti entro una dimensione fissa per restare abbastanza piccolo da archiviare e da spedire. Apri il file alla riga indicata per vedere il resto.`,
@@ -495,10 +500,59 @@ function buildAiSignalsHtml(block, chip = null, lang = "en") {
     }).join("")}`;
   };
   const legend = Array.isArray(block?.legend) ? block.legend : [];
+  // overleaf-lab: the signal labels and glosses come out of the pattern list in
+  // English, and inside an Italian report they were the one part the system's own
+  // designer read twice and still did not understand. Localized HERE, keyed by the
+  // stable signal id, in plain language that says what the number means and which
+  // direction is the signal; an id this table does not know falls back to the
+  // block's own strings, so a signal added later is never rendered blank.
+  const SIGNAL_IT = {
+    emDashPer1000: {
+      label: "Trattini lunghi (em dash) ogni 1000 parole",
+      note: "Rari nella prosa accademica scritta a mano, frequentissimi nei testi generati.",
+    },
+    sentenceLengthVariation: {
+      label: "Variazione della lunghezza delle frasi (deviazione standard, in parole)",
+      note: "Il valore BASSO è il segnale: frasi tutte della stessa lunghezza, una dopo l'altra. La prosa umana alterna frasi lunghe e corte.",
+    },
+    paragraphLengthVariation: {
+      label: "Variazione della lunghezza dei paragrafi (dispersione rispetto alla media)",
+      note: "Il valore BASSO è il segnale: paragrafi tutti della stessa taglia, in fila. La scrittura umana produce paragrafi irregolari.",
+    },
+    connectiveOpeningsPer100Sentences: {
+      label: "Frasi che si aprono con un connettivo, ogni 100 frasi",
+      note: "Attacchi come \"Inoltre\", \"Tuttavia\", \"In questo contesto\" ripetuti a inizio frase.",
+    },
+    tripletsPer1000: {
+      label: "Enumerazioni a tre elementi (X, Y e Z) ogni 1000 parole",
+      note: "La terna è il ritmo preferito dei testi generati.",
+    },
+    listItemsPer1000: {
+      label: "Voci di elenco ogni 1000 parole",
+      note: "Quanta parte del capitolo è elenchi puntati invece che prosa.",
+    },
+    boldLeadItemsPer1000: {
+      label: "Voci di elenco che aprono con un'etichetta in grassetto, ogni 1000 parole",
+      note: "Il formato \"titoletto in grassetto: spiegazione\" ripetuto voce dopo voce.",
+    },
+    lexicalMarkersPer1000: {
+      label: "Frasi fatte della lista, ogni 1000 parole",
+      note: "Quante volte compaiono le espressioni della lista di pattern, in qualunque lingua: i modi di dire ricorrenti dei testi generati. Conta lo scarto dalla mediana del documento, non il valore assoluto.",
+    },
+  };
+  const localizedSignal = (signal) => (it && signal && SIGNAL_IT[signal.id]) || null;
+  const signalLabel = (signal) => {
+    const loc = localizedSignal(signal);
+    return escapeHtml((loc && loc.label) || signal.label || signal.id || "");
+  };
   // Each signal's explanation from the legend is repeated INLINE under its
   // number: a reader confronted with "1.35 against a median of 0.18" should
   // not have to scroll to a folded glossary to learn what was counted.
   const legendNoteOf = (signal) => {
+    const loc = localizedSignal(signal);
+    if (loc && loc.note) {
+      return `<p class="meta">${escapeHtml(loc.note)}</p>`;
+    }
     const entry = legend.find((e) => e && (e.id === signal.id || e.label === signal.label));
     return entry && entry.note ? `<p class="meta">${escapeHtml(entry.note)}</p>` : "";
   };
@@ -508,8 +562,8 @@ function buildAiSignalsHtml(block, chip = null, lang = "en") {
     const reading = value !== "" && median !== "" ? `<span class="val">${S.reading(value, median, signal.direction === "below")}</span>` : "";
     const excerpts = (signal.excerpts || []).filter(Boolean).map(passage);
     const more = typeof signal.excerptsTotal === "number" && signal.excerptsTotal > excerpts.length ? `<p class="meta">${S.occurrences(excerpts.length, signal.excerptsTotal)}</p>` : "";
-    return `<div class="sig"><strong>${escapeHtml(signal.label || signal.id || "")}</strong> ${reading}${legendNoteOf(signal)}${excerpts.length ? `<ul>${excerpts.map((e) => `<li class="q">${escapeHtml(e.text || "")}${e.file ? ` <span class="at">${where(e)}</span>` : ""}</li>`).join("")}</ul>` : ""}${more}</div>`;
-  }).join("")}</div>`).join("")}${showing(S.whatChapters, block?.totals?.flaggedChapters)}${legend.length ? `<details><summary>${S.legendSummary}</summary><ul>${legend.map((entry) => `<li><strong>${escapeHtml(entry.label || entry.id || "")}</strong>: ${escapeHtml(entry.note || "")}</li>`).join("")}</ul></details>` : ""}`;
+    return `<div class="sig"><strong>${signalLabel(signal)}</strong> ${reading}${legendNoteOf(signal)}${excerpts.length ? `<ul>${excerpts.map((e) => `<li class="q">${escapeHtml(e.text || "")}${e.file ? ` <span class="at">${where(e)}</span>` : ""}</li>`).join("")}</ul>` : ""}${more}</div>`;
+  }).join("")}</div>`).join("")}${showing(S.whatChapters, block?.totals?.flaggedChapters)}${legend.length ? `<details><summary>${S.legendSummary}</summary><ul>${legend.map((entry) => `<li><strong>${signalLabel(entry)}</strong>: ${escapeHtml((localizedSignal(entry) || {}).note || entry.note || "")}</li>`).join("")}</ul></details>` : ""}`;
   const clustersHtml = !clusters.length ? "" : `<h3>${S.clustersHeading}</h3><p class="meta">${S.clustersNote}</p>${clusters.map((cluster) => {
     const markers = (cluster.markers || []).map((m) => escapeHtml(m)).join(", ");
     const hidden = typeof cluster.markersTotal === "number" && cluster.markersTotal > (cluster.markers || []).length ? (it ? ` e altre ${cluster.markersTotal - cluster.markers.length}` : ` and ${cluster.markersTotal - cluster.markers.length} more`) : "";
@@ -554,7 +608,12 @@ function factWhere(row) {
 // Two: the figures whose resolution could NOT be computed are listed under a label that
 // says what they are NOT. An unmeasured figure sitting in a list below the low ones is
 // read as a low one, and that is an accusation the code did not make.
-function buildImageMetricsHtml(block, T) {
+function buildImageMetricsHtml(block, T, imageChip = null) {
+  // `imageChip` renders an image path as a link that opens the file in the editor;
+  // injected by buildReportHtml (which owns the project URL), plain <code> otherwise,
+  // so importing this section on its own keeps the old rendering.
+  const pathCell = (path) =>
+    path ? (imageChip ? imageChip(path) : `<code>${escapeHtml(path)}</code>`) : "";
   if (!block) {
     return "";
   }
@@ -593,7 +652,7 @@ function buildImageMetricsHtml(block, T) {
       const mark = row.exact
         ? T.figuresExact
         : T.figuresEstimated(assumed || factNumber(row.assumedTextWidthMm) || "?");
-      return `<tr><td>${row.path ? `<code>${escapeHtml(row.path)}</code>` : ""} ${factWhere(row)}</td><td>${pixels}</td><td>${width ? `${width} mm` : ""}</td><td>${dpi ? `${dpi} DPI` : ""} <span class="mark">(${escapeHtml(mark)})</span></td></tr>`;
+      return `<tr><td>${pathCell(row.path)} ${factWhere(row)}</td><td>${pixels}</td><td>${width ? `${width} mm` : ""}</td><td>${dpi ? `${dpi} DPI` : ""} <span class="mark">(${escapeHtml(mark)})</span></td></tr>`;
     })
     .join("");
   const measuredHtml = !measured.length
@@ -608,7 +667,7 @@ function buildImageMetricsHtml(block, T) {
     : `<p class="meta">${escapeHtml(T.figuresUnmeasured)}</p><ul>${unchecked
         .map(
           (row) =>
-            `<li>${row.path ? `<code>${escapeHtml(row.path)}</code>` : ""} ${factWhere(row)} ${escapeHtml(row.reason || "")}</li>`
+            `<li>${pathCell(row.path)} ${factWhere(row)} ${escapeHtml(row.reason || "")}</li>`
         )
         .join("")}</ul>${
         totals.unchecked && totals.unchecked.total > unchecked.length
@@ -618,7 +677,7 @@ function buildImageMetricsHtml(block, T) {
   return `<section class="facts" id="figure-resolution">
     <h2>${escapeHtml(T.figuresTitle)}</h2>
     <p class="caveat">${escapeHtml(T.figuresCaveat)}</p>
-    <p class="meta">${escapeHtml(T.figuresHow)}</p>
+    ${measured.length ? `<p class="meta">${escapeHtml(T.figuresHow)}</p>` : ""}
     <p class="meta">${countsLine}${range}</p>
     ${measuredHtml}
     ${uncheckedHtml}
@@ -794,6 +853,35 @@ function buildReportHtml(result) {
   // `{ path, line }`, so the adapter lives here rather than in either of them.
   const factChip = (row) =>
     row && row.file ? locChip({ path: row.file, line: row.line }) : "";
+  // The FILE-ONLY jump: a path linked with line 0, which parseGotoParam accepts as
+  // "open the file, no line to go to". This is how an image opens in the editor's
+  // file view, by the same route the .bib chip takes.
+  const fileHref = (path) =>
+    projectUrl && path
+      ? `${projectUrl}?${GOTO_PARAM}=${encodeURIComponent(gotoParamValue(path, 0))}`
+      : "";
+  const imageChip = (path) => {
+    const code = `<code>${escapeHtml(path)}</code>`;
+    const href = fileHref(path);
+    return href
+      ? `<a class="jump" href="${escapeHtml(href)}" title="${escapeHtml(T.openImage)}">${code}</a>`
+      : code;
+  };
+  // Image paths QUOTED IN EVIDENCE become links that open the image itself: a figure
+  // finding names its .png, and the reader used to have to hunt it in the file tree.
+  // Runs on escaped text over character classes no entity contains; length-bounded,
+  // no spaces; the editor's file tree stays the second gate, so a name this project
+  // does not have opens nothing.
+  const IMAGE_PATH = /\/?[\w][\w./-]{0,200}\.(?:png|jpe?g|pdf|eps|svg)\b/g;
+  const linkImages = (escaped) =>
+    !projectUrl
+      ? escaped
+      : escaped.replace(IMAGE_PATH, (m) => {
+          const href = fileHref(m);
+          return href
+            ? `<a class="jump" href="${escapeHtml(href)}" title="${escapeHtml(T.openImage)}"><code>${m}</code></a>`
+            : m;
+        });
   // overleaf-lab: WHAT is at the location, next to its address. The structural checks
   // have always said it (`locations[].what`: the acronym, the equation, the value) and
   // both renderers printed the bare path:line, so the reader had to open every file to
@@ -870,7 +958,13 @@ function buildReportHtml(result) {
       // A « » pair is LanguageTool's excerpt marking the exact flagged span
       // (see LLMLanguageTool): turn it into a real highlight, keeping the
       // characters so the plain-text panel and the HTML report read the same.
-      return `${escapeHtml(clean).replace(/«([^«»]{1,80})»/g, "<mark>«$1»</mark>")}${badge}`;
+      // An IMAGE path quoted by the evidence becomes a link that opens the image
+      // itself (file-only goto, line 0): a figure finding names its .png, and the
+      // reader used to have to hunt it in the file tree. Applied AFTER escapeHtml
+      // on character classes that no entity contains, and the editor's file tree
+      // stays the second gate: a name that is not in this project opens nothing.
+      const marked = escapeHtml(clean).replace(/«([^«»]{1,80})»/g, "<mark>«$1»</mark>");
+      return `${linkImages(marked)}${badge}`;
     };
     const renderList = (ps) => `<ul>${ps.map((p) => `<li>${renderPart(p)}</li>`).join("")}</ul>`;
     // overleaf-lab: a long evidence list is a wall. The first entry is usually the
@@ -878,7 +972,15 @@ function buildReportHtml(result) {
     // view and the rest folds away; the locations each entry names are also below,
     // as chips and excerpts, so nothing folded here is the only copy of an address.
     // Printed open, like every fold in this page.
-    const evidenceBody = parts.length > 4 ? `${renderPart(parts[0])}<details class="more"><summary>${escapeHtml(T.moreEvidence(parts.length - 1))}</summary>${renderList(parts.slice(1))}</details>` : parts.length > 1 ? renderList(parts) : renderPart(evidenceText);
+    // The split-vote badge must survive the fold (audit): folded away, the one mark
+    // that says "this verdict was not unanimous" vanished from the screen. When any
+    // folded part carries the marker, its badge is repeated next to the visible
+    // first sentence; the folded part keeps its own copy too.
+    const foldedSplit = parts.slice(1).map((p) => contestedNote.exec(p)).find(Boolean);
+    const foldedBadge = foldedSplit
+      ? ` <span class="warn">${escapeHtml(T.readingsAgree(foldedSplit[1] || foldedSplit[3], foldedSplit[2] || foldedSplit[4]))}</span>`
+      : "";
+    const evidenceBody = parts.length > 4 ? `${renderPart(parts[0])}${foldedBadge}<details class="more"><summary>${escapeHtml(T.moreEvidence(parts.length - 1))}</summary>${renderList(parts.slice(1))}</details>` : parts.length > 1 ? renderList(parts) : renderPart(evidenceText);
     const evidence = evidenceText ? `<div class="ev"><span class="lbl">${escapeHtml(T.evidence)}</span>${evidenceBody}</div>` : "";
     // overleaf-lab: the locations that carry an excerpt are rendered BELOW, each one
     // headed by its own chip, so listing them again under "Also at" would print every
@@ -968,7 +1070,12 @@ ${passed.map((item) => renderItem(item)).join("\n")}
     // model's stated claim; the anchors are derived. When they disagree about the
     // file, the claim wins.
     const evidence = String(item.evidence || "");
-    const named = sorted.find((l) => l.path && evidence.includes(l.path));
+    // LONGEST match wins (audit): "/a.tex" is a substring of "/chapters/a.tex", and
+    // taking the first match filed the finding under a file the evidence only
+    // contains as somebody else's suffix.
+    const named = sorted
+      .filter((l) => l.path && evidence.includes(l.path))
+      .sort((a, b) => b.path.length - a.path.length)[0];
     if (named) {
       return named;
     }
@@ -1180,7 +1287,7 @@ ${passed.map((item) => renderItem(item)).join("\n")}
   // they are measurements of THIS document and belong above the section that is only
   // ever an invitation to look.
   const bibVerifyHtml = buildBibVerifyHtml(result.bibVerify, T);
-  const imageMetricsHtml = buildImageMetricsHtml(result.imageMetrics, T);
+  const imageMetricsHtml = buildImageMetricsHtml(result.imageMetrics, T, imageChip);
   const title = `${escapeHtml(T.title)} - ${escapeHtml(result.rubric.name)}`;
   return `<!doctype html>
 <html lang="${T.htmlLang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
