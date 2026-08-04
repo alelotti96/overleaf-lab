@@ -3771,7 +3771,20 @@ function excludeUnreviewedSegments(docs) {
 // the same size whatever the document's length, which is the property that makes a
 // 200-page thesis reviewable for these requirements at all.
 const SKELETON_HEAD_CHARS = 2000
-const SKELETON_MAX_CHARS = 24000
+// overleaf-lab: and how each chapter ENDS. "The introduction states the aims and the
+// structure" came back n.a. on a real thesis ("the full text of the chapter was not
+// provided") because its outline paragraph - "chapter 2 presents..., chapter 3..." -
+// sat where those paragraphs usually sit: in the LAST lines of the introduction. No
+// head sample can see that, however large it grows. The closing lines are also where
+// conclusions keep their limitations. So every clipped chapter carries its tail too,
+// and a chapter shorter than head+tail is quoted whole. The "..." keeps one meaning
+// throughout: text omitted HERE - its absence tells the model the quote is complete,
+// so it can answer "missing" instead of hedging with n.a.
+const SKELETON_TAIL_CHARS = 1500
+// Raised from 24000 when the tails were added: cutting whole segments off the end of
+// the outline (which is what this cap does, honestly but still) costs more than the
+// longer prompt, and the structure pass is one call per review.
+const SKELETON_MAX_CHARS = 40000
 
 // overleaf-lab: the document seen from above. Headings, which parts exist, how big
 // each chapter is and how each one opens, for the requirements that ask whether the
@@ -3779,17 +3792,19 @@ const SKELETON_MAX_CHARS = 24000
 //
 // This is what makes a 200-page thesis reviewable at all for those requirements: the
 // skeleton of a long thesis is about the same size as the skeleton of a short one,
-// while the text is not. The opening lines of each chapter are included because
-// "the introduction states the objectives" is a question about how a chapter starts,
-// and a bare list of titles cannot answer it.
+// while the text is not. The opening AND closing lines of each chapter are included
+// because "the introduction states the objectives" is a question about how a chapter
+// starts - and "states the structure" about how it usually ENDS - and a bare list of
+// titles can answer neither.
 function buildSkeleton(docs, segments) {
     const all = docs.map(d => d.text).join('\n')
     const has = re => (re.test(all) ? 'yes' : 'no')
     const lines = []
     lines.push('DOCUMENT SKELETON. This is the structure of the project, not its full')
     lines.push('text: headings, which parts exist, the size of each chapter and how each')
-    lines.push('one opens. Judge only what is visible here, and answer "na" for anything')
-    lines.push('that would need the body text.')
+    lines.push('one opens and closes. A "..." marks text omitted at that spot; a quote')
+    lines.push('without any "..." is that chapter complete. Judge only what is visible')
+    lines.push('here, and answer "na" only for what would need the omitted text.')
     lines.push('')
     lines.push('PARTS PRESENT:')
     lines.push(`- abstract: ${has(/\\begin\{abstract\}|\\abstract\b|\\chapter\*?\s*\{\s*(?:abstract|sommario)/i)}`)
@@ -3830,7 +3845,14 @@ function buildSkeleton(docs, segments) {
             .replace(/\s+/g, ' ')
             .trim()
         if (body) {
-            lines.push(`   opens with: "${body.slice(0, SKELETON_HEAD_CHARS)}${body.length > SKELETON_HEAD_CHARS ? '...' : ''}"`)
+            if (body.length <= SKELETON_HEAD_CHARS + SKELETON_TAIL_CHARS) {
+                // Short enough to show whole: no "..." anywhere, which the header
+                // told the model to read as "this chapter is complete on the page".
+                lines.push(`   opens with: "${body}"`)
+            } else {
+                lines.push(`   opens with: "${body.slice(0, SKELETON_HEAD_CHARS)}..."`)
+                lines.push(`   closes with: "...${body.slice(-SKELETON_TAIL_CHARS)}"`)
+            }
         }
     }
     const outline = lines.join('\n')

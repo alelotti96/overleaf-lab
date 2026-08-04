@@ -801,6 +801,11 @@ function buildReportHtml(result) {
     na: 2,
     ok: 3
   };
+  // overleaf-lab: used ONLY by the delta bullets ("fixed since last review: ..."),
+  // where the requirement is a reminder of something listed in full further down.
+  // The item headers show the whole requirement: the clipped form cut rubric lines
+  // off mid-sentence at the first ":" or full stop, and the part that says what to
+  // actually comply with lived in a hover tooltip nobody prints and nobody taps.
   const shortRequirement = (text) => {
     const full = (text || "").trim();
     const numbered = /^(\d+[.)]\s*)([\s\S]*)$/.exec(full);
@@ -1036,9 +1041,9 @@ function buildReportHtml(result) {
     // overleaf-lab: "What to do" comes FIRST, right under the requirement. It is the
     // sentence the reader acts on, and under a long evidence list it sat below the
     // fold of every finding that needed it most.
-    return `<div class="item ${cls}${fixable ? " fixable" : ""}" id="${anchor}" tabindex="-1">${gutter}<div class="body"><div class="req"><span class="badge">${label}</span><span class="rtext" title="${escapeHtml(
+    return `<div class="item ${cls}${fixable ? " fixable" : ""}" id="${anchor}" tabindex="-1">${gutter}<div class="body"><div class="req"><span class="badge">${label}</span><span class="rtext">${escapeHtml(
       item.requirement
-    )}">${escapeHtml(shortRequirement(item.requirement))}</span>${warningHtml}${fixbox}</div>${suggestion}${evidence}${sources}${locations}</div></div>`;
+    )}</span>${warningHtml}${fixbox}</div>${suggestion}${evidence}${sources}${locations}</div></div>`;
   };
   // overleaf-lab: THREE buckets, not two. An n.a. is not a thing to fix: putting
   // the unchecked requirements of a fast review among the findings gave the
@@ -1352,7 +1357,6 @@ ${passed.map((item) => renderItem(item)).join("\n")}
   .st-missing{--c:var(--missing);--tint:var(--missing-tint);--br:var(--missing-br)}
   .st-na{--c:var(--na);--tint:var(--na-tint);--br:var(--na-br)}
   .req{font-weight:600;font-size:1rem;line-height:1.45}
-  .req .rtext{cursor:help}
   .badge{display:inline-block;background:var(--c);color:var(--badge-fg);border-radius:999px;padding:.1rem .5rem;margin-right:.5rem;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;line-height:1.5;vertical-align:.08em;white-space:nowrap}
   .warn{display:inline-block;margin-left:.4rem;border:1px solid var(--partial);color:var(--partial);background:none;border-radius:999px;padding:0 .5rem;font-size:11px;font-weight:600;line-height:1.6;vertical-align:.08em;white-space:nowrap}
   .ln{flex:0 0 auto;min-width:2.6rem;text-align:right;font-family:var(--mono);font-size:.76rem;color:var(--faint);font-variant-numeric:tabular-nums;padding-top:.3rem}

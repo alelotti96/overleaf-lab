@@ -1608,5 +1608,30 @@ const signalsBlock = (over = {}) => ({
     check('the English label from the block is gone from the Italian page', !html.includes('spread relative to the mean'))
 }
 
+// ---- the requirement title is shown whole ----
+// The header used to clip the rubric line at the first ":" or full stop and park the
+// rest in a hover tooltip: on a printed or tapped report the part that says what to
+// comply with was simply gone ("...supportata da una citazione (\cite)...").
+{
+    const long =
+        '25. Ogni affermazione quantitativa o qualitativa non acclarata è supportata da una ' +
+        'citazione (\\cite). Non serve citare che g vale 9.81 m/s2; serve una citazione per ' +
+        'affermare che la maggior parte dei lanci è di nanosatelliti.'
+    const html = bodyOf(buildReportHtml({ ...base, items: [item({ requirement: long })] }))
+    check('the full rubric line is on the page', html.includes('nanosatelliti.'))
+    check('no clipped title in the item header', !/<span class="rtext">[^<]*\.\.\.<\/span>/.test(html))
+    check('and no tooltip doing the title\'s job', !/<span class="rtext" title=/.test(html))
+    // The delta bullets are the one place the short form survives: there the
+    // requirement is a reminder of an item listed in full further down the page.
+    const withDelta = bodyOf(
+        buildReportHtml({
+            ...base,
+            items: [item({ requirement: long })],
+            delta: { comparable: true, resolved: [{ requirement: long }], regressed: [], stillOpenCount: 0 },
+        })
+    )
+    check('the delta bullet still shortens it', /<li class="fixed">[^<]*\.\.\.<\/li>/.test(withDelta))
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES')
 process.exit(ok ? 0 : 1)

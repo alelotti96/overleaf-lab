@@ -593,6 +593,36 @@ const project = [
     // It has to stay small: this is the whole reason [structure] exists.
     check('the skeleton is far smaller than the text', skeleton.length < 4000, `${skeleton.length} chars`)
     check('an outline that fits says nothing about truncation', !/truncated/.test(skeleton))
+    // A chapter shown whole carries no "...": the header tells the model to read
+    // that as "complete", so it can answer "missing" instead of hedging with n.a.
+    check('a short chapter is quoted whole, no ellipsis', !/opens with: "[^"]*\.\.\."/.test(skeleton))
+    check('and gets no closing quote of its own', !/closes with/.test(skeleton))
+}
+// ---- the tail of a clipped chapter travels with the outline ----
+// REGRESSION. "The introduction states the aims and the structure" came back n.a. on
+// a real thesis ("the full text of the chapter was not provided"): its outline
+// paragraph sat in the LAST lines of the introduction, and the skeleton sampled only
+// the head. The closing lines are also where conclusions keep their limitations.
+{
+    const filler = 'Context about space debris and the growing population in orbit. '
+    const outlinePara =
+        'This thesis is organised as follows: chapter 2 presents the fundamentals, ' +
+        'chapter 3 describes the method, chapter 4 concludes with the results.'
+    const long = [
+        {
+            path: 'thesis.tex',
+            text: `\\chapter{Introduction}\n${filler.repeat(80)}\n${outlinePara}`,
+        },
+    ]
+    const segments = h.segmentChapters(long)
+    const skeleton = h.buildSkeleton(long, segments)
+    check('a clipped chapter carries its closing lines', /closes with: "\.\.\./.test(skeleton))
+    check(
+        'and the structure paragraph at its end is on the page',
+        skeleton.includes('organised as follows'),
+        skeleton.slice(-300)
+    )
+    check('the clipped head ends with an ellipsis', /opens with: "[^"]*\.\.\."/.test(skeleton))
 }
 {
     // A clipped outline used to end with a bare "..." under a header still promising N
@@ -604,7 +634,9 @@ const project = [
     }))
     const segments = h.segmentChapters(big)
     const skeleton = h.buildSkeleton(big, segments)
-    check('a long outline is still capped', skeleton.length < 26000, `${skeleton.length} chars`)
+    // The cap moved from 24k to 40k when the closing quotes were added to the
+    // skeleton: cutting whole segments off the end costs more than a longer prompt.
+    check('a long outline is still capped', skeleton.length < 42000, `${skeleton.length} chars`)
     check(
         'and it says where the cut fell',
         /\[outline truncated after segment \d+ of 400/.test(skeleton),
