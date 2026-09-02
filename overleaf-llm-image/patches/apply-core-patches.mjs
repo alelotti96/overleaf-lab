@@ -148,6 +148,17 @@ const FILES = [
         "    'publish',\n",
         "    'publish',\n    'lists',\n"
       ),
+      // overleaf-lab: the projects-api module (create and list projects with the
+      // git bridge token). Same chain as llm -> publish -> lists: anchors on the
+      // line the previous edit just inserted. Without this entry the module's
+      // files sit in the image but Overleaf never imports them, silently: no
+      // "[projects-api] Module loaded", no error line either.
+      strEdit(
+        "settings: moduleImportSequence += 'projects-api'",
+        "    'projects-api',",
+        "    'lists',\n",
+        "    'lists',\n    'projects-api',\n"
+      ),
     ],
   },
 
