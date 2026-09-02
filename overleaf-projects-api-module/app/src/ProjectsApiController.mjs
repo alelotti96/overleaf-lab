@@ -123,9 +123,11 @@ async function create(req, res) {
         // exactly what the web UI refuses and says it in the same words. The
         // error class it throws is not part of the contract here: anything
         // thrown is the caller's mistake about a name, so anything thrown is a
-        // 400 carrying that message.
+        // 400 carrying that message. The promises export is the one to call:
+        // the default export is callbackified and, awaited, rejects for every
+        // name, valid or not.
         try {
-            await ProjectDetailsHandler.validateProjectName(name)
+            await ProjectDetailsHandler.promises.validateProjectName(name)
         } catch (err) {
             return fail(res, 400, (err && err.message) || 'invalid project name')
         }

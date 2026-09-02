@@ -377,6 +377,8 @@ def cmd_ls(args):
         if project.get("trashed"):
             flags.append("trashed")
         name = str(project.get("name", ""))
+        if len(name) > 40:
+            name = name[:37] + "..."
         if flags:
             name = "%s (%s)" % (name, ", ".join(flags))
         rows.append(
