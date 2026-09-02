@@ -18,6 +18,17 @@ scripts/whitelisted_emails.txt
 # authored and updated by the teaching staff on the instance itself.
 /guide-corsi/
 
+# Review bench: the harness is code and belongs in the repo (a previous copy
+# lived in a temp dir and evaporated), but its outputs quote real theses and
+# the scan-patterns files are lines extracted verbatim from the private
+# rubrics in /templates/, which this file already keeps out.
+/bench/out/
+/bench/scan-patterns-*.txt
+
+# Implementation brief for the projects-api module: working document that names
+# deployment hosts. The module README carries everything a user needs.
+/overleaf-projects-api-module/BRIEF.md
+
 # Generated files
 overleaf-toolkit/
 data/
@@ -29,6 +40,7 @@ logs/
 # OS files
 .DS_Store
 Thumbs.db
+__pycache__/
 .claude/settings.local.json
 
 # Scratch git worktrees used to keep parallel work off the main tree. They hold a
