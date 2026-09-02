@@ -65,6 +65,10 @@ if [ ! -f "$HERE/../overleaf-lists-module/index.mjs" ]; then
   echo "ERROR: overleaf-lists-module/ is missing at $HERE/../overleaf-lists-module" >&2
   exit 1
 fi
+if [ ! -f "$HERE/../overleaf-projects-api-module/index.mjs" ]; then
+  echo "ERROR: overleaf-projects-api-module/ is missing at $HERE/../overleaf-projects-api-module" >&2
+  exit 1
+fi
 
 # The publish module enters as a named buildx context because it lives outside
 # this directory (it is not an LLM feature); buildx is already a prerequisite.
@@ -72,6 +76,7 @@ DOCKER_BUILDKIT=1 docker buildx build \
   --build-arg BASE_IMAGE="${BASE_IMAGE}" \
   --build-context publishmodule="${HERE}/../overleaf-publish-module" \
   --build-context listsmodule="${HERE}/../overleaf-lists-module" \
+  --build-context projectsapimodule="${HERE}/../overleaf-projects-api-module" \
   --load \
   -t "${OUT_REF}" \
   "${HERE}"

@@ -32,11 +32,12 @@ and running `./scripts/configure.sh`.
 | AI assistant and compliance review | In-editor chat, Ask-AI on a selection, inline completion, and the review that checks a document against a rubric | An OpenAI-compatible endpoint (local llama.cpp, a hosted API, or per-user keys). The installer asks for the URL, the API key and the model name |
 | Public PDF publishing | A "Publish" button that serves a project's compiled PDF at a stable public URL, with an optional password | Nothing extra to install. Only publishes what an owner explicitly publishes |
 | Symbols and acronyms list generator | A toolbar button that scans a project and keeps its list of symbols and its list of acronyms up to date | Nothing extra to run: no model, no API key, no network |
+| Projects API and the `ol` CLI | Three JSON endpoints, and a Python client, that create, list and clone projects from a terminal with the Git Bridge token | Nothing extra to run. It needs the Git Bridge, which is on by default |
 
-All three live in **one custom Docker image**. Saying yes to any of them makes
+All four live in **one custom Docker image**. Saying yes to any of them makes
 `install.sh` build that image before starting the stack: a one-time build of
 about 15-30 minutes that needs at least 8 GB of RAM and network access. Saying no
-to all three keeps the stock image and the installation is unchanged.
+to all four keeps the stock image and the installation is unchanged.
 
 If you enable the AI assistant, two further checkers are offered for the
 compliance review, both off by default:

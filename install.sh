@@ -388,7 +388,7 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
     # -------------------------------------------------------------------------
     # Optional features
     # -------------------------------------------------------------------------
-    # Three features that ship with this repo but stay switched off until asked
+    # Four features that ship with this repo but stay switched off until asked
     # for. They all live in the SAME custom Docker image, so the build cost is
     # paid once no matter how many of them are enabled, and not at all when none
     # is. Every answer here can be changed later in config.env.local.
@@ -396,14 +396,15 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
     echo "==============================================================================="
     echo "OPTIONAL FEATURES"
     echo "==============================================================================="
-    echo "Three features are shipped but switched off:"
+    echo "Four features are shipped but switched off:"
     echo "  1. AI assistant and compliance review"
     echo "  2. Public PDF publishing"
     echo "  3. Symbols and acronyms list generator"
+    echo "  4. Projects API and the ol command-line client"
     echo ""
-    echo "All three live in ONE custom Docker image. Saying yes to ANY of them makes"
+    echo "All four live in ONE custom Docker image. Saying yes to ANY of them makes"
     echo "install.sh build that image before starting the stack (~15-30 min, needs"
-    echo ">=8 GB RAM + network); saying no to all three keeps the stock image and"
+    echo ">=8 GB RAM + network); saying no to all four keeps the stock image and"
     echo "changes nothing. You can change any answer later by editing config.env.local"
     echo "and running ./scripts/configure.sh."
     echo ""
@@ -534,6 +535,27 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         ENABLE_LISTS_MODULE="false"
     fi
 
+    # (4) Projects API and the ol CLI
+    echo ""
+    echo "==============================================================================="
+    echo "4. PROJECTS API AND THE ol CLI (optional)"
+    echo "==============================================================================="
+    echo "Adds three JSON endpoints that create and list projects using the personal"
+    echo "access token a user already creates for the Git Bridge, so \"ol new my-project\""
+    echo "makes the project and clones it without opening a browser. Useful when logins"
+    echo "go through SSO and cannot be scripted. It authenticates with git tokens only,"
+    echo "which already grant read and write on every project their owner can reach, and"
+    echo "it can never act on behalf of another user."
+    echo ""
+    read -p "Enable the projects API and the ol CLI? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        ENABLE_PROJECTS_API_MODULE="true"
+        echo -e "${GREEN}The projects API will be enabled${NC}"
+    else
+        ENABLE_PROJECTS_API_MODULE="false"
+    fi
+
     # Create config.env.local
     cp config.env config.env.local
 
@@ -595,14 +617,15 @@ print(f'pbkdf2:sha256:{iterations}\${salt}\${dk.hex()}')
         sed -i "s|^LLM_BIB_VERIFY_MAILTO=.*|LLM_BIB_VERIFY_MAILTO=\"${LLM_BIB_VERIFY_MAILTO}\"|" config.env.local
     fi
 
-    # Set the other two custom-image modules (independent of the LLM one)
+    # Set the other three custom-image modules (independent of the LLM one)
     sed -i "s|^ENABLE_PUBLISH_MODULE=.*|ENABLE_PUBLISH_MODULE=\"${ENABLE_PUBLISH_MODULE}\"|" config.env.local
     sed -i "s|^ENABLE_LISTS_MODULE=.*|ENABLE_LISTS_MODULE=\"${ENABLE_LISTS_MODULE}\"|" config.env.local
+    sed -i "s|^ENABLE_PROJECTS_API_MODULE=.*|ENABLE_PROJECTS_API_MODULE=\"${ENABLE_PROJECTS_API_MODULE}\"|" config.env.local
 
     echo ""
     echo -e "${GREEN}✓ Configuration created${NC}"
 
-    if [ "$ENABLE_LLM_MODULE" = "true" ] || [ "$ENABLE_PUBLISH_MODULE" = "true" ] || [ "$ENABLE_LISTS_MODULE" = "true" ]; then
+    if [ "$ENABLE_LLM_MODULE" = "true" ] || [ "$ENABLE_PUBLISH_MODULE" = "true" ] || [ "$ENABLE_LISTS_MODULE" = "true" ] || [ "$ENABLE_PROJECTS_API_MODULE" = "true" ]; then
         echo ""
         echo -e "${YELLOW}Optional features enabled: the custom image is built automatically${NC}"
         echo "  in step 6 before the stack starts (~15-30 min, needs >=8 GB RAM + network)."
@@ -769,8 +792,8 @@ if [ "${ENABLE_PANDOC_CONVERSIONS:-true}" = "true" ]; then
     fi
 fi
 
-# Build the custom image when ANY of the three modules it carries is enabled (AI
-# assistant, publish, symbols/acronyms lists). configure.sh points OVERLEAF_IMAGE at
+# Build the custom image when ANY of the four modules it carries is enabled (AI
+# assistant, publish, symbols/acronyms lists, projects API). configure.sh points OVERLEAF_IMAGE at
 # it under exactly the same condition, so it MUST exist before `bin/up` or the
 # sharelatex container fails to start. Skip the (15-30 min) rebuild if already present,
 # so re-running install.sh is cheap and a pre-loaded image is honoured.
@@ -779,7 +802,8 @@ fi
 # here would inspect the stock image and skip a build that is actually needed.
 if [ "${ENABLE_LLM_MODULE:-false}" = "true" ] \
    || [ "${ENABLE_PUBLISH_MODULE:-false}" = "true" ] \
-   || [ "${ENABLE_LISTS_MODULE:-false}" = "true" ]; then
+   || [ "${ENABLE_LISTS_MODULE:-false}" = "true" ] \
+   || [ "${ENABLE_PROJECTS_API_MODULE:-false}" = "true" ]; then
     LLM_IMAGE_REF="overleaf-lab/sharelatex-llm:${OVERLEAF_IMAGE_TAG:-6.2.0-ext-v5.0}"
     echo ""
     if docker image inspect "$LLM_IMAGE_REF" >/dev/null 2>&1; then

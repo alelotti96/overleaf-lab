@@ -75,12 +75,13 @@ ENABLE_PANDOC_CONVERSIONS="${ENABLE_PANDOC_CONVERSIONS:-true}"
 PANDOC_IMAGE="${PANDOC_IMAGE:-overleafcep/pandoc-ol:3.10.0.0}"
 
 # Custom-image modules: opt-in image swap.
-# The AI assistant, the publish module and the symbols/acronyms lists all ship in
-# the SAME locally-built image (overleaf-lab/sharelatex-llm), so ANY ONE of them
-# being enabled requires that image, mirroring the local/sharelatex-texlive-full
-# swap. Gating the swap on the LLM flag alone used to leave publish-only or
-# lists-only installs running the stock image, where those modules simply do not
-# exist and the buttons never appear.
+# The AI assistant, the publish module, the symbols/acronyms lists and the
+# projects API all ship in the SAME locally-built image
+# (overleaf-lab/sharelatex-llm), so ANY ONE of them being enabled requires that
+# image, mirroring the local/sharelatex-texlive-full swap. Gating the swap on the
+# LLM flag alone used to leave publish-only or lists-only installs running the
+# stock image, where those modules simply do not exist and the buttons never
+# appear.
 # The swap only overrides the in-memory shell variables that flow into
 # overleaf.rc and docker-compose.override.yml below; config.env.local is NOT
 # modified, so flipping every flag back to false and re-running configure.sh
@@ -89,6 +90,7 @@ PANDOC_IMAGE="${PANDOC_IMAGE:-overleafcep/pandoc-ol:3.10.0.0}"
 ENABLE_LLM_MODULE="${ENABLE_LLM_MODULE:-false}"
 ENABLE_PUBLISH_MODULE="${ENABLE_PUBLISH_MODULE:-false}"
 ENABLE_LISTS_MODULE="${ENABLE_LISTS_MODULE:-false}"
+ENABLE_PROJECTS_API_MODULE="${ENABLE_PROJECTS_API_MODULE:-false}"
 ENABLE_LANGUAGETOOL="${ENABLE_LANGUAGETOOL:-false}"
 
 # Which flags asked for the custom image (also printed, so the reason is never
@@ -103,6 +105,9 @@ if [ "${ENABLE_PUBLISH_MODULE}" = "true" ]; then
 fi
 if [ "${ENABLE_LISTS_MODULE}" = "true" ]; then
     CUSTOM_IMAGE_REASONS="${CUSTOM_IMAGE_REASONS}ENABLE_LISTS_MODULE "
+fi
+if [ "${ENABLE_PROJECTS_API_MODULE}" = "true" ]; then
+    CUSTOM_IMAGE_REASONS="${CUSTOM_IMAGE_REASONS}ENABLE_PROJECTS_API_MODULE "
 fi
 CUSTOM_IMAGE_REASONS="${CUSTOM_IMAGE_REASONS% }"
 
@@ -599,6 +604,19 @@ EOF
 
 # Publish document (public PDF links) - opt-in via ENABLE_PUBLISH_MODULE
 PUBLISH_ENABLED=true
+EOF
+    fi
+
+    # Projects API and the `ol` CLI: opt-in via ENABLE_PROJECTS_API_MODULE. It
+    # accepts only Git Bridge tokens, so it refuses to load when the bridge is
+    # off; GIT_BRIDGE_ENABLED is written into overleaf.rc above and reaches the
+    # web container with the toolkit's git-bridge compose file. When disabled,
+    # nothing is written and the routes do not exist.
+    if [ "${ENABLE_PROJECTS_API_MODULE:-false}" = "true" ]; then
+        cat >> overleaf-toolkit/config/variables.env <<EOF
+
+# Projects API and the ol CLI - opt-in via ENABLE_PROJECTS_API_MODULE
+PROJECTS_API_ENABLED=true
 EOF
     fi
 

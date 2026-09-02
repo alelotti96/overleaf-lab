@@ -26,6 +26,9 @@ COPY vendor/llm/ /overleaf/services/web/modules/llm/
 # the LLM) and enters the build as a named buildx context, wired in build.sh.
 COPY --from=publishmodule / /overleaf/services/web/modules/publish/
 COPY --from=listsmodule / /overleaf/services/web/modules/lists/
+# overleaf-lab: the projects API (create and list projects with a Git Bridge
+# token, for the `ol` CLI) is backend only, so it adds no webpack entry point.
+COPY --from=projectsapimodule / /overleaf/services/web/modules/projects-api/
 
 # -----------------------------------------------------------------------------
 # 2) Apply ONLY the functional core edits of PR #171 (the 11 modified core files;

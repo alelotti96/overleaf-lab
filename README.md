@@ -18,6 +18,7 @@ Scripts have been tested on Ubuntu 24.
 - Optional AI Assistant (LLM): in-editor chat + Ask-AI-on-selection + inline completion + document compliance review (the whole project checked against admin-defined rubrics: 36 deterministic structural checks answered in code, model judgement with per-candidate voting for the rest, guided HTML reports with source excerpts and editor deep links, and a pool of review backends for multiple GPUs), backed by a local llama.cpp or any OpenAI-compatible API, with optional per-user OpenAI/Anthropic keys (encrypted at rest)
 - Optional publish module: a stable public link to a project's compiled PDF, with an optional password and a custom link name that can never be taken over by another project
 - Optional lists module: one-click generation and update of the symbols and acronyms lists, scanned from the sources and filled from a curated aerospace master list (no LLM involved)
+- Optional projects API and `ol` CLI: create, list and clone projects from a terminal with the token already used for the Git Bridge, so a project can be made without a browser even when logins go through SSO
 
 **Full TeXLive + Microsoft Fonts**:
 
@@ -299,6 +300,30 @@ Overleaf's **Git Bridge** lets you clone, pull, and push an Overleaf project ove
 For the authoritative, version-specific steps see the toolkit docs: [Git Bridge (CE)](https://github.com/overleaf/toolkit/blob/master/doc/ce-git-bridge.md).
 
 **Troubleshooting.** If token authentication fails after a base-version update, check that `GIT_BRIDGE_OAUTH2_SERVER` in `overleaf-toolkit/lib/docker-compose.git-bridge.yml` points at the internal API (`http://sharelatex:3000`), then restart the stack.
+
+## Projects API and CLI
+
+The Git Bridge reaches projects that already exist; creating one means the web UI, which behind SSO cannot be scripted. The optional **projects API** closes that gap with three JSON endpoints, and `cli/ol.py` wraps them so that a project is created and checked out in one command.
+
+**Enabling.** Set `ENABLE_PROJECTS_API_MODULE="true"` in `config.env.local`, rebuild the custom image if it is not built yet (`./overleaf-llm-image/build.sh`), then `./scripts/configure.sh` and restart. It needs the Git Bridge, which is on by default here; without it the module logs one line and does not load.
+
+**The token** is the one from **Account Settings, Git integration**, sent as `Authorization: Bearer olp_...`. Reusing it is deliberate: a git token already grants read and write on every project the user can access, so creating and listing projects adds no new capability class, and there is one secret to store and revoke instead of two. The API never reads a user id from a request, so a token can only ever act as its own owner.
+
+**The endpoints**, all JSON, all answering `401 {"error":"unauthorized"}` for any token problem:
+
+- `GET /api/v1/whoami` returns the user id, email and name behind the token.
+- `GET /api/v1/projects[?owned=1]` lists id, name, role, last update, archived and trashed (both per user), plus the project and git URLs.
+- `POST /api/v1/projects` with `{"name":"...","template":"basic|blank|example"}` creates a project and answers `201 {"id","name","url","git_url"}`; a name the user already owns answers `409` with the existing id, unless the body carries `"allow_duplicate": true`.
+
+**The CLI** is one Python file, standard library only:
+
+```bash
+py cli/ol.py login --url https://overleaf.example.org   # asks for the token, stores it
+py cli/ol.py ls --owned
+py cli/ol.py new "cubaco-pdr" --template blank          # creates, clones, prints the path
+```
+
+The token never appears in a remote URL: the clone leaves authentication to git, which asks once for the username `git` and the token as the password, and the platform credential manager remembers it. See `cli/README.md` and `overleaf-projects-api-module/README.md`.
 
 ## Public Access
 

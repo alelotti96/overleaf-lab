@@ -264,18 +264,19 @@ if ! grep -q '^HEADER_BG_COLOR=' "$VARIABLES_ENV"; then
     fi
 fi
 
-# 9) Custom-image modules: opt-in. The AI assistant, the publish module and the
-#    symbols/acronyms lists all ship in the SAME locally-built
+# 9) Custom-image modules: opt-in. The AI assistant, the publish module, the
+#    symbols/acronyms lists and the projects API all ship in the SAME locally-built
 #    overleaf-lab/sharelatex-llm, built FROM overleafcep/sharelatex:<version>, and
 #    configure.sh swaps the image in as soon as ANY ONE of them is on. On a version
 #    update it MUST be rebuilt on the NEW base BEFORE the new image is pulled and
 #    started below, or the sharelatex container will fail to come up. Skipped and
-#    silent when all three are off.
+#    silent when all four are off.
 #    ("|| true": _read_local returns non-zero for a flag an older config.env.local
 #    does not have yet, and this script runs under set -e.)
 LLM_ENABLED_VAL="$(_read_local ENABLE_LLM_MODULE || true)"
 PUBLISH_ENABLED_VAL="$(_read_local ENABLE_PUBLISH_MODULE || true)"
 LISTS_ENABLED_VAL="$(_read_local ENABLE_LISTS_MODULE || true)"
+PROJECTS_API_ENABLED_VAL="$(_read_local ENABLE_PROJECTS_API_MODULE || true)"
 MODULE_FLAGS_ON=""
 if [ "${LLM_ENABLED_VAL}" = "true" ]; then
     MODULE_FLAGS_ON="${MODULE_FLAGS_ON}ENABLE_LLM_MODULE "
@@ -285,6 +286,9 @@ if [ "${PUBLISH_ENABLED_VAL}" = "true" ]; then
 fi
 if [ "${LISTS_ENABLED_VAL}" = "true" ]; then
     MODULE_FLAGS_ON="${MODULE_FLAGS_ON}ENABLE_LISTS_MODULE "
+fi
+if [ "${PROJECTS_API_ENABLED_VAL}" = "true" ]; then
+    MODULE_FLAGS_ON="${MODULE_FLAGS_ON}ENABLE_PROJECTS_API_MODULE "
 fi
 if [ -n "${MODULE_FLAGS_ON}" ] && [ "$CURRENT_VERSION" != "$NEW_VERSION" ]; then
     echo ""

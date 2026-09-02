@@ -70,13 +70,13 @@ Two-way sync between Overleaf projects and GitHub repositories. Requires a [GitH
 
 ## Optional Features (custom image) [optional]
 
-Three features ship with this repo and stay switched off until asked for: the AI
-assistant and compliance review, public PDF publishing, and the symbols/acronyms
-list generator. `install.sh` asks about all three; you can also flip them here and
-re-run `./scripts/configure.sh`.
+Four features ship with this repo and stay switched off until asked for: the AI
+assistant and compliance review, public PDF publishing, the symbols/acronyms
+list generator, and the projects API behind the `ol` CLI. `install.sh` asks about
+all four; you can also flip them here and re-run `./scripts/configure.sh`.
 
 They all live in the **same** locally-built image (`overleaf-lab/sharelatex-llm`),
-so **any one** of the three flags being `"true"` makes `configure.sh` swap
+so **any one** of the four flags being `"true"` makes `configure.sh` swap
 `OVERLEAF_IMAGE` to it and `install.sh` build it (~15-30 min, >=8 GB RAM, network).
 Build it by hand with `./scripts/build-llm-image.sh`. Each module stays gated by its
 own flag: shipping in the image does not mean being switched on. With all three
@@ -88,6 +88,7 @@ generated configuration is byte-for-byte the same as without these features.
 | `ENABLE_LLM_MODULE` | "false" | In-editor AI assistant (chat, Ask-AI, inline completion) and the compliance review |
 | `ENABLE_PUBLISH_MODULE` | "false" | "Publish" button serving a project's compiled PDF at a stable public URL (optional password) |
 | `ENABLE_LISTS_MODULE` | "false" | Symbols and acronyms list generator. Pure parsing: no model, no API key, no network, but it still needs the custom image |
+| `ENABLE_PROJECTS_API_MODULE` | "false" | Projects API behind the `ol` CLI: create, list and clone projects with the Git Bridge token. Requires the Git Bridge, and refuses to load without it |
 | `LLM_API_URL` | - | OpenAI-compatible endpoint, including the `/v1` segment |
 | `LLM_API_KEY` | "" | Bearer token; empty for a local llama.cpp with no auth |
 | `LLM_MODEL_NAME` | "" | Comma-separated, first one is the default; empty auto-discovers via `/models` |
