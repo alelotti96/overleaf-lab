@@ -397,3 +397,7 @@ This project builds on:
 - [Overleaf Community Edition](https://github.com/overleaf/overleaf) - The open-source LaTeX editor (AGPL-3.0)
 - [Overleaf-CEP](https://github.com/yu-i-i/overleaf-cep) - Extended CE with premium features (AGPL-3.0)
 - [Zotero-Overleaf-BibTeX-Proxy](https://github.com/UPB-SysSec/Zotero-Overleaf-BibTeX-Proxy) - Inspiration for the Zotero integration
+
+## Trademark Notice
+
+overleaf-lab is an independent setup for self-hosting Overleaf Community Edition. It is not operated, supported or endorsed by Overleaf. "Overleaf" is a trademark of its respective owner and is used here only to refer to the software this project installs and configures.
