@@ -70,6 +70,11 @@ else
     MAX_UPLOAD_MB=500
 fi
 
+# Editor tabs (open several files in tabs above the editor): enabled by default.
+# CEP exposes the upstream feature flag through this variable, so the feature is
+# available on the 6.2 base without waiting for the 6.3 port.
+ENABLE_EDITOR_TABS="${ENABLE_EDITOR_TABS:-true}"
+
 # Pandoc conversions (Word/Markdown import-export): enabled by default
 ENABLE_PANDOC_CONVERSIONS="${ENABLE_PANDOC_CONVERSIONS:-true}"
 PANDOC_IMAGE="${PANDOC_IMAGE:-overleafcep/pandoc-ol:3.10.0.0}"
@@ -455,6 +460,9 @@ OVERLEAF_ENABLE_REGISTRATION_PAGE=${ENABLE_OVERLEAF_PUBLIC_REGISTRATION}
 # Project history restore features (native env var since CEP ext-v5.0)
 OVERLEAF_HISTORY_RESTORE=true
 
+# Editor tabs: keep several open files in tabs above the editor
+ENABLE_EDITOR_TABS=${ENABLE_EDITOR_TABS}
+
 # Pandoc conversions: import Word/Markdown documents, export docx/Markdown/HTML
 ENABLE_PANDOC_CONVERSIONS=${ENABLE_PANDOC_CONVERSIONS}
 PANDOC_IMAGE=${PANDOC_IMAGE}
@@ -684,6 +692,7 @@ EOF
     _replace_var "COMPILE_TIMEOUT" "${COMPILE_TIMEOUT}"
     _replace_var "OVERLEAF_INVITE_TOKEN_SECRET" "${OVERLEAF_INVITE_TOKEN_SECRET}"
     _replace_var "ENABLE_OVERLEAF_PUBLIC_REGISTRATION" "${ENABLE_OVERLEAF_PUBLIC_REGISTRATION:-false}"
+    _replace_var "ENABLE_EDITOR_TABS" "${ENABLE_EDITOR_TABS}"
     _replace_var "ENABLE_PANDOC_CONVERSIONS" "${ENABLE_PANDOC_CONVERSIONS}"
     _replace_var "PANDOC_IMAGE" "${PANDOC_IMAGE}"
     _replace_var "EMAIL_FROM_ADDRESS" "${EMAIL_FROM_ADDRESS}"

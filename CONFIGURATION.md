@@ -36,6 +36,12 @@ The install script reads `config.env.local` and edits the appropriate config fil
 | `MONGO_VERSION` | "8.0" | MongoDB version ("4.4" for older CPUs without AVX) |
 | `OVERLEAF_LINKED_URL_ALLOWED_RESOURCES` | "^http://zotero-[a-zA-Z0-9-]+:5000" | Regex whitelist for internal Zotero URLs (auto-configured, bypasses SSRF protection) |
 
+## Editor Tabs
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_EDITOR_TABS` | "true" | Keep several open files in tabs above the editor instead of replacing the current file on every click in the file tree. Upstream feature flag exposed by CEP since 6.2.0-ext-v5.0, so it does not need the 6.3 base. Users can turn it off individually from the editor settings menu |
+
 ## Document Conversion (Pandoc)
 
 | Variable | Default | Description |
