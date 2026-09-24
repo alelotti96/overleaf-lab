@@ -13,7 +13,12 @@ logger = logging.getLogger(__name__)
 
 class ZoteroProxyManager:
     """Manage Zotero proxy configurations and Docker containers."""
-    
+
+    # Host ports for the proxies start here, one per proxy going up.
+    FIRST_PROXY_PORT = 8091
+    # How many ports to walk through before giving up on finding a free one.
+    MAX_PORT_ATTEMPTS = 20
+
     def __init__(self, proxies_path: str, proxy_image: str):
         """Initialize the Zotero proxy manager."""
         self.proxies_path = Path(proxies_path)
@@ -233,20 +238,23 @@ class ZoteroProxyManager:
             except requests.exceptions.RequestException as e:
                 return {'success': False, 'error': f'Could not connect to Zotero. Please check your internet connection and try again.'}
 
-            # Find next available port
-            used_ports = [p['port'] for p in existing_proxies if p['port']]
-            next_port = 8091
-            while next_port in used_ports:
-                next_port += 1
-
-            # Update docker-compose.yml
-            self._update_docker_compose_add(username, next_port, entity_type)
+            # Ports already spoken for: the registered proxies, plus whatever
+            # Docker publishes on the host right now.
+            taken = {p['port'] for p in existing_proxies if p['port']}
+            taken |= self._published_host_ports()
 
             # Update .env file
             self._update_env_file_add(username, api_key, user_id, entity_type)
 
-            # Start the new container
-            self._docker_compose_up(username)
+            # Write docker-compose.yml and start, moving up a port whenever the
+            # host refuses the bind.
+            try:
+                next_port = self._start_on_free_port(username, entity_type, taken)
+            except Exception:
+                # A proxy that cannot start must not be left in the config.
+                self._update_docker_compose_remove(username)
+                self._update_env_file_remove(username)
+                raise
 
             logger.info(f"Added proxy for {entity_label.lower()}: {username}")
             return {
@@ -425,6 +433,78 @@ class ZoteroProxyManager:
         self._update_env_file_remove(username)
         self._update_env_file_add(username, api_key, user_id, entity_type)
     
+    def _published_host_ports(self) -> set:
+        """Host ports currently published by containers Docker knows about.
+
+        A container started with network_mode: host publishes nothing, so it
+        does not show up here even though it holds a port on the machine. That
+        is what _start_on_free_port retries for: this set only saves a round
+        trip on the collisions we can see in advance.
+        """
+        try:
+            result = subprocess.run(
+                ['docker', 'ps', '--format', '{{.Ports}}'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode != 0:
+                logger.warning(f"Could not list published ports: {result.stderr.strip()}")
+                return set()
+            return {int(port) for port in re.findall(r':(\d+)->', result.stdout)}
+        except Exception as e:
+            logger.warning(f"Could not list published ports: {e}")
+            return set()
+
+    def _next_candidate_port(self, taken: set) -> int:
+        """First port at or above FIRST_PROXY_PORT that is not in taken."""
+        port = self.FIRST_PROXY_PORT
+        while port in taken:
+            port += 1
+        return port
+
+    @staticmethod
+    def _is_port_conflict(message: str) -> bool:
+        """Whether a Docker error says the host port was already busy."""
+        lowered = message.lower()
+        return 'already in use' in lowered or 'already allocated' in lowered
+
+    def _start_on_free_port(self, username: str, entity_type: str, taken: set) -> int:
+        """Start the proxy on the first host port that actually accepts it.
+
+        Only the bind Docker performs on the host settles whether a port is
+        free. This manager runs in a bridge network, so a socket opened here
+        would test the container's namespace instead, and the listener that
+        first broke this (a service on the host network) is invisible both to
+        that test and to docker ps. So candidates skip the ports we can see,
+        and a bind refusal moves to the next one.
+
+        Returns the port the container ended up on.
+        """
+        service_name = f'zotero-{username}'
+        for _ in range(self.MAX_PORT_ATTEMPTS):
+            port = self._next_candidate_port(taken)
+            self._update_docker_compose_add(username, port, entity_type)
+            try:
+                self._docker_compose_up(username)
+                return port
+            except Exception as e:
+                if not self._is_port_conflict(str(e)):
+                    raise
+                logger.warning(
+                    f"Host port {port} is taken by something outside the proxies, "
+                    f"trying the next one for {service_name}"
+                )
+                # The failed attempt leaves the container created but not
+                # running, which would block the retry.
+                self._stop_container(service_name)
+                taken.add(port)
+
+        raise Exception(
+            f"No free host port for {service_name}: tried "
+            f"{self.MAX_PORT_ATTEMPTS} ports from {self.FIRST_PROXY_PORT} up"
+        )
+
     def _docker_compose_up(self, username: str):
         """Start a specific container."""
         # Try docker compose (v2) first, then docker-compose (v1)
